@@ -1443,6 +1443,17 @@ function renderMessengerApp() {
         .send-button { width: 48px; height: 48px; border-radius: 50%; display: grid; place-items: center; padding: 0; overflow: hidden; }
         .send-button svg { width: 23px; height: 23px; fill: none; stroke: currentColor; stroke-width: 2.3; stroke-linecap: round; stroke-linejoin: round; transform: translateX(1px); }
         .composer-error { grid-column: 1 / -1; margin: 0; min-height: 0; }
+        .chat-home { position: relative; isolation: isolate; grid-row: 1 / -1; overflow: hidden; background: linear-gradient(145deg, #f7fbff 0%, #eaf5f3 48%, #edf7f4 100%); }
+        .chat-home::before, .chat-home::after { content: ''; position: absolute; z-index: -1; border-radius: 50%; filter: blur(2px); animation: homeFloat 14s ease-in-out infinite alternate; }
+        .chat-home::before { width: min(50vw, 470px); height: min(50vw, 470px); top: -150px; right: -100px; background: radial-gradient(circle, rgba(15, 118, 110, .16), rgba(15, 118, 110, 0) 68%); }
+        .chat-home::after { width: min(45vw, 400px); height: min(45vw, 400px); left: -100px; bottom: -130px; background: radial-gradient(circle, rgba(59, 130, 246, .12), rgba(59, 130, 246, 0) 70%); animation-delay: -5s; }
+        .home-card { display: grid; justify-items: center; gap: 12px; width: min(430px, 100%); padding: 34px 30px; border: 1px solid rgba(255, 255, 255, .9); border-radius: 24px; background: rgba(255, 255, 255, .7); box-shadow: 0 20px 55px rgba(15, 23, 42, .06); backdrop-filter: blur(8px); }
+        .home-mark { width: 72px; height: 72px; border-radius: 24px; display: grid; place-items: center; color: #fff; background: linear-gradient(145deg, var(--accent), #11a193); box-shadow: 0 12px 28px rgba(15, 118, 110, .25); }
+        .home-mark svg { width: 36px; height: 36px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+        .home-card h2 { margin: 6px 0 0; color: var(--text); font-size: 27px; }
+        .home-card p { max-width: 330px; margin: 0; color: var(--muted); font-size: 15px; line-height: 1.5; }
+        .home-list-button { display: none; margin-top: 8px; }
+        @keyframes homeFloat { to { transform: translate3d(22px, -18px, 0) scale(1.08); } }
         .chat.drop-active .messages { outline: 2px dashed var(--accent); outline-offset: -10px; background: #dff1ec; }
         .drop-hint { display: none; position: absolute; inset: 72px 18px 74px; place-items: center; pointer-events: none; z-index: 2; color: var(--accent); font-size: 18px; font-weight: 700; }
         .chat.drop-active .drop-hint { display: grid; }
@@ -1493,6 +1504,9 @@ function renderMessengerApp() {
         .small { font-size: 13px; }
         .empty { height: 100%; display: grid; place-items: center; text-align: center; color: var(--muted); padding: 24px; }
         .hidden { display: none !important; }
+        @media (prefers-reduced-motion: reduce) {
+            .chat-home::before, .chat-home::after { animation: none; }
+        }
         @media (max-width: 780px) {
             body { overflow: hidden; }
             .app { grid-template-columns: 1fr; }
@@ -1530,6 +1544,8 @@ function renderMessengerApp() {
             .settings-view { padding: calc(16px + env(safe-area-inset-top)) 12px calc(16px + env(safe-area-inset-bottom)); }
             .contact-details { grid-template-columns: 1fr; }
             .contact-action-buttons { grid-template-columns: 1fr; }
+            .home-card { padding: 28px 22px; border-radius: 20px; }
+            .home-list-button { display: block; }
         }
     </style>
 </head>
@@ -1662,7 +1678,16 @@ function renderMessengerApp() {
             <div id="conversationList" class="list"></div>
         </aside>
         <section id="chat" class="chat">
-            <div id="chatEmpty" class="empty">Wähle einen Chat aus oder suche einen Nutzer.</div>
+            <div id="chatEmpty" class="empty chat-home">
+                <div class="home-card">
+                    <div class="home-mark">
+                        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11.5a7.8 7.8 0 0 1-8 7.5 8.8 8.8 0 0 1-3.2-.6L4 20l1.5-4a7.2 7.2 0 0 1-1.5-4.5A7.8 7.8 0 0 1 12 4a7.8 7.8 0 0 1 8 7.5z"></path><path d="M8.5 11.5h.1M12 11.5h.1M15.5 11.5h.1"></path></svg>
+                    </div>
+                    <h2>JustChat</h2>
+                    <p>Wähle einen Chat aus und bleibe mit deinen Kontakten verbunden.</p>
+                    <button id="homeChatsButton" class="primary home-list-button" type="button">Chats anzeigen</button>
+                </div>
+            </div>
             <div id="chatPane" class="hidden" style="display: contents;">
                 <div class="chat-head">
                     <button id="back" class="ghost close-button" type="button" aria-label="Chat schließen" title="Schließen">&times;</button>
@@ -2591,6 +2616,22 @@ function renderMessengerApp() {
             renderBlockedUsers();
         }
 
+        function showChatHome() {
+            stopTyping();
+            setRemoteTyping(false);
+            state.activeConversation = null;
+            state.pendingAttachment = null;
+            $('attachmentInput').value = '';
+            renderPendingAttachment();
+            $('accountPanel').classList.add('hidden');
+            $('contactPanel').classList.add('hidden');
+            $('chatPane').classList.add('hidden');
+            $('chatEmpty').classList.remove('hidden');
+            $('chat').classList.add('chat-open');
+            $('sidebar').classList.add('chat-open');
+            renderConversationList();
+        }
+
         async function refreshOpenMessages(conversationId) {
             if (!state.activeConversation || Number(state.activeConversation.id) !== Number(conversationId)) return;
             const data = await api('/api/conversations/' + conversationId + '/messages');
@@ -2661,12 +2702,7 @@ function renderMessengerApp() {
                 const payload = JSON.parse(event.data);
                 await loadConversations();
                 if (state.activeConversation && Number(state.activeConversation.id) === Number(payload.conversationId)) {
-                    state.activeConversation = null;
-                    $('chatPane').classList.add('hidden');
-                    $('contactPanel').classList.add('hidden');
-                    $('chatEmpty').classList.remove('hidden');
-                    $('sidebar').classList.remove('chat-open');
-                    $('chat').classList.remove('chat-open');
+                    showChatHome();
                 }
             });
             state.eventSource.addEventListener('contact:changed', async (event) => {
@@ -2801,12 +2837,7 @@ function renderMessengerApp() {
                 const conversationId = state.activeConversation.id;
                 stopTyping();
                 await api('/api/conversations/' + conversationId, { method: 'DELETE', body: '{}' });
-                state.activeConversation = null;
-                $('contactPanel').classList.add('hidden');
-                $('chatPane').classList.add('hidden');
-                $('chatEmpty').classList.remove('hidden');
-                $('sidebar').classList.remove('chat-open');
-                $('chat').classList.remove('chat-open');
+                showChatHome();
                 await loadConversations();
             } catch (error) {
                 $('contactError').textContent = error.message;
@@ -3033,7 +3064,9 @@ function renderMessengerApp() {
             location.reload();
         });
         $('back').addEventListener('click', () => {
-            stopTyping();
+            showChatHome();
+        });
+        $('homeChatsButton').addEventListener('click', () => {
             $('sidebar').classList.remove('chat-open');
             $('chat').classList.remove('chat-open');
         });
