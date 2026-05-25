@@ -3,13 +3,39 @@ services:
     image: ghcr.io/sgobbovista/justchat-backend:latest
     pull_policy: always
     restart: unless-stopped
+    depends_on:
+      - justchat-db
     ports:
       - "50070:80"
     environment:
       NODE_ENV: production
       PORT: 80
-      APP_NAME: JustChat Backend
+      APP_NAME: JustChat
       ADMIN_USER: admin
       ADMIN_PASSWORD: "admin"
-      DATABASE_URL: ""
+      AUTH_SECRET: "bitte-einen-langen-zufaelligen-wert-setzen"
+      DATABASE_URL: "postgres://justchat:justchat_password@justchat-db:5432/justchat"
       DB_SSL: "false"
+      SMTP_HOST: "webspace31.do.de"
+      SMTP_PORT: "587"
+      SMTP_USER: "kontakt@sgobbovista.de"
+      SMTP_PASSWORD: "HIER_DAS_NEUE_MAIL_PASSWORT_EINTRAGEN"
+      SMTP_FROM: "kontakt@sgobbovista.de"
+
+  justchat-db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: justchat
+      POSTGRES_USER: justchat
+      POSTGRES_PASSWORD: "justchat_password"
+    volumes:
+      - justchat-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U justchat -d justchat"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  justchat-db-data:
