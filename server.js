@@ -515,6 +515,7 @@ async function initDatabase() {
             display_name_visibility text not null default 'contacts',
             username_history_visibility text not null default 'contacts',
             send_on_enter boolean not null default false,
+            gif_playback text not null default 'none',
             about text not null default '',
             avatar_color text not null default '#2563eb',
             created_at timestamptz not null default now(),
@@ -634,6 +635,7 @@ async function initDatabase() {
         alter table users add column if not exists username_history_visibility text not null default 'contacts';
         alter table users add column if not exists notification_sound_asset_id bigint references notification_sound_assets(id);
         alter table users add column if not exists send_on_enter boolean not null default false;
+        alter table users add column if not exists gif_playback text not null default 'none';
         alter table avatar_assets add column if not exists owner_user_id bigint references users(id) on delete cascade;
         alter table conversations add column if not exists hidden_for_user_one boolean not null default false;
         alter table conversations add column if not exists hidden_for_user_two boolean not null default false;
@@ -702,7 +704,7 @@ async function waitForDatabase() {
 async function getUserById(userId) {
     const result = await query(
         `select u.id, u.username, u.display_name, u.email, u.about, u.avatar_color, u.avatar_asset_id,
-            u.two_factor_enabled, u.display_name_visibility, u.username_history_visibility, u.notification_sound_asset_id, u.send_on_enter,
+            u.two_factor_enabled, u.display_name_visibility, u.username_history_visibility, u.notification_sound_asset_id, u.send_on_enter, u.gif_playback,
             u.created_at, u.last_seen_at,
             case when aa.id is null then null else 'data:' || aa.mime_type || ';base64,' || encode(aa.data, 'base64') end as avatar_url
          from users u
@@ -1442,8 +1444,20 @@ function renderMessengerApp() {
         .chat.drop-active .drop-hint { display: grid; }
         .settings-view { grid-row: 1 / -1; overflow: auto; padding: 24px; background: var(--bg); }
         .settings-card { width: min(700px, 100%); margin: 0 auto; background: #fff; border-radius: 8px; border: 1px solid var(--line); padding: 20px; }
+        .settings-header { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 4px; }
+        .settings-breadcrumb { display: flex; align-items: center; gap: 8px; min-width: 0; color: var(--muted); font-size: 14px; }
+        .settings-breadcrumb button { width: auto; padding: 4px 0; color: var(--accent); background: transparent; font-weight: 700; }
+        .settings-breadcrumb strong { overflow: hidden; color: var(--text); font-size: 20px; text-overflow: ellipsis; white-space: nowrap; }
+        .settings-breadcrumb.has-category strong { font-size: 16px; }
+        .settings-overview { display: grid; gap: 10px; }
+        .settings-category { width: 100%; padding: 14px 16px; border: 1px solid var(--line); border-radius: 10px; background: #fff; display: flex; align-items: center; justify-content: space-between; gap: 12px; text-align: left; }
+        .settings-category:hover { border-color: #c7e6df; background: #eef8f6; }
+        .settings-category-title { display: block; color: var(--text); font-weight: 700; }
+        .settings-category-description { display: block; margin-top: 4px; color: var(--muted); font-size: 13px; font-weight: 400; }
+        .settings-category-arrow { color: var(--muted); font-size: 23px; }
         .settings-section { border: 1px solid var(--line); border-radius: 10px; padding: 16px; display: grid; gap: 12px; background: #fff; }
         .settings-section h3 { margin: 0; font-size: 17px; }
+        .settings-actions { display: grid; gap: 10px; }
         .history-list { display: flex; flex-wrap: wrap; gap: 6px; min-height: 24px; }
         .history-item { font-size: 13px; border-radius: 999px; padding: 5px 9px; background: #eef8f6; color: var(--text); }
         .contact-avatar { width: 88px; height: 88px; font-size: 30px; margin: 0 auto; }
@@ -1660,11 +1674,43 @@ function renderMessengerApp() {
             </div>
             <div id="accountPanel" class="settings-view hidden">
                 <form id="profileForm" class="settings-card stack">
-                    <div class="modal-head">
-                        <h2>Mein Account</h2>
+                    <div class="settings-header">
+                        <nav id="settingsBreadcrumb" class="settings-breadcrumb" aria-label="Einstellungspfad">
+                            <strong>Einstellungen</strong>
+                        </nav>
                         <button id="closeAccount" class="ghost close-button" type="button" aria-label="Einstellungen schließen" title="Schließen">&times;</button>
                     </div>
-                    <section class="settings-section">
+                    <div id="settingsOverview" class="settings-overview">
+                        <button class="settings-category" type="button" data-settings-category="profile">
+                            <span>
+                                <span class="settings-category-title">Profil</span>
+                                <span class="settings-category-description">Benutzername, Info und Profilbild</span>
+                            </span>
+                            <span class="settings-category-arrow" aria-hidden="true">&rsaquo;</span>
+                        </button>
+                        <button class="settings-category" type="button" data-settings-category="privacy">
+                            <span>
+                                <span class="settings-category-title">Datenschutz</span>
+                                <span class="settings-category-description">Sichtbarkeit und blockierte Kontakte</span>
+                            </span>
+                            <span class="settings-category-arrow" aria-hidden="true">&rsaquo;</span>
+                        </button>
+                        <button class="settings-category" type="button" data-settings-category="chat">
+                            <span>
+                                <span class="settings-category-title">Benachrichtigungen &amp; Chat</span>
+                                <span class="settings-category-description">Ton, GIFs und Enter-Verhalten</span>
+                            </span>
+                            <span class="settings-category-arrow" aria-hidden="true">&rsaquo;</span>
+                        </button>
+                        <button class="settings-category" type="button" data-settings-category="security">
+                            <span>
+                                <span class="settings-category-title">Sicherheit</span>
+                                <span class="settings-category-description">E-Mail und Zwei-Faktor-Anmeldung</span>
+                            </span>
+                            <span class="settings-category-arrow" aria-hidden="true">&rsaquo;</span>
+                        </button>
+                    </div>
+                    <section class="settings-section hidden" data-settings-panel="profile">
                         <h3>Profil</h3>
                         <div class="field">
                             <label for="profileUsername">Benutzername</label>
@@ -1711,7 +1757,7 @@ function renderMessengerApp() {
                             </div>
                         </div>
                     </section>
-                    <section class="settings-section">
+                    <section class="settings-section hidden" data-settings-panel="privacy">
                         <h3>Datenschutz</h3>
                         <div class="field">
                             <label for="displayNameVisibility">Anzeigename anzeigen</label>
@@ -1734,7 +1780,7 @@ function renderMessengerApp() {
                             </div>
                         </div>
                     </section>
-                    <section class="settings-section">
+                    <section class="settings-section hidden" data-settings-panel="chat">
                         <h3>Benachrichtigungen & Chat</h3>
                         <div class="field">
                             <label for="notificationSound">Benachrichtigungston</label>
@@ -1743,12 +1789,19 @@ function renderMessengerApp() {
                             </select>
                             <button id="previewSound" class="ghost" type="button">Ton anhören</button>
                         </div>
+                        <div class="field">
+                            <label for="gifPlayback">GIFs anzeigen</label>
+                            <select id="gifPlayback">
+                                <option value="none">Keine GIFs (Standbild)</option>
+                                <option value="all">Alle GIFs abspielen</option>
+                            </select>
+                        </div>
                         <label class="segmented">
                             <input id="sendOnEnter" type="checkbox" style="width:auto;">
                             <span>Nachricht mit Enter senden (Shift+Enter für neue Zeile)</span>
                         </label>
                     </section>
-                    <section class="settings-section">
+                    <section class="settings-section hidden" data-settings-panel="security">
                         <h3>Sicherheit</h3>
                         <div class="field">
                             <label for="profileEmail">E-Mail</label>
@@ -1762,7 +1815,9 @@ function renderMessengerApp() {
                     </section>
                     <div id="profileError" class="error"></div>
                     <div id="profileNotice" class="success"></div>
-                    <button class="primary" type="submit">Profil speichern</button>
+                    <div id="settingsActions" class="settings-actions hidden">
+                        <button class="primary" type="submit">Änderungen speichern</button>
+                    </div>
                     <button id="logout" class="ghost" type="button">Logout</button>
                 </form>
             </div>
@@ -1895,6 +1950,40 @@ function renderMessengerApp() {
             if (!value) return 'Nicht verfügbar';
             return new Date(value).toLocaleDateString([], { dateStyle: 'long' });
         }
+
+        function gifAnimationEnabled() {
+            return Boolean(state.me && state.me.gif_playback === 'all');
+        }
+
+        function applyGifPreference(root = $('messenger')) {
+            if (!root) return;
+            root.querySelectorAll('img').forEach((image) => {
+                const source = image.dataset.gifSource || image.getAttribute('src') || '';
+                const isGif = image.dataset.isGif === 'true' || /^data:image\/gif/i.test(source);
+                if (!isGif) return;
+                if (!image.dataset.gifSource) image.dataset.gifSource = source;
+                if (gifAnimationEnabled()) {
+                    if (image.dataset.gifFrozen === 'true') image.src = image.dataset.gifSource;
+                    delete image.dataset.gifFrozen;
+                    return;
+                }
+                if (image.dataset.gifFrozen === 'true') return;
+                const freeze = () => {
+                    if (gifAnimationEnabled() || image.dataset.gifFrozen === 'true') return;
+                    const canvas = document.createElement('canvas');
+                    canvas.width = image.naturalWidth || image.width || 1;
+                    canvas.height = image.naturalHeight || image.height || 1;
+                    canvas.getContext('2d').drawImage(image, 0, 0, canvas.width, canvas.height);
+                    image.dataset.gifFrozen = 'true';
+                    image.src = canvas.toDataURL('image/png');
+                };
+                if (image.complete && image.naturalWidth) freeze();
+                else image.addEventListener('load', freeze, { once: true });
+            });
+        }
+
+        const gifImageObserver = new MutationObserver(() => applyGifPreference());
+        gifImageObserver.observe($('messenger'), { childList: true, subtree: true });
 
         function showAuth() {
             $('loading').classList.add('hidden');
@@ -2305,13 +2394,14 @@ function renderMessengerApp() {
                 const read = mine && message.read_at ? ' - gelesen' : '';
                 const attachment = message.attachment
                     ? (String(message.attachment.mime_type || '').startsWith('image/')
-                        ? '<img src="' + message.attachment.data_url + '" alt="' + escapeText(message.attachment.file_name) + '">'
+                        ? '<img' + (message.attachment.mime_type === 'image/gif' ? ' data-is-gif="true"' : '') + ' src="' + message.attachment.data_url + '" alt="' + escapeText(message.attachment.file_name) + '">'
                         : '<a class="attachment-link" href="' + message.attachment.data_url + '" download="' + escapeText(message.attachment.file_name) + '">Datei: ' + escapeText(message.attachment.file_name) + '</a>')
                     : '';
                 const text = message.body ? escapeText(message.body) : '';
                 return '<div class="bubble ' + (mine ? 'me' : '') + '">' +
                     attachment + text + '<span class="meta">' + time + read + '</span></div>';
             }).join('');
+            applyGifPreference($('messages'));
             $('messages').scrollTop = $('messages').scrollHeight;
         }
 
@@ -2330,9 +2420,10 @@ function renderMessengerApp() {
                 : null;
             preview.classList.remove('hidden');
             preview.innerHTML = '<div class="attachment-info">' +
-                (state.pendingAttachmentPreviewUrl ? '<img class="attachment-image-preview" src="' + state.pendingAttachmentPreviewUrl + '" alt="Vorschau">' : '') +
+                (state.pendingAttachmentPreviewUrl ? '<img class="attachment-image-preview"' + (state.pendingAttachment.type === 'image/gif' ? ' data-is-gif="true"' : '') + ' src="' + state.pendingAttachmentPreviewUrl + '" alt="Vorschau">' : '') +
                 '<span class="attachment-name">Datei: ' + escapeText(state.pendingAttachment.name) + '</span></div>' +
                 '<button id="removeAttachment" type="button" aria-label="Datei entfernen">&times;</button>';
+            applyGifPreference(preview);
         }
 
         function chooseAttachment(file) {
@@ -2375,10 +2466,32 @@ function renderMessengerApp() {
             $('meName').textContent = state.me.display_name;
             $('meUsername').textContent = '@' + state.me.username;
             $('meAvatarSlot').innerHTML = avatarMarkup(state.me, 'meAvatar');
+            applyGifPreference();
+        }
+
+        const settingsCategoryNames = {
+            profile: 'Profil',
+            privacy: 'Datenschutz',
+            chat: 'Benachrichtigungen & Chat',
+            security: 'Sicherheit',
+        };
+
+        function showSettingsCategory(category) {
+            const categoryName = settingsCategoryNames[category] || '';
+            $('settingsOverview').classList.toggle('hidden', Boolean(categoryName));
+            document.querySelectorAll('[data-settings-panel]').forEach((panel) => {
+                panel.classList.toggle('hidden', panel.dataset.settingsPanel !== category);
+            });
+            $('settingsActions').classList.toggle('hidden', !categoryName);
+            $('settingsBreadcrumb').classList.toggle('has-category', Boolean(categoryName));
+            $('settingsBreadcrumb').innerHTML = categoryName
+                ? '<button type="button" data-settings-home aria-label="Zur Einstellungsübersicht">&lsaquo; Einstellungen</button><span aria-hidden="true">/</span><strong>' + escapeText(categoryName) + '</strong>'
+                : '<strong>Einstellungen</strong>';
         }
 
         function openAccount() {
             stopTyping();
+            showSettingsCategory();
             $('profileUsername').value = state.me.username || '';
             $('profileDisplayName').value = state.me.display_name || '';
             $('profileEmail').value = state.me.email || '';
@@ -2388,6 +2501,7 @@ function renderMessengerApp() {
             $('displayNameVisibility').value = state.me.display_name_visibility || 'contacts';
             $('usernameHistoryVisibility').value = state.me.username_history_visibility || 'contacts';
             $('notificationSound').value = state.me.notification_sound_asset_id ? String(state.me.notification_sound_asset_id) : '';
+            $('gifPlayback').value = state.me.gif_playback === 'all' ? 'all' : 'none';
             $('sendOnEnter').checked = Boolean(state.me.send_on_enter);
             state.profileAvatarId = state.me.avatar_asset_id;
             renderProfileAvatarPicker();
@@ -2596,6 +2710,13 @@ function renderMessengerApp() {
         $('toggleAuth').addEventListener('click', () => setAuthMode(!state.registerMode));
         $('settingsButton').addEventListener('click', openAccount);
         $('closeAccount').addEventListener('click', closeAccount);
+        $('settingsOverview').addEventListener('click', (event) => {
+            const button = event.target.closest('[data-settings-category]');
+            if (button) showSettingsCategory(button.dataset.settingsCategory);
+        });
+        $('settingsBreadcrumb').addEventListener('click', (event) => {
+            if (event.target.closest('[data-settings-home]')) showSettingsCategory();
+        });
         $('chatProfileButton').addEventListener('click', () => {
             if (!state.activeConversation) return;
             stopTyping();
@@ -2722,6 +2843,7 @@ function renderMessengerApp() {
                         displayNameVisibility: $('displayNameVisibility').value,
                         usernameHistoryVisibility: $('usernameHistoryVisibility').value,
                         notificationSoundAssetId: $('notificationSound').value || null,
+                        gifPlayback: $('gifPlayback').value,
                         sendOnEnter: $('sendOnEnter').checked,
                     }),
                 });
@@ -3812,6 +3934,7 @@ app.patch('/api/me', requireAuth, async (req, res, next) => {
         const displayNameVisibility = req.body.displayNameVisibility === 'everyone' ? 'everyone' : 'contacts';
         const usernameHistoryVisibility = req.body.usernameHistoryVisibility === 'everyone' ? 'everyone' : 'contacts';
         const notificationSoundAssetId = parseId(req.body.notificationSoundAssetId);
+        const gifPlayback = req.body.gifPlayback === 'all' ? 'all' : 'none';
         const sendOnEnter = Boolean(req.body.sendOnEnter);
 
         if (!/^[a-z0-9_]{3,32}$/.test(username)) {
@@ -3863,10 +3986,11 @@ app.patch('/api/me', requireAuth, async (req, res, next) => {
         const result = await query(
             `update users
              set username = $1, display_name = $2, email = $3, about = $4, avatar_asset_id = $5, two_factor_enabled = $6,
-                 display_name_visibility = $7, username_history_visibility = $8, notification_sound_asset_id = $9, send_on_enter = $10
-             where id = $11
+                 display_name_visibility = $7, username_history_visibility = $8, notification_sound_asset_id = $9,
+                 gif_playback = $10, send_on_enter = $11
+             where id = $12
              returning id`,
-            [username, displayName, email, about, avatarAssetId, twoFactorEnabled, displayNameVisibility, usernameHistoryVisibility, notificationSoundAssetId, sendOnEnter, req.user.id],
+            [username, displayName, email, about, avatarAssetId, twoFactorEnabled, displayNameVisibility, usernameHistoryVisibility, notificationSoundAssetId, gifPlayback, sendOnEnter, req.user.id],
         );
         if (!result.rows[0]) return res.status(404).json({ error: 'Benutzer nicht gefunden' });
 
