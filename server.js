@@ -1521,7 +1521,7 @@ function renderMessengerApp() {
         <div class="loading-card" role="status" aria-label="JustChat wird geladen">
             <div class="loading-brand">JustChat</div>
             <div class="spinner" aria-hidden="true"></div>
-            <span class="muted">Chats werden geladen...</span>
+            <span id="loadingStatus" class="muted">Chats werden geladen...</span>
         </div>
     </div>
 
@@ -1982,8 +1982,10 @@ function renderMessengerApp() {
             });
         }
 
-        const gifImageObserver = new MutationObserver(() => applyGifPreference());
-        gifImageObserver.observe($('messenger'), { childList: true, subtree: true });
+        if (window.MutationObserver && $('messenger')) {
+            const gifImageObserver = new MutationObserver(() => applyGifPreference());
+            gifImageObserver.observe($('messenger'), { childList: true, subtree: true });
+        }
 
         function showAuth() {
             $('loading').classList.add('hidden');
@@ -2656,17 +2658,22 @@ function renderMessengerApp() {
                 clearTimeout(state.bootRetryTimer);
                 state.bootRetryTimer = null;
             }
+            $('loadingStatus').textContent = 'Chats werden geladen...';
             try {
                 await loadMe();
+                showApp();
                 await loadNotificationSounds();
                 await loadConversations();
                 await loadContactRequests();
                 await loadBlockedUsers();
-                showApp();
                 connectEvents();
+                showConnectionStatus(true);
             } catch (error) {
                 if (!error.status || error.status >= 500) {
                     showConnectionStatus(false);
+                    if (!$('loading').classList.contains('hidden')) {
+                        $('loadingStatus').textContent = 'Server nicht erreichbar. Neuer Versuch...';
+                    }
                     state.bootRetryTimer = setTimeout(boot, 3000);
                     return;
                 }
