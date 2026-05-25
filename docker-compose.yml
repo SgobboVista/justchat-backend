@@ -21,6 +21,9 @@ services:
       SMTP_USER: "kontakt@sgobbovista.de"
       SMTP_PASSWORD: "HIER_DAS_NEUE_MAIL_PASSWORT_EINTRAGEN"
       SMTP_FROM: "kontakt@sgobbovista.de"
+      PUBLIC_BASE_URL: "http://DEINE-TRUENAS-IP:50070"
+      GOOGLE_CLIENT_ID: "769973393963-2vosgga0eisngofob5kqmdbqvs0qqv77.apps.googleusercontent.com"
+      GOOGLE_CLIENT_SECRET: "${GOOGLE_CLIENT_SECRET}"
 
   justchat-db:
     image: postgres:16-alpine

@@ -14,6 +14,9 @@ const SMTP_PORT = Number(process.env.SMTP_PORT || 587);
 const SMTP_USER = process.env.SMTP_USER;
 const SMTP_PASSWORD = process.env.SMTP_PASSWORD;
 const SMTP_FROM = process.env.SMTP_FROM || SMTP_USER;
+const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || '';
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '';
+const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || '';
 const startedAt = new Date();
 
 let pool;
@@ -150,6 +153,35 @@ function parseId(value) {
     return Number.isInteger(id) && id > 0 ? id : null;
 }
 
+function createLoginCode() {
+    return String(crypto.randomInt(100000, 1000000));
+}
+
+async function sendTwoFactorCode(user) {
+    if (!user.email) {
+        const error = new Error('Fuer 2FA ist eine E-Mail-Adresse erforderlich');
+        error.statusCode = 400;
+        throw error;
+    }
+    if (!getMailer()) {
+        const error = new Error('2FA braucht vollstaendige SMTP-Konfiguration');
+        error.statusCode = 503;
+        throw error;
+    }
+
+    const code = createLoginCode();
+    await query(
+        `insert into login_codes (user_id, code_hash, expires_at)
+         values ($1, $2, now() + interval '10 minutes')`,
+        [user.id, hashPassword(code)],
+    );
+    await sendMail({
+        to: user.email,
+        subject: 'Dein JustChat Login-Code',
+        text: `Dein JustChat Login-Code lautet: ${code}\n\nDer Code ist 10 Minuten gueltig.`,
+    });
+}
+
 function formatDuration(totalSeconds) {
     const days = Math.floor(totalSeconds / 86400);
     const hours = Math.floor((totalSeconds % 86400) / 3600);
@@ -191,8 +223,10 @@ async function initDatabase() {
             username text not null unique,
             display_name text not null,
             email text,
+            google_id text,
             avatar_asset_id bigint,
             password_hash text not null,
+            two_factor_enabled boolean not null default false,
             about text not null default '',
             avatar_color text not null default '#2563eb',
             created_at timestamptz not null default now(),
@@ -245,13 +279,27 @@ async function initDatabase() {
             created_at timestamptz not null default now()
         );
 
+        create table if not exists login_codes (
+            id bigserial primary key,
+            user_id bigint not null references users(id) on delete cascade,
+            code_hash text not null,
+            expires_at timestamptz not null,
+            used_at timestamptz,
+            created_at timestamptz not null default now()
+        );
+
         alter table users add column if not exists email text;
+        alter table users add column if not exists google_id text;
         alter table users add column if not exists email_verified_at timestamptz;
         alter table users add column if not exists avatar_asset_id bigint references avatar_assets(id);
+        alter table users add column if not exists two_factor_enabled boolean not null default false;
 
         create unique index if not exists idx_users_email_unique
             on users(email)
             where email is not null and email <> '';
+        create unique index if not exists idx_users_google_unique
+            on users(google_id)
+            where google_id is not null and google_id <> '';
         create index if not exists idx_messages_conversation_created
             on messages(conversation_id, created_at);
         create index if not exists idx_conversations_user_one
@@ -283,6 +331,7 @@ async function waitForDatabase() {
 async function getUserById(userId) {
     const result = await query(
         `select u.id, u.username, u.display_name, u.email, u.about, u.avatar_color, u.avatar_asset_id,
+            u.two_factor_enabled,
             u.created_at, u.last_seen_at,
             case when aa.id is null then null else 'data:' || aa.mime_type || ';base64,' || encode(aa.data, 'base64') end as avatar_url
          from users u
@@ -758,6 +807,7 @@ function renderMessengerApp() {
         .app { height: 100vh; display: grid; grid-template-columns: 360px 1fr; }
         .sidebar { background: var(--sidebar); border-right: 1px solid var(--line); display: grid; grid-template-rows: auto auto 1fr; min-width: 0; }
         .topbar { padding: 16px; border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+        .me-box { display: grid; grid-template-columns: 44px 1fr; gap: 10px; align-items: center; min-width: 0; }
         .brand { min-width: 0; }
         .brand strong { display: block; font-size: 20px; overflow-wrap: anywhere; }
         .brand span { display: block; color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
@@ -782,6 +832,11 @@ function renderMessengerApp() {
         .composer textarea { min-height: 44px; max-height: 120px; resize: vertical; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
         .file-button { border: 1px solid var(--line); border-radius: 8px; min-width: 44px; min-height: 44px; display: grid; place-items: center; font-weight: 800; color: var(--accent); background: #fff; }
         .file-button input { display: none; }
+        .modal { position: fixed; inset: 0; background: rgba(15, 23, 42, .42); display: grid; place-items: center; padding: 18px; z-index: 20; }
+        .modal-card { width: min(560px, 100%); max-height: min(760px, 100%); overflow: auto; background: #fff; border-radius: 8px; border: 1px solid var(--line); padding: 20px; box-shadow: 0 24px 80px rgba(15, 23, 42, .22); }
+        .modal-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 16px; }
+        .segmented { display: flex; gap: 8px; flex-wrap: wrap; }
+        .small { font-size: 13px; }
         .empty { height: 100%; display: grid; place-items: center; text-align: center; color: var(--muted); padding: 24px; }
         .hidden { display: none !important; }
         @media (max-width: 780px) {
@@ -823,6 +878,7 @@ function renderMessengerApp() {
             </div>
             <div id="authError" class="error"></div>
             <button id="authSubmit" class="primary" type="submit">Anmelden</button>
+            <a id="googleLogin" class="primary hidden" style="text-align:center;text-decoration:none;" href="/auth/google">Mit Google fortfahren</a>
             <button id="toggleAuth" class="ghost" type="button">Neues Konto erstellen</button>
         </form>
     </div>
@@ -830,11 +886,14 @@ function renderMessengerApp() {
     <div id="messenger" class="app hidden">
         <aside id="sidebar" class="sidebar">
             <div class="topbar">
-                <div class="brand">
-                    <strong id="meName">JustChat</strong>
-                    <span id="meUsername"></span>
-                </div>
-                <button id="logout" class="ghost" type="button">Logout</button>
+                <button id="accountButton" class="me-box ghost" type="button">
+                    <div id="meAvatar" class="avatar">J</div>
+                    <div class="brand">
+                        <strong id="meName">JustChat</strong>
+                        <span id="meUsername"></span>
+                    </div>
+                </button>
+                <button id="addPerson" class="primary" type="button">+</button>
             </div>
             <div class="search">
                 <input id="search" placeholder="Nutzer suchen">
@@ -866,6 +925,54 @@ function renderMessengerApp() {
         </section>
     </div>
 
+    <div id="accountModal" class="modal hidden">
+        <form id="profileForm" class="modal-card stack">
+            <div class="modal-head">
+                <h2>Mein Account</h2>
+                <button id="closeAccount" class="ghost" type="button">Schliessen</button>
+            </div>
+            <div class="field">
+                <label for="profileDisplayName">Anzeigename</label>
+                <input id="profileDisplayName" maxlength="60">
+            </div>
+            <div class="field">
+                <label for="profileEmail">E-Mail</label>
+                <input id="profileEmail" type="email" maxlength="160">
+            </div>
+            <div class="field">
+                <label for="profileAbout">Info</label>
+                <textarea id="profileAbout" maxlength="180"></textarea>
+            </div>
+            <div class="field">
+                <label>Profilbild</label>
+                <div id="profileAvatarPicker" class="avatar-picker"></div>
+            </div>
+            <label class="segmented">
+                <input id="profile2fa" type="checkbox" style="width:auto;">
+                <span>2FA per E-Mail-Code aktivieren</span>
+            </label>
+            <p class="muted small">Bei aktivierter 2FA wird beim Login ein Code an deine E-Mail gesendet.</p>
+            <div id="profileError" class="error"></div>
+            <button class="primary" type="submit">Profil speichern</button>
+            <button id="logout" class="ghost" type="button">Logout</button>
+        </form>
+    </div>
+
+    <div id="addModal" class="modal hidden">
+        <form id="addForm" class="modal-card stack">
+            <div class="modal-head">
+                <h2>Person adden</h2>
+                <button id="closeAdd" class="ghost" type="button">Schliessen</button>
+            </div>
+            <div class="field">
+                <label for="addUsername">@name</label>
+                <input id="addUsername" placeholder="@benutzername" maxlength="41">
+            </div>
+            <div id="addError" class="error"></div>
+            <button class="primary" type="submit">Chat starten</button>
+        </form>
+    </div>
+
     <script>
         const state = {
             token: localStorage.getItem('justchat_token'),
@@ -874,8 +981,10 @@ function renderMessengerApp() {
             activeConversation: null,
             eventSource: null,
             registerMode: false,
+            pendingTwoFactorUserId: null,
             avatars: [],
             selectedAvatarId: null,
+            profileAvatarId: null,
         };
 
         const $ = (id) => document.getElementById(id);
@@ -904,6 +1013,9 @@ function renderMessengerApp() {
         function showAuth() {
             $('auth').classList.remove('hidden');
             $('messenger').classList.add('hidden');
+            fetch('/api/config').then((res) => res.json()).then((config) => {
+                $('googleLogin').classList.toggle('hidden', !config.googleEnabled);
+            }).catch(() => {});
         }
 
         function showApp() {
@@ -939,6 +1051,17 @@ function renderMessengerApp() {
             }
             $('avatarPicker').innerHTML = state.avatars.map((avatar) =>
                 '<button type="button" class="avatar-option ' + (Number(state.selectedAvatarId) === Number(avatar.id) ? 'selected' : '') + '" data-avatar="' + avatar.id + '">' +
+                '<img src="' + avatar.data_url + '" alt="' + escapeText(avatar.name) + '"></button>'
+            ).join('');
+        }
+
+        function renderProfileAvatarPicker() {
+            if (!state.avatars.length) {
+                $('profileAvatarPicker').innerHTML = '<span class="muted">Noch keine Profilbilder verfuegbar.</span>';
+                return;
+            }
+            $('profileAvatarPicker').innerHTML = state.avatars.map((avatar) =>
+                '<button type="button" class="avatar-option ' + (Number(state.profileAvatarId) === Number(avatar.id) ? 'selected' : '') + '" data-profile-avatar="' + avatar.id + '">' +
                 '<img src="' + avatar.data_url + '" alt="' + escapeText(avatar.name) + '"></button>'
             ).join('');
         }
@@ -1008,8 +1131,21 @@ function renderMessengerApp() {
         async function loadMe() {
             const data = await api('/api/me');
             state.me = data.user;
+            state.profileAvatarId = state.me.avatar_asset_id;
             $('meName').textContent = state.me.display_name;
             $('meUsername').textContent = '@' + state.me.username;
+            $('meAvatar').outerHTML = avatarMarkup(state.me).replace('class="avatar"', 'id="meAvatar" class="avatar"');
+        }
+
+        async function openAccount() {
+            await loadAvatars();
+            $('profileDisplayName').value = state.me.display_name || '';
+            $('profileEmail').value = state.me.email || '';
+            $('profileAbout').value = state.me.about || '';
+            $('profile2fa').checked = Boolean(state.me.two_factor_enabled);
+            state.profileAvatarId = state.me.avatar_asset_id;
+            renderProfileAvatarPicker();
+            $('accountModal').classList.remove('hidden');
         }
 
         async function loadConversations() {
@@ -1076,6 +1212,18 @@ function renderMessengerApp() {
             try {
                 const endpoint = state.registerMode ? '/api/auth/register' : '/api/auth/login';
                 const data = await api(endpoint, { method: 'POST', body: JSON.stringify(body) });
+                if (data.twoFactorRequired) {
+                    const code = prompt('2FA-Code aus deiner E-Mail eingeben');
+                    if (!code) return;
+                    const verified = await api('/api/auth/verify-2fa', {
+                        method: 'POST',
+                        body: JSON.stringify({ userId: data.userId, code }),
+                    });
+                    state.token = verified.token;
+                    localStorage.setItem('justchat_token', state.token);
+                    await boot();
+                    return;
+                }
                 state.token = data.token;
                 localStorage.setItem('justchat_token', state.token);
                 await boot();
@@ -1085,11 +1233,58 @@ function renderMessengerApp() {
         });
 
         $('toggleAuth').addEventListener('click', () => setAuthMode(!state.registerMode));
+        $('accountButton').addEventListener('click', openAccount);
+        $('closeAccount').addEventListener('click', () => $('accountModal').classList.add('hidden'));
+        $('addPerson').addEventListener('click', () => $('addModal').classList.remove('hidden'));
+        $('closeAdd').addEventListener('click', () => $('addModal').classList.add('hidden'));
         $('avatarPicker').addEventListener('click', (event) => {
             const button = event.target.closest('[data-avatar]');
             if (!button) return;
             state.selectedAvatarId = button.dataset.avatar;
             renderAvatarPicker();
+        });
+        $('profileAvatarPicker').addEventListener('click', (event) => {
+            const button = event.target.closest('[data-profile-avatar]');
+            if (!button) return;
+            state.profileAvatarId = button.dataset.profileAvatar;
+            renderProfileAvatarPicker();
+        });
+        $('profileForm').addEventListener('submit', async (event) => {
+            event.preventDefault();
+            $('profileError').textContent = '';
+            try {
+                await api('/api/me', {
+                    method: 'PATCH',
+                    body: JSON.stringify({
+                        displayName: $('profileDisplayName').value,
+                        email: $('profileEmail').value,
+                        about: $('profileAbout').value,
+                        avatarAssetId: state.profileAvatarId,
+                        twoFactorEnabled: $('profile2fa').checked,
+                    }),
+                });
+                await loadMe();
+                $('accountModal').classList.add('hidden');
+            } catch (error) {
+                $('profileError').textContent = error.message;
+            }
+        });
+        $('addForm').addEventListener('submit', async (event) => {
+            event.preventDefault();
+            $('addError').textContent = '';
+            const username = $('addUsername').value.trim().replace(/^@/, '');
+            try {
+                const data = await api('/api/conversations/by-username', {
+                    method: 'POST',
+                    body: JSON.stringify({ username }),
+                });
+                $('addUsername').value = '';
+                $('addModal').classList.add('hidden');
+                await loadConversations();
+                await openConversation(data.conversation.id);
+            } catch (error) {
+                $('addError').textContent = error.message;
+            }
         });
         $('logout').addEventListener('click', () => {
             localStorage.removeItem('justchat_token');
@@ -1177,6 +1372,12 @@ app.get('/health', async (req, res) => {
         ok: data.database.online !== false,
         uptime: data.uptime,
         database: data.database,
+    });
+});
+
+app.get('/api/config', (req, res) => {
+    res.json({
+        googleEnabled: Boolean(PUBLIC_BASE_URL && GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET),
     });
 });
 
@@ -1367,6 +1568,11 @@ app.post('/api/auth/login', async (req, res, next) => {
         }
 
         await query('update users set last_seen_at = now() where id = $1', [user.id]);
+        if (user.two_factor_enabled) {
+            await sendTwoFactorCode(user);
+            return res.json({ twoFactorRequired: true, userId: user.id });
+        }
+
         return res.json({
             token: createToken(user),
             user: {
@@ -1380,6 +1586,125 @@ app.post('/api/auth/login', async (req, res, next) => {
                 last_seen_at: user.last_seen_at,
             },
         });
+    } catch (error) {
+        return next(error);
+    }
+});
+
+app.post('/api/auth/verify-2fa', async (req, res, next) => {
+    try {
+        const userId = parseId(req.body.userId);
+        const code = String(req.body.code || '').trim();
+        if (!userId || !/^\d{6}$/.test(code)) {
+            return res.status(400).json({ error: 'Ungueltiger 2FA-Code' });
+        }
+
+        const result = await query(
+            `select lc.*, u.id as user_id, u.username, u.display_name, u.email, u.about, u.avatar_color,
+                u.avatar_asset_id, u.two_factor_enabled, u.created_at, u.last_seen_at
+             from login_codes lc
+             join users u on u.id = lc.user_id
+             where lc.user_id = $1 and lc.used_at is null and lc.expires_at > now()
+             order by lc.created_at desc
+             limit 1`,
+            [userId],
+        );
+        const row = result.rows[0];
+        if (!row || !verifyPassword(code, row.code_hash)) {
+            return res.status(401).json({ error: '2FA-Code ist falsch oder abgelaufen' });
+        }
+
+        await query('update login_codes set used_at = now() where id = $1', [row.id]);
+        const user = {
+            id: row.user_id,
+            username: row.username,
+            display_name: row.display_name,
+            email: row.email,
+            about: row.about,
+            avatar_color: row.avatar_color,
+            avatar_asset_id: row.avatar_asset_id,
+            two_factor_enabled: row.two_factor_enabled,
+            created_at: row.created_at,
+            last_seen_at: row.last_seen_at,
+        };
+        return res.json({ token: createToken(user), user });
+    } catch (error) {
+        return next(error);
+    }
+});
+
+app.get('/auth/google', (req, res) => {
+    if (!PUBLIC_BASE_URL || !GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET) {
+        return res.status(503).send('Google Login ist noch nicht konfiguriert');
+    }
+
+    const redirectUri = `${PUBLIC_BASE_URL.replace(/\/$/, '')}/auth/google/callback`;
+    const params = new URLSearchParams({
+        client_id: GOOGLE_CLIENT_ID,
+        redirect_uri: redirectUri,
+        response_type: 'code',
+        scope: 'openid email profile',
+        prompt: 'select_account',
+    });
+    return res.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`);
+});
+
+app.get('/auth/google/callback', async (req, res, next) => {
+    try {
+        if (!PUBLIC_BASE_URL || !GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET) {
+            return res.status(503).send('Google Login ist noch nicht konfiguriert');
+        }
+
+        const code = String(req.query.code || '');
+        if (!code) return res.status(400).send('Google Code fehlt');
+
+        const redirectUri = `${PUBLIC_BASE_URL.replace(/\/$/, '')}/auth/google/callback`;
+        const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({
+                code,
+                client_id: GOOGLE_CLIENT_ID,
+                client_secret: GOOGLE_CLIENT_SECRET,
+                redirect_uri: redirectUri,
+                grant_type: 'authorization_code',
+            }),
+        });
+        const tokenData = await tokenResponse.json();
+        if (!tokenResponse.ok) throw new Error(tokenData.error_description || 'Google Token fehlgeschlagen');
+
+        const profileResponse = await fetch('https://openidconnect.googleapis.com/v1/userinfo', {
+            headers: { Authorization: `Bearer ${tokenData.access_token}` },
+        });
+        const profile = await profileResponse.json();
+        if (!profileResponse.ok || !profile.sub || !profile.email) {
+            throw new Error('Google Profil konnte nicht geladen werden');
+        }
+
+        const usernameBase = normalizeUsername(profile.email.split('@')[0]).replace(/[^a-z0-9_]/g, '_').slice(0, 30) || 'google';
+        const existing = await query('select * from users where google_id = $1 or email = $2 limit 1', [profile.sub, cleanEmail(profile.email)]);
+        let user = existing.rows[0];
+
+        if (!user) {
+            const passwordHash = hashPassword(crypto.randomBytes(24).toString('hex'));
+            const username = `${usernameBase}_${crypto.randomInt(1000, 9999)}`;
+            const inserted = await query(
+                `insert into users (username, display_name, email, google_id, password_hash, avatar_color, email_verified_at)
+                 values ($1, $2, $3, $4, $5, $6, now())
+                 returning *`,
+                [username, String(profile.name || username).slice(0, 60), cleanEmail(profile.email), profile.sub, passwordHash, '#0f766e'],
+            );
+            user = inserted.rows[0];
+        } else if (!user.google_id) {
+            const updated = await query('update users set google_id = $1, email_verified_at = now() where id = $2 returning *', [profile.sub, user.id]);
+            user = updated.rows[0];
+        }
+
+        const token = createToken(user);
+        return res.send(`<!doctype html><html><body><script>
+            localStorage.setItem('justchat_token', ${JSON.stringify(token)});
+            location.href = '/';
+        </script></body></html>`);
     } catch (error) {
         return next(error);
     }
@@ -1403,6 +1728,38 @@ app.get('/api/avatars', async (req, res, next) => {
 
 app.get('/api/me', requireAuth, (req, res) => {
     res.json({ user: req.user });
+});
+
+app.patch('/api/me', requireAuth, async (req, res, next) => {
+    try {
+        const displayName = cleanDisplayName(req.body.displayName, req.user.username);
+        const email = cleanEmail(req.body.email);
+        const about = String(req.body.about || '').trim().slice(0, 180);
+        const avatarAssetId = parseId(req.body.avatarAssetId);
+        const twoFactorEnabled = Boolean(req.body.twoFactorEnabled);
+
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+            return res.status(400).json({ error: 'Bitte gib eine gueltige E-Mail-Adresse ein' });
+        }
+        if (twoFactorEnabled && !getMailer()) {
+            return res.status(400).json({ error: '2FA braucht vollstaendige SMTP-Konfiguration' });
+        }
+
+        const result = await query(
+            `update users
+             set display_name = $1, email = $2, about = $3, avatar_asset_id = $4, two_factor_enabled = $5
+             where id = $6
+             returning id`,
+            [displayName, email, about, avatarAssetId, twoFactorEnabled, req.user.id],
+        );
+        if (!result.rows[0]) return res.status(404).json({ error: 'Benutzer nicht gefunden' });
+
+        const user = await getUserById(req.user.id);
+        return res.json({ user });
+    } catch (error) {
+        if (error.code === '23505') return res.status(409).json({ error: 'E-Mail ist bereits vergeben' });
+        return next(error);
+    }
 });
 
 app.get('/api/users', requireAuth, async (req, res, next) => {
@@ -1489,6 +1846,30 @@ app.post('/api/conversations', requireAuth, async (req, res, next) => {
         );
 
         return res.status(201).json({ conversation: { id: result.rows[0].id } });
+    } catch (error) {
+        return next(error);
+    }
+});
+
+app.post('/api/conversations/by-username', requireAuth, async (req, res, next) => {
+    try {
+        const username = normalizeUsername(req.body.username);
+        if (!username) return res.status(400).json({ error: 'Bitte @name eingeben' });
+
+        const result = await query('select id from users where username = $1 and id <> $2', [username, req.user.id]);
+        const user = result.rows[0];
+        if (!user) return res.status(404).json({ error: 'Nutzer nicht gefunden' });
+
+        const [userOneId, userTwoId] = conversationPair(req.user.id, user.id);
+        const conversation = await query(
+            `insert into conversations (user_one_id, user_two_id)
+             values ($1, $2)
+             on conflict (user_one_id, user_two_id) do update set user_one_id = excluded.user_one_id
+             returning id`,
+            [userOneId, userTwoId],
+        );
+
+        return res.status(201).json({ conversation: { id: conversation.rows[0].id } });
     } catch (error) {
         return next(error);
     }
