@@ -7,6 +7,7 @@ const app = express();
 const PORT = process.env.PORT || 50070;
 const ADMIN_USER = process.env.ADMIN_USER || 'admin';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
+const ADMIN_SESSION_COOKIE = 'justchat_admin_session';
 const DATABASE_URL = process.env.DATABASE_URL;
 const AUTH_SECRET = process.env.AUTH_SECRET || ADMIN_PASSWORD || 'change-this-secret';
 const SMTP_HOST = process.env.SMTP_HOST;
@@ -151,6 +152,34 @@ function verifyToken(token) {
     } catch {
         return null;
     }
+}
+
+function createAdminSessionToken() {
+    const payload = base64Url(JSON.stringify({
+        scope: 'admin',
+        username: ADMIN_USER,
+        exp: Date.now() + 1000 * 60 * 60 * 12,
+    }));
+    return `${payload}.${sign(payload)}`;
+}
+
+function readCookie(req, name) {
+    const prefix = `${name}=`;
+    const cookie = String(req.headers.cookie || '')
+        .split(';')
+        .map((item) => item.trim())
+        .find((item) => item.startsWith(prefix));
+    if (!cookie) return '';
+    try {
+        return decodeURIComponent(cookie.slice(prefix.length));
+    } catch {
+        return '';
+    }
+}
+
+function hasAdminSession(req) {
+    const session = verifyToken(readCookie(req, ADMIN_SESSION_COOKIE));
+    return Boolean(session && session.scope === 'admin' && session.username === ADMIN_USER);
 }
 
 function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
@@ -370,6 +399,21 @@ async function sendTwoFactorCode(user) {
         throw error;
     }
 
+    const recentCode = await query(
+        `select greatest(0, ceil(extract(epoch from (created_at + interval '60 seconds' - now()))))::int as retry_after_seconds
+         from login_codes
+         where user_id = $1 and used_at is null and created_at > now() - interval '60 seconds'
+         order by created_at desc
+         limit 1`,
+        [user.id],
+    );
+    if (recentCode.rows[0]) {
+        return {
+            sent: false,
+            retryAfterSeconds: recentCode.rows[0].retry_after_seconds,
+        };
+    }
+
     const code = createLoginCode();
     await query(
         `insert into login_codes (user_id, code_hash, expires_at)
@@ -388,6 +432,7 @@ async function sendTwoFactorCode(user) {
             note: 'Der Code ist 10 Minuten gültig. Falls du dich nicht anmelden wolltest, kannst du diese E-Mail ignorieren.',
         }),
     });
+    return { sent: true, retryAfterSeconds: 60 };
 }
 
 async function sendPasswordResetCode(user) {
@@ -788,25 +833,9 @@ function requireAdminAuth(req, res, next) {
         `));
     }
 
-    const authHeader = req.headers.authorization || '';
-    const [scheme, encoded] = authHeader.split(' ');
-
-    if (scheme === 'Basic' && encoded) {
-        const credentials = Buffer.from(encoded, 'base64').toString('utf8');
-        const separatorIndex = credentials.indexOf(':');
-
-        if (separatorIndex >= 0) {
-            const user = credentials.slice(0, separatorIndex);
-            const password = credentials.slice(separatorIndex + 1);
-
-            if (user === ADMIN_USER && password === ADMIN_PASSWORD) {
-                return next();
-            }
-        }
-    }
-
-    res.set('WWW-Authenticate', 'Basic realm="JustChat Admin"');
-    return res.status(401).send('Admin login erforderlich');
+    if (hasAdminSession(req)) return next();
+    if (req.method === 'GET' && req.path === '/admin/export') return res.redirect('/admin');
+    return res.status(401).json({ error: 'Admin login erforderlich' });
 }
 
 function statusClass(value) {
@@ -889,6 +918,13 @@ function renderAdminLayout(content) {
         .sound-card { border: 1px solid var(--line); border-radius: 8px; padding: 12px; display: grid; gap: 10px; background: #fff; }
         .sound-card audio { width: 100%; }
         .notice { border: 1px solid #fedf89; background: #fffaeb; color: #7a4f01; border-radius: 8px; padding: 12px; margin-top: 16px; }
+        .admin-login-shell { min-height: calc(100vh - 56px); display: grid; place-items: center; }
+        .admin-login-card { width: min(420px, 100%); background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 28px; box-shadow: 0 18px 42px rgba(15, 23, 42, .1); }
+        .admin-login-card h1 { margin-bottom: 8px; }
+        .admin-login-card form { display: grid; gap: 14px; margin-top: 22px; }
+        .admin-login-card button { width: 100%; margin-top: 4px; }
+        .login-error { border-radius: 8px; padding: 10px 12px; background: #fef3f2; color: var(--error); font-size: 14px; }
+        .hidden { display: none !important; }
         @media (max-width: 820px) {
             header { align-items: flex-start; flex-direction: column; }
             .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -906,6 +942,57 @@ function renderAdminLayout(content) {
 </html>`;
 }
 
+function renderAdminLogin() {
+    return renderAdminLayout(`
+        <div class="admin-login-shell">
+            <section class="admin-login-card">
+                <h1>JustChat Admin</h1>
+                <p class="muted">Melde dich an, um Verwaltung und Systemstatus zu öffnen.</p>
+                <form id="adminLoginForm">
+                    <div class="field">
+                        <label for="adminUsername">Benutzername</label>
+                        <input id="adminUsername" name="username" autocomplete="username" required>
+                    </div>
+                    <div class="field">
+                        <label for="adminPassword">Passwort</label>
+                        <input id="adminPassword" name="password" type="password" autocomplete="current-password" required>
+                    </div>
+                    <p id="adminLoginError" class="login-error hidden" role="alert"></p>
+                    <button id="adminLoginButton" type="submit">Anmelden</button>
+                </form>
+                <p class="muted" style="margin-top: 18px;"><a href="/">Zur Web-App</a></p>
+            </section>
+        </div>
+        <script>
+            const form = document.getElementById('adminLoginForm');
+            const error = document.getElementById('adminLoginError');
+            const button = document.getElementById('adminLoginButton');
+            form.addEventListener('submit', async (event) => {
+                event.preventDefault();
+                error.classList.add('hidden');
+                button.disabled = true;
+                try {
+                    const response = await fetch('/admin/login', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            username: document.getElementById('adminUsername').value,
+                            password: document.getElementById('adminPassword').value,
+                        }),
+                    });
+                    const data = await response.json().catch(() => ({}));
+                    if (!response.ok) throw new Error(data.error || 'Anmeldung fehlgeschlagen');
+                    window.location.replace('/admin');
+                } catch (submitError) {
+                    error.textContent = submitError.message;
+                    error.classList.remove('hidden');
+                    button.disabled = false;
+                }
+            });
+        </script>
+    `);
+}
+
 function renderDashboard(data) {
     const dbStatus = statusClass(data.database.online);
 
@@ -918,6 +1005,7 @@ function renderDashboard(data) {
             <div class="toolbar">
                 <button id="refreshButton" type="button">Aktualisieren</button>
                 <a class="button secondary" href="/">Web-App</a>
+                <button id="logoutButton" class="secondary" type="button">Abmelden</button>
                 <span class="status ${dbStatus}">Datenbank: ${statusText(data.database.online)}</span>
             </div>
         </header>
@@ -1059,6 +1147,10 @@ function renderDashboard(data) {
                     headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
                 });
                 const data = await response.json().catch(() => ({}));
+                if (response.status === 401) {
+                    window.location.replace('/admin');
+                    throw new Error('Admin-Sitzung abgelaufen');
+                }
                 if (!response.ok) throw new Error(data.error || 'Admin-Anfrage fehlgeschlagen');
                 return data;
             }
@@ -1113,6 +1205,10 @@ function renderDashboard(data) {
 
             el('refreshButton').addEventListener('click', loadAdmin);
             el('updateButton').addEventListener('click', loadAdmin);
+            el('logoutButton').addEventListener('click', async () => {
+                await fetch('/admin/logout', { method: 'POST' });
+                window.location.replace('/admin');
+            });
             el('imageUpdateButton').addEventListener('click', async () => {
                 if (!confirm('Neues Container-Image anfordern und einen möglichen Neustart auslösen?')) return;
                 try {
@@ -1390,38 +1486,41 @@ function renderMessengerApp() {
                 <div id="avatarPicker" class="avatar-picker"></div>
                 <p class="muted">Profilbilder werden vom Admin freigegeben.</p>
             </div>
-            <div class="field">
-                <label for="username">Benutzername</label>
-                <input id="username" autocomplete="username" required maxlength="32">
+            <div id="authPrimaryFields" class="stack">
+                <div class="field">
+                    <label for="username">Benutzername</label>
+                    <input id="username" autocomplete="username" required maxlength="32">
+                </div>
+                <div class="field">
+                    <label for="password">Passwort</label>
+                    <input id="password" type="password" autocomplete="current-password" required minlength="6">
+                </div>
+                <div class="field register-only hidden">
+                    <label for="passwordRepeat">Passwort wiederholen</label>
+                    <input id="passwordRepeat" type="password" autocomplete="new-password" minlength="6">
+                </div>
+                <label class="segmented register-only hidden">
+                    <input id="register2fa" type="checkbox" style="width:auto;">
+                    <span>2FA per E-Mail-Code aktivieren</span>
+                </label>
+                <button id="authSubmit" class="primary" type="submit">Anmelden</button>
+                <a id="googleLogin" class="primary hidden" style="text-align:center;text-decoration:none;" href="/auth/google">Mit Google fortfahren</a>
+                <button id="toggleAuth" class="ghost" type="button">Neues Konto erstellen</button>
+                <div class="segmented">
+                    <button id="forgotUsername" class="ghost" type="button">Benutzername vergessen</button>
+                    <button id="forgotPassword" class="ghost" type="button">Passwort vergessen</button>
+                </div>
             </div>
-            <div class="field">
-                <label for="password">Passwort</label>
-                <input id="password" type="password" autocomplete="current-password" required minlength="6">
-            </div>
-            <div class="field register-only hidden">
-                <label for="passwordRepeat">Passwort wiederholen</label>
-                <input id="passwordRepeat" type="password" autocomplete="new-password" minlength="6">
-            </div>
-            <label class="segmented register-only hidden">
-                <input id="register2fa" type="checkbox" style="width:auto;">
-                <span>2FA per E-Mail-Code aktivieren</span>
-            </label>
             <div id="authError" class="error"></div>
-            <button id="authSubmit" class="primary" type="submit">Anmelden</button>
-            <a id="googleLogin" class="primary hidden" style="text-align:center;text-decoration:none;" href="/auth/google">Mit Google fortfahren</a>
-            <button id="toggleAuth" class="ghost" type="button">Neues Konto erstellen</button>
-            <div class="segmented">
-                <button id="forgotUsername" class="ghost" type="button">Benutzername vergessen</button>
-                <button id="forgotPassword" class="ghost" type="button">Passwort vergessen</button>
-            </div>
             <div id="twoFactorPanel" class="inline-panel hidden">
                 <strong>2FA-Bestätigung</strong>
-                <p class="muted small">Gib den Code aus deiner E-Mail ein.</p>
+                <p class="muted small">Gib den Code aus deiner E-Mail direkt hier ein.</p>
                 <div class="field">
                     <label for="twoFactorCode">Code</label>
                     <input id="twoFactorCode" inputmode="numeric" autocomplete="one-time-code" maxlength="6">
                 </div>
                 <button id="verifyTwoFactor" class="primary" type="button">Code bestätigen</button>
+                <button id="resendTwoFactor" class="ghost" type="button" disabled>Code erneut senden (60 s)</button>
                 <button id="cancelTwoFactor" class="ghost" type="button">Zurück zur Anmeldung</button>
             </div>
             <div id="forgotUsernamePanel" class="inline-panel hidden">
@@ -1640,6 +1739,8 @@ function renderMessengerApp() {
             serverOnline: true,
             connectionNoticeTimer: null,
             bootRetryTimer: null,
+            twoFactorResendTimer: null,
+            twoFactorResendUntil: 0,
         };
 
         const $ = (id) => document.getElementById(id);
@@ -1652,6 +1753,7 @@ function renderMessengerApp() {
                 if (!res.ok) {
                     const error = new Error(data.error || 'Anfrage fehlgeschlagen');
                     error.status = res.status;
+                    error.data = data;
                     throw error;
                 }
                 return data;
@@ -1696,12 +1798,48 @@ function renderMessengerApp() {
 
         function resetAuthPanels() {
             state.pendingTwoFactorUserId = null;
+            state.twoFactorResendUntil = 0;
+            if (state.twoFactorResendTimer) clearInterval(state.twoFactorResendTimer);
+            state.twoFactorResendTimer = null;
+            $('authPrimaryFields').classList.remove('hidden');
             $('twoFactorPanel').classList.add('hidden');
             $('forgotUsernamePanel').classList.add('hidden');
             $('forgotPasswordPanel').classList.add('hidden');
             $('resetFields').classList.add('hidden');
             $('twoFactorCode').value = '';
             $('authNotice').textContent = '';
+            $('authHint').textContent = state.registerMode
+                ? 'Erstelle dein JustChat-Konto.'
+                : 'Melde dich an, um deine Chats zu sehen.';
+        }
+
+        function startTwoFactorResendCountdown(seconds) {
+            if (state.twoFactorResendTimer) clearInterval(state.twoFactorResendTimer);
+            state.twoFactorResendUntil = Date.now() + Math.max(0, Number(seconds) || 60) * 1000;
+            const button = $('resendTwoFactor');
+            const updateButton = () => {
+                const remaining = Math.max(0, Math.ceil((state.twoFactorResendUntil - Date.now()) / 1000));
+                button.disabled = remaining > 0;
+                button.textContent = remaining > 0 ? 'Code erneut senden (' + remaining + ' s)' : 'Code erneut senden';
+                if (!remaining && state.twoFactorResendTimer) {
+                    clearInterval(state.twoFactorResendTimer);
+                    state.twoFactorResendTimer = null;
+                }
+            };
+            updateButton();
+            state.twoFactorResendTimer = setInterval(updateButton, 1000);
+        }
+
+        function beginTwoFactor(data) {
+            state.pendingTwoFactorUserId = data.userId;
+            $('authPrimaryFields').classList.add('hidden');
+            $('twoFactorPanel').classList.remove('hidden');
+            $('authHint').textContent = 'Bestätige deine Anmeldung mit deinem E-Mail-Code.';
+            $('authNotice').textContent = data.codeSent === false
+                ? 'Ein Login-Code wurde bereits gesendet. Prüfe bitte dein Postfach.'
+                : 'Ein Login-Code wurde an deine E-Mail gesendet.';
+            startTwoFactorResendCountdown(data.resendAfterSeconds || 60);
+            $('twoFactorCode').focus();
         }
 
         function setAuthMode(registerMode) {
@@ -2208,10 +2346,7 @@ function renderMessengerApp() {
                 const endpoint = state.registerMode ? '/api/auth/register' : '/api/auth/login';
                 const data = await api(endpoint, { method: 'POST', body: JSON.stringify(body) });
                 if (data.twoFactorRequired) {
-                    state.pendingTwoFactorUserId = data.userId;
-                    $('twoFactorPanel').classList.remove('hidden');
-                    $('authNotice').textContent = 'Ein Login-Code wurde an deine E-Mail gesendet.';
-                    $('twoFactorCode').focus();
+                    beginTwoFactor(data);
                     return;
                 }
                 state.token = data.token;
@@ -2355,6 +2490,22 @@ function renderMessengerApp() {
                 localStorage.setItem('justchat_token', state.token);
                 await boot();
             } catch (error) {
+                $('authError').textContent = error.message;
+            }
+        });
+        $('resendTwoFactor').addEventListener('click', async () => {
+            if (!state.pendingTwoFactorUserId || Date.now() < state.twoFactorResendUntil) return;
+            $('authError').textContent = '';
+            try {
+                const data = await api('/api/auth/resend-2fa', {
+                    method: 'POST',
+                    body: JSON.stringify({ userId: state.pendingTwoFactorUserId }),
+                });
+                $('authNotice').textContent = 'Ein neuer Login-Code wurde an deine E-Mail gesendet.';
+                startTwoFactorResendCountdown(data.resendAfterSeconds || 60);
+            } catch (error) {
+                const retryAfterSeconds = error.data && error.data.retryAfterSeconds;
+                if (retryAfterSeconds) startTwoFactorResendCountdown(retryAfterSeconds);
                 $('authError').textContent = error.message;
             }
         });
@@ -2591,9 +2742,36 @@ app.get('/api/config', (req, res) => {
     });
 });
 
-app.get('/admin', requireAdminAuth, async (req, res) => {
+app.get('/admin', async (req, res) => {
+    if (!ADMIN_PASSWORD) {
+        return requireAdminAuth(req, res, () => {});
+    }
+    if (!hasAdminSession(req)) return res.send(renderAdminLogin());
     const data = await getDashboardData();
-    res.send(renderDashboard(data));
+    return res.send(renderDashboard(data));
+});
+
+app.post('/admin/login', (req, res) => {
+    if (!ADMIN_PASSWORD) {
+        return res.status(503).json({ error: 'Die Admin-Anmeldung ist nicht konfiguriert' });
+    }
+    const username = String(req.body.username || '');
+    const password = String(req.body.password || '');
+    if (username !== ADMIN_USER || password !== ADMIN_PASSWORD) {
+        return res.status(401).json({ error: 'Benutzername oder Passwort ist falsch' });
+    }
+    res.cookie(ADMIN_SESSION_COOKIE, createAdminSessionToken(), {
+        httpOnly: true,
+        sameSite: 'strict',
+        maxAge: 1000 * 60 * 60 * 12,
+        path: '/admin',
+    });
+    return res.json({ ok: true });
+});
+
+app.post('/admin/logout', (req, res) => {
+    res.clearCookie(ADMIN_SESSION_COOKIE, { path: '/admin' });
+    return res.json({ ok: true });
 });
 
 app.get('/admin/api/overview', requireAdminAuth, async (req, res, next) => {
@@ -2940,8 +3118,13 @@ app.post('/api/auth/login', async (req, res, next) => {
 
         await query('update users set last_seen_at = now() where id = $1', [user.id]);
         if (user.two_factor_enabled) {
-            await sendTwoFactorCode(user);
-            return res.json({ twoFactorRequired: true, userId: user.id });
+            const delivery = await sendTwoFactorCode(user);
+            return res.json({
+                twoFactorRequired: true,
+                userId: user.id,
+                codeSent: delivery.sent,
+                resendAfterSeconds: delivery.retryAfterSeconds,
+            });
         }
 
         return res.json({
@@ -2957,6 +3140,27 @@ app.post('/api/auth/login', async (req, res, next) => {
                 last_seen_at: user.last_seen_at,
             },
         });
+    } catch (error) {
+        return next(error);
+    }
+});
+
+app.post('/api/auth/resend-2fa', async (req, res, next) => {
+    try {
+        const userId = parseId(req.body.userId);
+        if (!userId) return res.status(400).json({ error: 'Ungültige 2FA-Anfrage' });
+        const result = await query('select * from users where id = $1 and two_factor_enabled = true', [userId]);
+        const user = result.rows[0];
+        if (!user) return res.status(400).json({ error: 'Ungültige 2FA-Anfrage' });
+
+        const delivery = await sendTwoFactorCode(user);
+        if (!delivery.sent) {
+            return res.status(429).json({
+                error: 'Bitte warte, bevor du einen neuen Code anforderst.',
+                retryAfterSeconds: delivery.retryAfterSeconds,
+            });
+        }
+        return res.json({ ok: true, resendAfterSeconds: delivery.retryAfterSeconds });
     } catch (error) {
         return next(error);
     }

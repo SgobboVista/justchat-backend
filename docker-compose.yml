@@ -26,7 +26,7 @@ services:
       PUBLIC_BASE_URL: "http://DEINE-TRUENAS-IP:50070"
       GOOGLE_CLIENT_ID: "769973393963-2vosgga0eisngofob5kqmdbqvs0qqv77.apps.googleusercontent.com"
       GOOGLE_CLIENT_SECRET: "${GOOGLE_CLIENT_SECRET}"
-      FORBIDDEN_WORDS: "admin,administrator,moderator,system,support,root"
+      FORBIDDEN_WORDS: "admin,administrator,moderator,system,support,root,hitler"
       IMAGE_UPDATE_WEBHOOK_URL: "http://justchat-image-updater:8080/v1/update"
       IMAGE_UPDATE_WEBHOOK_METHOD: "GET"
       IMAGE_UPDATE_WEBHOOK_TOKEN: "${IMAGE_UPDATE_WEBHOOK_TOKEN:-bitte-einen-langen-geheimen-update-token-setzen}"
