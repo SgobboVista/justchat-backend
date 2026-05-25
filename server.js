@@ -1378,7 +1378,7 @@ function renderMessengerApp() {
         .app { height: 100vh; height: 100dvh; display: grid; grid-template-columns: 360px 1fr; overflow: hidden; }
         .sidebar { background: var(--sidebar); border-right: 1px solid var(--line); display: grid; grid-template-rows: auto auto auto 1fr; min-width: 0; min-height: 0; }
         .topbar { padding: 16px; border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-        .me-box { display: grid; grid-template-columns: 44px 1fr; gap: 10px; align-items: center; min-width: 0; }
+        .me-box { display: grid; grid-template-columns: 50px 1fr; gap: 10px; align-items: center; min-width: 0; }
         .top-actions { display: flex; align-items: center; gap: 6px; }
         .icon-button { width: 42px; height: 42px; border-radius: 50%; display: grid; place-items: center; padding: 0; }
         .icon-button svg { width: 21px; height: 21px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
@@ -1395,9 +1395,17 @@ function renderMessengerApp() {
         .request-actions button { padding: 6px 8px; border-radius: 6px; font-size: 12px; }
         .request-status { color: var(--muted); font-size: 12px; }
         .list { overflow: auto; }
-        .row { width: 100%; background: transparent; display: grid; grid-template-columns: 44px 1fr; gap: 12px; padding: 12px 16px; text-align: left; border-bottom: 1px solid #edf1f6; }
+        .row { width: 100%; background: transparent; display: grid; grid-template-columns: 50px 1fr; gap: 12px; padding: 12px 16px; text-align: left; border-bottom: 1px solid #edf1f6; }
         .row:hover, .row.active { background: #eef8f6; }
         .avatar { width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; color: #fff; font-weight: 800; object-fit: cover; }
+        .avatar-frame { display: inline-grid; place-items: center; border-radius: 50%; padding: 3px; width: max-content; height: max-content; flex: none; }
+        .avatar-frame.bronze { background: linear-gradient(135deg, #cd7f32, #8c4d18); }
+        .avatar-frame.silver { background: linear-gradient(135deg, #f1f5f9, #94a3b8); }
+        .avatar-frame.gold { background: linear-gradient(135deg, #fde68a, #d97706); }
+        .avatar-frame.diamond { background: linear-gradient(120deg, #a5f3fc, #fff, #c4b5fd, #67e8f9); background-size: 240% 240%; animation: diamondSparkle 2.2s ease-in-out infinite; box-shadow: 0 0 12px rgba(103, 232, 249, .8); }
+        .avatar-frame.none { padding: 0; }
+        .contact-frame { margin: 0 auto; }
+        @keyframes diamondSparkle { 0%, 100% { background-position: 0% 50%; } 50% { background-position: 100% 50%; box-shadow: 0 0 17px rgba(196, 181, 253, .95); } }
         .row-main { min-width: 0; }
         .row-title { display: flex; justify-content: space-between; gap: 8px; min-width: 0; }
         .row-title strong, .preview { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1422,6 +1430,9 @@ function renderMessengerApp() {
         .file-button svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
         .file-button input { display: none; }
         .attachment-preview { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; gap: 10px; border-radius: 8px; background: #eef8f6; color: var(--text); padding: 8px 10px; font-size: 13px; }
+        .attachment-info { display: flex; align-items: center; gap: 10px; min-width: 0; }
+        .attachment-image-preview { width: 56px; height: 56px; object-fit: cover; border-radius: 8px; flex: none; }
+        .attachment-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .attachment-preview button { background: transparent; color: var(--danger); font-weight: 700; padding: 3px 6px; }
         .send-button { width: 48px; height: 48px; border-radius: 50%; display: grid; place-items: center; padding: 0; overflow: hidden; }
         .send-button svg { width: 23px; height: 23px; fill: none; stroke: currentColor; stroke-width: 2.3; stroke-linecap: round; stroke-linejoin: round; transform: translateX(1px); }
@@ -1447,6 +1458,7 @@ function renderMessengerApp() {
         .modal { position: fixed; inset: 0; background: rgba(15, 23, 42, .42); display: grid; place-items: center; padding: 18px; z-index: 20; }
         .modal-card { width: min(560px, 100%); max-height: min(760px, 100%); overflow: auto; background: #fff; border-radius: 8px; border: 1px solid var(--line); padding: 20px; box-shadow: 0 24px 80px rgba(15, 23, 42, .22); }
         .modal-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 16px; }
+        .close-button { width: 38px; height: 38px; display: grid; place-items: center; font-size: 28px; line-height: 1; padding: 0; border-radius: 50%; }
         .segmented { display: flex; gap: 8px; flex-wrap: wrap; }
         .small { font-size: 13px; }
         .empty { height: 100%; display: grid; place-items: center; text-align: center; color: var(--muted); padding: 24px; }
@@ -1516,7 +1528,7 @@ function renderMessengerApp() {
             <div class="field register-only hidden">
                 <label>Profilbild</label>
                 <div id="avatarPicker" class="avatar-picker"></div>
-                <p class="muted">Profilbilder werden vom Admin freigegeben.</p>
+                <p class="muted">Wähle ein Standardbild aus. Ein eigenes Profilbild kannst du später in den Einstellungen hochladen.</p>
             </div>
             <div id="authPrimaryFields" class="stack">
                 <div class="field">
@@ -1553,7 +1565,7 @@ function renderMessengerApp() {
                 </div>
                 <button id="verifyTwoFactor" class="primary" type="button">Code bestätigen</button>
                 <button id="resendTwoFactor" class="ghost" type="button" disabled>Code erneut senden (60 s)</button>
-                <button id="cancelTwoFactor" class="ghost" type="button">Zurück zur Anmeldung</button>
+                <button id="cancelTwoFactor" class="ghost close-button" type="button" aria-label="2FA schließen" title="Schließen">&times;</button>
             </div>
             <div id="forgotUsernamePanel" class="inline-panel hidden">
                 <strong>Benutzername wiederfinden</strong>
@@ -1594,7 +1606,7 @@ function renderMessengerApp() {
         <aside id="sidebar" class="sidebar">
             <div class="topbar">
                 <div class="me-box">
-                    <div id="meAvatar" class="avatar">J</div>
+                    <div id="meAvatarSlot"><div id="meAvatar" class="avatar">J</div></div>
                     <div class="brand">
                         <strong id="meName">JustChat</strong>
                         <span id="meUsername"></span>
@@ -1621,9 +1633,9 @@ function renderMessengerApp() {
             <div id="chatEmpty" class="empty">Wähle einen Chat aus oder suche einen Nutzer.</div>
             <div id="chatPane" class="hidden" style="display: contents;">
                 <div class="chat-head">
-                    <button id="back" class="ghost" type="button">Zurück</button>
+                    <button id="back" class="ghost close-button" type="button" aria-label="Chat schließen" title="Schließen">&times;</button>
                     <button id="chatProfileButton" class="chat-profile" type="button" aria-label="Profil anzeigen">
-                        <div id="chatAvatar" class="avatar">?</div>
+                        <div id="chatAvatarSlot"><div id="chatAvatar" class="avatar">?</div></div>
                         <div class="brand">
                             <strong id="chatName"></strong>
                             <span id="chatUser"></span>
@@ -1650,7 +1662,7 @@ function renderMessengerApp() {
                 <form id="profileForm" class="settings-card stack">
                     <div class="modal-head">
                         <h2>Mein Account</h2>
-                        <button id="closeAccount" class="ghost" type="button">Zurück</button>
+                        <button id="closeAccount" class="ghost close-button" type="button" aria-label="Einstellungen schließen" title="Schließen">&times;</button>
                     </div>
                     <section class="settings-section">
                         <h3>Profil</h3>
@@ -1670,6 +1682,10 @@ function renderMessengerApp() {
                         <div class="field">
                             <label for="profileAbout">Info</label>
                             <textarea id="profileAbout" maxlength="180"></textarea>
+                        </div>
+                        <div class="field">
+                            <label>Registriert seit</label>
+                            <div id="profileRegisteredSince" class="contact-about"></div>
                         </div>
                         <div class="field">
                             <label>Profilbild</label>
@@ -1754,9 +1770,9 @@ function renderMessengerApp() {
                 <div class="settings-card stack">
                     <div class="modal-head">
                         <h2>Kontaktprofil</h2>
-                        <button id="closeContact" class="ghost" type="button">Zurück</button>
+                        <button id="closeContact" class="ghost close-button" type="button" aria-label="Profil schließen" title="Schließen">&times;</button>
                     </div>
-                    <div id="contactAvatar" class="avatar contact-avatar">?</div>
+                    <div id="contactAvatarSlot"><div id="contactAvatar" class="avatar contact-avatar">?</div></div>
                     <div class="contact-heading">
                         <strong id="contactName"></strong>
                         <span id="contactUsername" class="muted"></span>
@@ -1768,6 +1784,10 @@ function renderMessengerApp() {
                     <div class="field">
                         <label>Zuletzt aktiv</label>
                         <div id="contactLastSeen" class="contact-about"></div>
+                    </div>
+                    <div class="field">
+                        <label>Registriert seit</label>
+                        <div id="contactRegisteredSince" class="contact-about"></div>
                     </div>
                     <div class="field">
                         <label>Frühere Benutzernamen</label>
@@ -1812,6 +1832,7 @@ function renderMessengerApp() {
             selectedAvatarId: null,
             profileAvatarId: null,
             pendingAttachment: null,
+            pendingAttachmentPreviewUrl: null,
             sounds: [],
             blockedUsers: [],
             typingSent: false,
@@ -1849,11 +1870,30 @@ function renderMessengerApp() {
             return String(name || '?').trim().slice(0, 1).toUpperCase() || '?';
         }
 
-        function avatarMarkup(entity) {
-            if (entity.avatar_url) {
-                return '<img class="avatar" src="' + entity.avatar_url + '" alt="">';
-            }
-            return '<div class="avatar" style="background:' + entity.avatar_color + '">' + initials(entity.display_name) + '</div>';
+        function loyaltyTier(entity) {
+            const date = entity && (entity.member_since || entity.created_at);
+            if (!date) return 'none';
+            const years = (Date.now() - new Date(date).getTime()) / (365.25 * 24 * 60 * 60 * 1000);
+            if (years >= 20) return 'diamond';
+            if (years >= 10) return 'gold';
+            if (years >= 5) return 'silver';
+            if (years >= 1) return 'bronze';
+            return 'none';
+        }
+
+        function avatarMarkup(entity, id = '', extraClass = '') {
+            const idAttribute = id ? ' id="' + id + '"' : '';
+            const classes = 'avatar' + (extraClass ? ' ' + extraClass : '');
+            const inner = entity.avatar_url
+                ? '<img' + idAttribute + ' class="' + classes + '" src="' + entity.avatar_url + '" alt="">'
+                : '<div' + idAttribute + ' class="' + classes + '" style="background:' + entity.avatar_color + '">' + initials(entity.display_name) + '</div>';
+            const frameClass = extraClass.includes('contact-avatar') ? ' contact-frame' : '';
+            return '<span class="avatar-frame ' + loyaltyTier(entity) + frameClass + '">' + inner + '</span>';
+        }
+
+        function membershipText(value) {
+            if (!value) return 'Nicht verfügbar';
+            return new Date(value).toLocaleDateString([], { dateStyle: 'long' });
         }
 
         function showAuth() {
@@ -2163,15 +2203,12 @@ function renderMessengerApp() {
         function renderContactProfile() {
             const contact = state.activeConversation;
             if (!contact) return;
-            if (contact.avatar_url) {
-                $('contactAvatar').outerHTML = '<img id="contactAvatar" class="avatar contact-avatar" src="' + contact.avatar_url + '" alt="">';
-            } else {
-                $('contactAvatar').outerHTML = '<div id="contactAvatar" class="avatar contact-avatar" style="background:' + contact.avatar_color + '">' + initials(contact.display_name) + '</div>';
-            }
+            $('contactAvatarSlot').innerHTML = avatarMarkup(contact, 'contactAvatar', 'contact-avatar');
             $('contactName').textContent = contact.display_name;
             $('contactUsername').textContent = '@' + contact.username;
             $('contactAbout').textContent = contact.about || 'Keine Info angegeben.';
             $('contactLastSeen').textContent = formatLastSeen(contact.last_seen_at);
+            $('contactRegisteredSince').textContent = membershipText(contact.created_at);
             $('contactUsernameHistory').innerHTML = '<span class="muted small">Wird geladen...</span>';
             api('/api/users/' + contact.user_id + '/username-history')
                 .then((data) => {
@@ -2281,12 +2318,21 @@ function renderMessengerApp() {
         function renderPendingAttachment() {
             const preview = $('attachmentPreview');
             if (!state.pendingAttachment) {
+                if (state.pendingAttachmentPreviewUrl) URL.revokeObjectURL(state.pendingAttachmentPreviewUrl);
+                state.pendingAttachmentPreviewUrl = null;
                 preview.classList.add('hidden');
                 preview.innerHTML = '';
                 return;
             }
+            if (state.pendingAttachmentPreviewUrl) URL.revokeObjectURL(state.pendingAttachmentPreviewUrl);
+            state.pendingAttachmentPreviewUrl = String(state.pendingAttachment.type || '').startsWith('image/')
+                ? URL.createObjectURL(state.pendingAttachment)
+                : null;
             preview.classList.remove('hidden');
-            preview.innerHTML = '<span>Datei: ' + escapeText(state.pendingAttachment.name) + '</span><button id="removeAttachment" type="button">Entfernen</button>';
+            preview.innerHTML = '<div class="attachment-info">' +
+                (state.pendingAttachmentPreviewUrl ? '<img class="attachment-image-preview" src="' + state.pendingAttachmentPreviewUrl + '" alt="Vorschau">' : '') +
+                '<span class="attachment-name">Datei: ' + escapeText(state.pendingAttachment.name) + '</span></div>' +
+                '<button id="removeAttachment" type="button" aria-label="Datei entfernen">&times;</button>';
         }
 
         function chooseAttachment(file) {
@@ -2328,7 +2374,7 @@ function renderMessengerApp() {
             state.profileAvatarId = state.me.avatar_asset_id;
             $('meName').textContent = state.me.display_name;
             $('meUsername').textContent = '@' + state.me.username;
-            $('meAvatar').outerHTML = avatarMarkup(state.me).replace('class="avatar"', 'id="meAvatar" class="avatar"');
+            $('meAvatarSlot').innerHTML = avatarMarkup(state.me, 'meAvatar');
         }
 
         function openAccount() {
@@ -2337,6 +2383,7 @@ function renderMessengerApp() {
             $('profileDisplayName').value = state.me.display_name || '';
             $('profileEmail').value = state.me.email || '';
             $('profileAbout').value = state.me.about || '';
+            $('profileRegisteredSince').textContent = membershipText(state.me.created_at);
             $('profile2fa').checked = Boolean(state.me.two_factor_enabled);
             $('displayNameVisibility').value = state.me.display_name_visibility || 'contacts';
             $('usernameHistoryVisibility').value = state.me.username_history_visibility || 'contacts';
@@ -2418,11 +2465,7 @@ function renderMessengerApp() {
             $('chat').classList.add('chat-open');
             $('chatName').textContent = data.conversation.display_name;
             $('chatUser').textContent = '@' + data.conversation.username;
-            if (data.conversation.avatar_url) {
-                $('chatAvatar').outerHTML = '<img id="chatAvatar" class="avatar" src="' + data.conversation.avatar_url + '" alt="">';
-            } else {
-                $('chatAvatar').outerHTML = '<div id="chatAvatar" class="avatar" style="background:' + data.conversation.avatar_color + '">' + initials(data.conversation.display_name) + '</div>';
-            }
+            $('chatAvatarSlot').innerHTML = avatarMarkup(data.conversation, 'chatAvatar');
             updateMessageControls();
             renderMessages(data.messages);
             renderConversationList();
@@ -2443,11 +2486,12 @@ function renderMessengerApp() {
                 if (state.me && Number(payload.message.sender_id) !== Number(state.me.id) && !isOpen) {
                     playNotificationSound();
                 }
-                if (isOpen) setRemoteTyping(false);
-                await loadConversations();
                 if (isOpen) {
-                    await openConversation(payload.conversationId);
+                    setRemoteTyping(false);
+                    await refreshOpenMessages(payload.conversationId);
+                    await api('/api/conversations/' + payload.conversationId + '/read', { method: 'POST', body: '{}' });
                 }
+                await loadConversations();
             });
             state.eventSource.addEventListener('typing', (event) => {
                 const payload = JSON.parse(event.data);
@@ -3840,7 +3884,7 @@ app.get('/api/users', requireAuth, async (req, res, next) => {
         if (search.length < 2) return res.json({ users: [] });
 
         const result = await query(
-            `select u.id, u.username, u.display_name, u.about, u.avatar_color, u.last_seen_at,
+            `select u.id, u.username, u.display_name, u.about, u.avatar_color, u.last_seen_at, u.created_at as member_since,
                 case when aa.id is null then null else 'data:' || aa.mime_type || ';base64,' || encode(aa.data, 'base64') end as avatar_url
              from users u
              join conversations c
@@ -3911,7 +3955,7 @@ app.delete('/api/users/:id/block', requireAuth, async (req, res, next) => {
 app.get('/api/blocked-users', requireAuth, async (req, res, next) => {
     try {
         const result = await query(
-            `select u.id, u.username, u.display_name, u.avatar_color,
+            `select u.id, u.username, u.display_name, u.avatar_color, u.created_at as member_since,
                 case when aa.id is null then null else 'data:' || aa.mime_type || ';base64,' || encode(aa.data, 'base64') end as avatar_url
              from user_blocks b
              join users u on u.id = b.blocked_user_id
@@ -3930,7 +3974,7 @@ app.get('/api/contact-requests', requireAuth, async (req, res, next) => {
     try {
         const result = await query(
             `select r.id, r.sender_id, r.recipient_id, r.status, r.created_at, r.responded_at,
-                other_user.id as user_id, other_user.username, other_user.display_name,
+                other_user.id as user_id, other_user.username, other_user.display_name, other_user.created_at as member_since,
                 other_user.avatar_color,
                 case when aa.id is null then null else 'data:' || aa.mime_type || ';base64,' || encode(aa.data, 'base64') end as avatar_url
              from contact_requests r
@@ -4052,6 +4096,7 @@ app.get('/api/conversations', requireAuth, async (req, res, next) => {
                 other_user.display_name,
                 other_user.avatar_color,
                 other_user.last_seen_at,
+                other_user.created_at as member_since,
                 case when aa.id is null then null else 'data:' || aa.mime_type || ';base64,' || encode(aa.data, 'base64') end as avatar_url,
                 latest.body as last_message,
                 latest.has_attachment as has_attachment,
