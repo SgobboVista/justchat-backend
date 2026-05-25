@@ -513,6 +513,7 @@ async function initDatabase() {
             password_hash text not null,
             two_factor_enabled boolean not null default false,
             display_name_visibility text not null default 'contacts',
+            username_history_visibility text not null default 'contacts',
             send_on_enter boolean not null default false,
             about text not null default '',
             avatar_color text not null default '#2563eb',
@@ -617,12 +618,20 @@ async function initDatabase() {
             created_at timestamptz not null default now()
         );
 
+        create table if not exists username_history (
+            id bigserial primary key,
+            user_id bigint not null references users(id) on delete cascade,
+            username text not null,
+            changed_at timestamptz not null default now()
+        );
+
         alter table users add column if not exists email text;
         alter table users add column if not exists google_id text;
         alter table users add column if not exists email_verified_at timestamptz;
         alter table users add column if not exists avatar_asset_id bigint references avatar_assets(id);
         alter table users add column if not exists two_factor_enabled boolean not null default false;
         alter table users add column if not exists display_name_visibility text not null default 'contacts';
+        alter table users add column if not exists username_history_visibility text not null default 'contacts';
         alter table users add column if not exists notification_sound_asset_id bigint references notification_sound_assets(id);
         alter table users add column if not exists send_on_enter boolean not null default false;
         alter table avatar_assets add column if not exists owner_user_id bigint references users(id) on delete cascade;
@@ -647,6 +656,8 @@ async function initDatabase() {
             on contact_requests(sender_id);
         create index if not exists idx_contact_requests_recipient
             on contact_requests(recipient_id);
+        create index if not exists idx_username_history_user_changed
+            on username_history(user_id, changed_at desc);
         create unique index if not exists idx_contact_requests_pair_unique
             on contact_requests(least(sender_id, recipient_id), greatest(sender_id, recipient_id));
     `);
@@ -691,7 +702,7 @@ async function waitForDatabase() {
 async function getUserById(userId) {
     const result = await query(
         `select u.id, u.username, u.display_name, u.email, u.about, u.avatar_color, u.avatar_asset_id,
-            u.two_factor_enabled, u.display_name_visibility, u.notification_sound_asset_id, u.send_on_enter,
+            u.two_factor_enabled, u.display_name_visibility, u.username_history_visibility, u.notification_sound_asset_id, u.send_on_enter,
             u.created_at, u.last_seen_at,
             case when aa.id is null then null else 'data:' || aa.mime_type || ';base64,' || encode(aa.data, 'base64') end as avatar_url
          from users u
@@ -773,6 +784,15 @@ async function getExistingConversation(userId, otherUserId) {
         [userOneId, userTwoId],
     );
     return result.rows[0] || null;
+}
+
+function personalAvatarLimit(createdAt) {
+    const years = Math.max(0, (Date.now() - new Date(createdAt).getTime()) / (365.25 * 24 * 60 * 60 * 1000));
+    if (years >= 20) return 16;
+    if (years >= 10) return 8;
+    if (years >= 5) return 4;
+    if (years >= 1) return 2;
+    return 1;
 }
 
 function conversationPair(userA, userB) {
@@ -1346,6 +1366,9 @@ function renderMessengerApp() {
         .personal-avatar { display: grid; gap: 4px; }
         .personal-avatar-remove { padding: 4px; color: var(--danger); font-size: 12px; background: transparent; }
         .profile-upload { display: grid; gap: 8px; margin-top: 8px; }
+        .crop-editor { display: grid; justify-items: center; gap: 10px; border-radius: 10px; padding: 12px; background: #f7fbfa; border: 1px solid var(--line); }
+        .crop-editor canvas { width: 190px; height: 190px; border-radius: 50%; background: #e5e7eb; }
+        .crop-editor input[type="range"] { width: min(280px, 100%); }
         .primary { background: var(--accent); color: #fff; border-radius: 8px; padding: 11px 14px; font-weight: 700; }
         .primary:hover { background: var(--accent-strong); }
         .ghost { background: transparent; color: var(--accent); font-weight: 700; padding: 8px; }
@@ -1407,7 +1430,11 @@ function renderMessengerApp() {
         .drop-hint { display: none; position: absolute; inset: 72px 18px 74px; place-items: center; pointer-events: none; z-index: 2; color: var(--accent); font-size: 18px; font-weight: 700; }
         .chat.drop-active .drop-hint { display: grid; }
         .settings-view { grid-row: 1 / -1; overflow: auto; padding: 24px; background: var(--bg); }
-        .settings-card { width: min(620px, 100%); margin: 0 auto; background: #fff; border-radius: 8px; border: 1px solid var(--line); padding: 20px; }
+        .settings-card { width: min(700px, 100%); margin: 0 auto; background: #fff; border-radius: 8px; border: 1px solid var(--line); padding: 20px; }
+        .settings-section { border: 1px solid var(--line); border-radius: 10px; padding: 16px; display: grid; gap: 12px; background: #fff; }
+        .settings-section h3 { margin: 0; font-size: 17px; }
+        .history-list { display: flex; flex-wrap: wrap; gap: 6px; min-height: 24px; }
+        .history-item { font-size: 13px; border-radius: 999px; padding: 5px 9px; background: #eef8f6; color: var(--text); }
         .contact-avatar { width: 88px; height: 88px; font-size: 30px; margin: 0 auto; }
         .contact-heading { text-align: center; display: grid; gap: 4px; }
         .contact-about { border: 1px solid var(--line); border-radius: 8px; padding: 12px; background: #f7fbfa; min-height: 48px; }
@@ -1625,56 +1652,98 @@ function renderMessengerApp() {
                         <h2>Mein Account</h2>
                         <button id="closeAccount" class="ghost" type="button">Zurück</button>
                     </div>
-                    <div class="field">
-                        <label for="profileDisplayName">Anzeigename</label>
-                        <input id="profileDisplayName" maxlength="60">
-                    </div>
-                    <div class="field">
-                        <label for="profileEmail">E-Mail</label>
-                        <input id="profileEmail" type="email" maxlength="160">
-                    </div>
-                    <div class="field">
-                        <label for="profileAbout">Info</label>
-                        <textarea id="profileAbout" maxlength="180"></textarea>
-                    </div>
-                    <div class="field">
-                        <label>Profilbild</label>
-                        <div id="profileAvatarPicker" class="avatar-picker"></div>
-                        <div class="profile-upload">
-                            <input id="profileAvatarUpload" type="file" accept="image/png,image/jpeg,image/webp,image/gif">
-                            <button id="uploadProfileAvatar" class="ghost" type="button">Eigenes Profilbild hochladen</button>
-                            <p class="muted small">JPEG, PNG, WebP oder GIF, maximal 5 MB. Die vorgegebenen Bilder bleiben verfügbar.</p>
+                    <section class="settings-section">
+                        <h3>Profil</h3>
+                        <div class="field">
+                            <label for="profileUsername">Benutzername</label>
+                            <input id="profileUsername" maxlength="32">
+                            <p id="usernameTokens" class="muted small"></p>
                         </div>
-                    </div>
-                    <label class="segmented">
-                        <input id="profile2fa" type="checkbox" style="width:auto;">
-                        <span>2FA per E-Mail-Code aktivieren</span>
-                    </label>
-                    <div class="field">
-                        <label for="displayNameVisibility">Anzeigename anzeigen</label>
-                        <select id="displayNameVisibility">
-                            <option value="contacts">Nur Kontakten</option>
-                            <option value="everyone">Allen</option>
-                        </select>
-                    </div>
-                    <div class="field">
-                        <label for="notificationSound">Benachrichtigungston</label>
-                        <select id="notificationSound">
-                            <option value="">Kein Ton</option>
-                        </select>
-                        <button id="previewSound" class="ghost" type="button">Ton anhören</button>
-                    </div>
-                    <label class="segmented">
-                        <input id="sendOnEnter" type="checkbox" style="width:auto;">
-                        <span>Nachricht mit Enter senden (Shift+Enter für neue Zeile)</span>
-                    </label>
-                    <div class="field">
-                        <label>Blockierte Kontakte</label>
-                        <div id="blockedList" class="blocked-list">
-                            <span class="muted small">Keine blockierten Kontakte.</span>
+                        <div class="field">
+                            <label>Frühere Benutzernamen</label>
+                            <div id="ownUsernameHistory" class="history-list"><span class="muted small">Keine früheren Namen.</span></div>
                         </div>
-                    </div>
-                    <p class="muted small">Bei aktivierter 2FA wird beim Login ein Code an deine E-Mail gesendet.</p>
+                        <div class="field">
+                            <label for="profileDisplayName">Anzeigename</label>
+                            <input id="profileDisplayName" maxlength="60">
+                        </div>
+                        <div class="field">
+                            <label for="profileAbout">Info</label>
+                            <textarea id="profileAbout" maxlength="180"></textarea>
+                        </div>
+                        <div class="field">
+                            <label>Profilbild</label>
+                            <div id="profileAvatarPicker" class="avatar-picker"></div>
+                            <div class="profile-upload">
+                                <input id="profileAvatarUpload" type="file" accept="image/png,image/jpeg,image/webp,image/gif">
+                                <div id="avatarCropEditor" class="crop-editor hidden">
+                                    <canvas id="avatarCropCanvas" width="320" height="320"></canvas>
+                                    <label class="small" for="avatarZoom">Ausschnitt / Zoom</label>
+                                    <input id="avatarZoom" type="range" min="100" max="300" value="100">
+                                    <label class="small" for="avatarPositionX">Horizontal verschieben</label>
+                                    <input id="avatarPositionX" type="range" min="-100" max="100" value="0">
+                                    <label class="small" for="avatarPositionY">Vertikal verschieben</label>
+                                    <input id="avatarPositionY" type="range" min="-100" max="100" value="0">
+                                    <label id="gifStillOption" class="segmented hidden">
+                                        <input id="gifAsStill" type="checkbox" checked style="width:auto;">
+                                        <span>GIF als Standbild setzen</span>
+                                    </label>
+                                </div>
+                                <button id="uploadProfileAvatar" class="ghost" type="button">Eigenes Profilbild hochladen</button>
+                                <p id="avatarUploadLimit" class="muted small">JPEG, PNG, WebP oder GIF, maximal 5 MB.</p>
+                                <p class="muted small">Kontingent: Start 1 Bild, nach 1 Jahr 2, nach 5 Jahren 4, nach 10 Jahren 8 und nach 20 Jahren 16.</p>
+                            </div>
+                        </div>
+                    </section>
+                    <section class="settings-section">
+                        <h3>Datenschutz</h3>
+                        <div class="field">
+                            <label for="displayNameVisibility">Anzeigename anzeigen</label>
+                            <select id="displayNameVisibility">
+                                <option value="contacts">Nur Kontakten</option>
+                                <option value="everyone">Allen</option>
+                            </select>
+                        </div>
+                        <div class="field">
+                            <label for="usernameHistoryVisibility">Frühere Benutzernamen anzeigen</label>
+                            <select id="usernameHistoryVisibility">
+                                <option value="contacts">Nur Kontakten</option>
+                                <option value="everyone">Allen</option>
+                            </select>
+                        </div>
+                        <div class="field">
+                            <label>Blockierte Kontakte</label>
+                            <div id="blockedList" class="blocked-list">
+                                <span class="muted small">Keine blockierten Kontakte.</span>
+                            </div>
+                        </div>
+                    </section>
+                    <section class="settings-section">
+                        <h3>Benachrichtigungen & Chat</h3>
+                        <div class="field">
+                            <label for="notificationSound">Benachrichtigungston</label>
+                            <select id="notificationSound">
+                                <option value="">Kein Ton</option>
+                            </select>
+                            <button id="previewSound" class="ghost" type="button">Ton anhören</button>
+                        </div>
+                        <label class="segmented">
+                            <input id="sendOnEnter" type="checkbox" style="width:auto;">
+                            <span>Nachricht mit Enter senden (Shift+Enter für neue Zeile)</span>
+                        </label>
+                    </section>
+                    <section class="settings-section">
+                        <h3>Sicherheit</h3>
+                        <div class="field">
+                            <label for="profileEmail">E-Mail</label>
+                            <input id="profileEmail" type="email" maxlength="160">
+                        </div>
+                        <label class="segmented">
+                            <input id="profile2fa" type="checkbox" style="width:auto;">
+                            <span>2FA per E-Mail-Code aktivieren</span>
+                        </label>
+                        <p class="muted small">Bei aktivierter 2FA wird beim Login ein Code an deine E-Mail gesendet.</p>
+                    </section>
                     <div id="profileError" class="error"></div>
                     <div id="profileNotice" class="success"></div>
                     <button class="primary" type="submit">Profil speichern</button>
@@ -1699,6 +1768,10 @@ function renderMessengerApp() {
                     <div class="field">
                         <label>Zuletzt aktiv</label>
                         <div id="contactLastSeen" class="contact-about"></div>
+                    </div>
+                    <div class="field">
+                        <label>Frühere Benutzernamen</label>
+                        <div id="contactUsernameHistory" class="history-list"><span class="muted small">Keine sichtbaren früheren Namen.</span></div>
                     </div>
                     <p id="contactBlockInfo" class="muted small"></p>
                     <div id="contactError" class="error"></div>
@@ -1751,6 +1824,8 @@ function renderMessengerApp() {
             bootRetryTimer: null,
             twoFactorResendTimer: null,
             twoFactorResendUntil: 0,
+            profileAvatarImage: null,
+            profileAvatarFile: null,
         };
 
         const $ = (id) => document.getElementById(id);
@@ -1902,28 +1977,93 @@ function renderMessengerApp() {
         async function loadProfileAvatars() {
             const data = await api('/api/me/avatars');
             state.avatars = data.avatars || [];
+            $('avatarUploadLimit').textContent = 'Eigene Bilder: ' + data.ownCount + ' / ' + data.uploadLimit +
+                '. JPEG, PNG, WebP oder GIF, maximal 5 MB.';
             renderProfileAvatarPicker();
         }
 
-        function readProfileAvatarFile() {
-            const file = $('profileAvatarUpload').files[0];
-            if (!file) return Promise.reject(new Error('Bitte ein Bild auswählen.'));
+        function drawAvatarCrop() {
+            if (!state.profileAvatarImage) return;
+            const canvas = $('avatarCropCanvas');
+            const context = canvas.getContext('2d');
+            const image = state.profileAvatarImage;
+            const zoom = Number($('avatarZoom').value || 100) / 100;
+            const side = Math.min(image.naturalWidth, image.naturalHeight) / zoom;
+            const maxX = Math.max(0, (image.naturalWidth - side) / 2);
+            const maxY = Math.max(0, (image.naturalHeight - side) / 2);
+            const x = (image.naturalWidth - side) / 2 + (Number($('avatarPositionX').value) / 100) * maxX;
+            const y = (image.naturalHeight - side) / 2 + (Number($('avatarPositionY').value) / 100) * maxY;
+            context.clearRect(0, 0, canvas.width, canvas.height);
+            context.drawImage(image, x, y, side, side, 0, 0, canvas.width, canvas.height);
+        }
+
+        async function prepareProfileAvatar(file) {
+            state.profileAvatarFile = file;
+            if (!file) {
+                $('avatarCropEditor').classList.add('hidden');
+                return;
+            }
             if (!['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(file.type)) {
-                return Promise.reject(new Error('Nur JPEG, PNG, WebP und GIF sind erlaubt.'));
+                throw new Error('Nur JPEG, PNG, WebP und GIF sind erlaubt.');
             }
-            if (file.size > 5 * 1024 * 1024) {
-                return Promise.reject(new Error('Bild muss kleiner als 5 MB sein.'));
-            }
-            return new Promise((resolve, reject) => {
+            if (file.size > 5 * 1024 * 1024) throw new Error('Bild muss kleiner als 5 MB sein.');
+            const dataUrl = await new Promise((resolve, reject) => {
                 const reader = new FileReader();
-                reader.onload = () => resolve({
-                    fileName: file.name,
-                    mimeType: file.type,
-                    dataBase64: String(reader.result).slice(String(reader.result).indexOf(',') + 1),
-                });
+                reader.onload = () => resolve(String(reader.result));
                 reader.onerror = () => reject(new Error('Bild konnte nicht gelesen werden.'));
                 reader.readAsDataURL(file);
             });
+            state.profileAvatarImage = await new Promise((resolve, reject) => {
+                const image = new Image();
+                image.onload = () => resolve(image);
+                image.onerror = () => reject(new Error('Bild konnte nicht angezeigt werden.'));
+                image.src = dataUrl;
+            });
+            $('avatarZoom').value = '100';
+            $('avatarPositionX').value = '0';
+            $('avatarPositionY').value = '0';
+            $('gifStillOption').classList.toggle('hidden', file.type !== 'image/gif');
+            $('gifAsStill').checked = true;
+            $('avatarCropEditor').classList.remove('hidden');
+            drawAvatarCrop();
+        }
+
+        function readProfileAvatarFile() {
+            const file = state.profileAvatarFile || $('profileAvatarUpload').files[0];
+            if (!file) return Promise.reject(new Error('Bitte ein Bild auswählen.'));
+            if (file.type === 'image/gif' && !$('gifAsStill').checked) {
+                return new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onload = () => resolve({
+                        fileName: file.name,
+                        mimeType: file.type,
+                        dataBase64: String(reader.result).slice(String(reader.result).indexOf(',') + 1),
+                    });
+                    reader.onerror = () => reject(new Error('Bild konnte nicht gelesen werden.'));
+                    reader.readAsDataURL(file);
+                });
+            }
+            return new Promise((resolve, reject) => {
+                $('avatarCropCanvas').toBlob((blob) => {
+                    if (!blob) return reject(new Error('Profilbild konnte nicht zugeschnitten werden.'));
+                    const reader = new FileReader();
+                    reader.onload = () => resolve({
+                        fileName: file.name.replace(/\.[^.]+$/, '') + '.png',
+                        mimeType: 'image/png',
+                        dataBase64: String(reader.result).slice(String(reader.result).indexOf(',') + 1),
+                    });
+                    reader.onerror = () => reject(new Error('Bild konnte nicht gelesen werden.'));
+                    reader.readAsDataURL(blob);
+                }, 'image/png');
+            });
+        }
+
+        async function loadUsernameHistory() {
+            const data = await api('/api/me/username-history');
+            $('usernameTokens').textContent = 'Namensänderungen verfügbar dieses Jahr: ' + data.remainingChanges + ' / 3';
+            $('ownUsernameHistory').innerHTML = data.history.length
+                ? data.history.map((entry) => '<span class="history-item">@' + escapeText(entry.username) + '</span>').join('')
+                : '<span class="muted small">Keine früheren Namen.</span>';
         }
 
         async function loadNotificationSounds() {
@@ -2032,6 +2172,16 @@ function renderMessengerApp() {
             $('contactUsername').textContent = '@' + contact.username;
             $('contactAbout').textContent = contact.about || 'Keine Info angegeben.';
             $('contactLastSeen').textContent = formatLastSeen(contact.last_seen_at);
+            $('contactUsernameHistory').innerHTML = '<span class="muted small">Wird geladen...</span>';
+            api('/api/users/' + contact.user_id + '/username-history')
+                .then((data) => {
+                    $('contactUsernameHistory').innerHTML = data.history.length
+                        ? data.history.map((entry) => '<span class="history-item">@' + escapeText(entry.username) + '</span>').join('')
+                        : '<span class="muted small">Keine sichtbaren früheren Namen.</span>';
+                })
+                .catch(() => {
+                    $('contactUsernameHistory').innerHTML = '<span class="muted small">Nicht verfügbar.</span>';
+                });
             $('contactBlockInfo').textContent = contact.blocked_me
                 ? 'Diese Person hat Nachrichten von dir blockiert.'
                 : (contact.blocked_by_me ? 'Diese Person ist blockiert und kann dir hier nicht schreiben.' : '');
@@ -2183,11 +2333,13 @@ function renderMessengerApp() {
 
         function openAccount() {
             stopTyping();
+            $('profileUsername').value = state.me.username || '';
             $('profileDisplayName').value = state.me.display_name || '';
             $('profileEmail').value = state.me.email || '';
             $('profileAbout').value = state.me.about || '';
             $('profile2fa').checked = Boolean(state.me.two_factor_enabled);
             $('displayNameVisibility').value = state.me.display_name_visibility || 'contacts';
+            $('usernameHistoryVisibility').value = state.me.username_history_visibility || 'contacts';
             $('notificationSound').value = state.me.notification_sound_asset_id ? String(state.me.notification_sound_asset_id) : '';
             $('sendOnEnter').checked = Boolean(state.me.send_on_enter);
             state.profileAvatarId = state.me.avatar_asset_id;
@@ -2199,7 +2351,7 @@ function renderMessengerApp() {
             $('accountPanel').classList.remove('hidden');
             $('sidebar').classList.add('chat-open');
             $('chat').classList.add('chat-open');
-            Promise.all([loadProfileAvatars(), loadNotificationSounds(), loadBlockedUsers()])
+            Promise.all([loadProfileAvatars(), loadNotificationSounds(), loadBlockedUsers(), loadUsernameHistory()])
                 .then(() => {
                     state.profileAvatarId = state.me.avatar_asset_id;
                     renderProfileAvatarPicker();
@@ -2476,6 +2628,19 @@ function renderMessengerApp() {
             state.profileAvatarId = button.dataset.profileAvatar;
             renderProfileAvatarPicker();
         });
+        $('profileAvatarUpload').addEventListener('change', async (event) => {
+            $('profileError').textContent = '';
+            try {
+                await prepareProfileAvatar(event.target.files[0]);
+            } catch (error) {
+                $('profileAvatarUpload').value = '';
+                $('avatarCropEditor').classList.add('hidden');
+                $('profileError').textContent = error.message;
+            }
+        });
+        $('avatarZoom').addEventListener('input', drawAvatarCrop);
+        $('avatarPositionX').addEventListener('input', drawAvatarCrop);
+        $('avatarPositionY').addEventListener('input', drawAvatarCrop);
         $('uploadProfileAvatar').addEventListener('click', async () => {
             $('profileError').textContent = '';
             $('profileNotice').textContent = '';
@@ -2487,6 +2652,9 @@ function renderMessengerApp() {
                 });
                 state.profileAvatarId = data.avatar.id;
                 $('profileAvatarUpload').value = '';
+                state.profileAvatarFile = null;
+                state.profileAvatarImage = null;
+                $('avatarCropEditor').classList.add('hidden');
                 await loadProfileAvatars();
                 $('profileNotice').textContent = 'Eigenes Profilbild hochgeladen. Speichere das Profil, um es zu verwenden.';
             } catch (error) {
@@ -2501,18 +2669,22 @@ function renderMessengerApp() {
                 await api('/api/me', {
                     method: 'PATCH',
                     body: JSON.stringify({
+                        username: $('profileUsername').value,
                         displayName: $('profileDisplayName').value,
                         email: $('profileEmail').value,
                         about: $('profileAbout').value,
                         avatarAssetId: state.profileAvatarId,
                         twoFactorEnabled: $('profile2fa').checked,
                         displayNameVisibility: $('displayNameVisibility').value,
+                        usernameHistoryVisibility: $('usernameHistoryVisibility').value,
                         notificationSoundAssetId: $('notificationSound').value || null,
                         sendOnEnter: $('sendOnEnter').checked,
                     }),
                 });
                 await loadMe();
                 await loadNotificationSounds();
+                await loadUsernameHistory();
+                await loadConversations();
                 $('profileNotice').textContent = 'Einstellungen wurden gespeichert.';
             } catch (error) {
                 $('profileError').textContent = error.message;
@@ -3469,7 +3641,12 @@ app.get('/api/me/avatars', requireAuth, async (req, res, next) => {
              limit 80`,
             [req.user.id],
         );
-        return res.json({ avatars: result.rows });
+        const ownCount = result.rows.filter((avatar) => avatar.mine).length;
+        return res.json({
+            avatars: result.rows,
+            ownCount,
+            uploadLimit: personalAvatarLimit(req.user.created_at),
+        });
     } catch (error) {
         return next(error);
     }
@@ -3483,8 +3660,9 @@ app.post('/api/me/avatar-assets', requireAuth, async (req, res, next) => {
             'select count(*)::int as count from avatar_assets where owner_user_id = $1 and is_active = true',
             [req.user.id],
         );
-        if (count.rows[0].count >= 20) {
-            return res.status(400).json({ error: 'Du kannst maximal 20 eigene Profilbilder speichern' });
+        const limit = personalAvatarLimit(req.user.created_at);
+        if (count.rows[0].count >= limit) {
+            return res.status(400).json({ error: `Du kannst aktuell maximal ${limit} eigene Profilbilder speichern` });
         }
         const result = await query(
             `insert into avatar_assets (name, mime_type, size_bytes, data, owner_user_id)
@@ -3540,17 +3718,62 @@ app.get('/api/me', requireAuth, (req, res) => {
     res.json({ user: req.user });
 });
 
+app.get('/api/me/username-history', requireAuth, async (req, res, next) => {
+    try {
+        const history = await query(
+            'select username, changed_at from username_history where user_id = $1 order by changed_at desc limit 30',
+            [req.user.id],
+        );
+        const changesThisYear = await query(
+            `select count(*)::int as count from username_history
+             where user_id = $1 and changed_at >= date_trunc('year', now())`,
+            [req.user.id],
+        );
+        return res.json({
+            history: history.rows,
+            remainingChanges: Math.max(0, 3 - changesThisYear.rows[0].count),
+        });
+    } catch (error) {
+        return next(error);
+    }
+});
+
+app.get('/api/users/:id/username-history', requireAuth, async (req, res, next) => {
+    try {
+        const userId = parseId(req.params.id);
+        if (!userId) return res.status(400).json({ error: 'Ungültiger Kontakt' });
+        const user = await getUserById(userId);
+        if (!user) return res.status(404).json({ error: 'Kontakt nicht gefunden' });
+        const isContact = Boolean(await getExistingConversation(req.user.id, userId));
+        const visible = user.username_history_visibility === 'everyone' || isContact;
+        if (!visible) return res.json({ history: [] });
+        const history = await query(
+            'select username, changed_at from username_history where user_id = $1 order by changed_at desc limit 30',
+            [userId],
+        );
+        return res.json({ history: history.rows });
+    } catch (error) {
+        return next(error);
+    }
+});
+
 app.patch('/api/me', requireAuth, async (req, res, next) => {
     try {
+        const username = normalizeUsername(req.body.username || req.user.username);
         const displayName = cleanDisplayName(req.body.displayName, req.user.username);
         const email = cleanEmail(req.body.email);
         const about = String(req.body.about || '').trim().slice(0, 180);
         const avatarAssetId = parseId(req.body.avatarAssetId);
         const twoFactorEnabled = Boolean(req.body.twoFactorEnabled);
         const displayNameVisibility = req.body.displayNameVisibility === 'everyone' ? 'everyone' : 'contacts';
+        const usernameHistoryVisibility = req.body.usernameHistoryVisibility === 'everyone' ? 'everyone' : 'contacts';
         const notificationSoundAssetId = parseId(req.body.notificationSoundAssetId);
         const sendOnEnter = Boolean(req.body.sendOnEnter);
 
+        if (!/^[a-z0-9_]{3,32}$/.test(username)) {
+            return res.status(400).json({ error: 'Benutzername: 3-32 Zeichen, nur a-z, 0-9 und _' });
+        }
+        validateCleanName(username, 'Benutzername');
         validateCleanName(displayName, 'Anzeigename');
         if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
             return res.status(400).json({ error: 'Bitte gib eine gültige E-Mail-Adresse ein' });
@@ -3574,20 +3797,39 @@ app.patch('/api/me', requireAuth, async (req, res, next) => {
             if (!sound.rows[0]) return res.status(400).json({ error: 'Benachrichtigungston ist nicht verfügbar' });
         }
 
+        if (username !== req.user.username) {
+            const occupied = await query('select id from users where username = $1 and id <> $2', [username, req.user.id]);
+            if (occupied.rows[0]) {
+                return res.status(409).json({ error: 'Benutzername ist bereits vergeben' });
+            }
+            const changes = await query(
+                `select count(*)::int as count from username_history
+                 where user_id = $1 and changed_at >= date_trunc('year', now())`,
+                [req.user.id],
+            );
+            if (changes.rows[0].count >= 3) {
+                return res.status(400).json({ error: 'Du hast deine 3 Benutzernamen-Änderungen für dieses Jahr bereits verbraucht' });
+            }
+            await query(
+                'insert into username_history (user_id, username) values ($1, $2)',
+                [req.user.id, req.user.username],
+            );
+        }
+
         const result = await query(
             `update users
-             set display_name = $1, email = $2, about = $3, avatar_asset_id = $4, two_factor_enabled = $5,
-                 display_name_visibility = $6, notification_sound_asset_id = $7, send_on_enter = $8
-             where id = $9
+             set username = $1, display_name = $2, email = $3, about = $4, avatar_asset_id = $5, two_factor_enabled = $6,
+                 display_name_visibility = $7, username_history_visibility = $8, notification_sound_asset_id = $9, send_on_enter = $10
+             where id = $11
              returning id`,
-            [displayName, email, about, avatarAssetId, twoFactorEnabled, displayNameVisibility, notificationSoundAssetId, sendOnEnter, req.user.id],
+            [username, displayName, email, about, avatarAssetId, twoFactorEnabled, displayNameVisibility, usernameHistoryVisibility, notificationSoundAssetId, sendOnEnter, req.user.id],
         );
         if (!result.rows[0]) return res.status(404).json({ error: 'Benutzer nicht gefunden' });
 
         const user = await getUserById(req.user.id);
         return res.json({ user });
     } catch (error) {
-        if (error.code === '23505') return res.status(409).json({ error: 'E-Mail ist bereits vergeben' });
+        if (error.code === '23505') return res.status(409).json({ error: 'Benutzername oder E-Mail ist bereits vergeben' });
         return next(error);
     }
 });
