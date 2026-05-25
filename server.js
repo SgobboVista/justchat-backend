@@ -28,6 +28,7 @@ const startedAt = new Date();
 let pool;
 let mailer;
 const eventClients = new Map();
+const CHAT_RETENTION_DAYS = 30;
 let imageUpdateState = {
     configured: Boolean(IMAGE_UPDATE_WEBHOOK_URL),
     status: IMAGE_UPDATE_WEBHOOK_URL ? 'idle' : 'not_configured',
@@ -47,6 +48,77 @@ function escapeHtml(value) {
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#39;');
+}
+
+function zipPathSegment(value) {
+    return String(value || 'datei')
+        .replace(/[<>:"/\\|?*\x00-\x1f]/g, '_')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, 120) || 'datei';
+}
+
+function crc32(buffer) {
+    let crc = -1;
+    for (const byte of buffer) {
+        crc ^= byte;
+        for (let bit = 0; bit < 8; bit += 1) {
+            crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1));
+        }
+    }
+    return (crc ^ -1) >>> 0;
+}
+
+function createZipArchive(files) {
+    const localParts = [];
+    const directoryParts = [];
+    let offset = 0;
+    const now = new Date();
+    const dosTime = (now.getHours() << 11) | (now.getMinutes() << 5) | Math.floor(now.getSeconds() / 2);
+    const dosDate = ((now.getFullYear() - 1980) << 9) | ((now.getMonth() + 1) << 5) | now.getDate();
+
+    for (const file of files) {
+        const name = Buffer.from(file.name.replace(/\\/g, '/'), 'utf8');
+        const data = Buffer.isBuffer(file.data) ? file.data : Buffer.from(file.data);
+        const checksum = crc32(data);
+        const localHeader = Buffer.alloc(30);
+        localHeader.writeUInt32LE(0x04034b50, 0);
+        localHeader.writeUInt16LE(20, 4);
+        localHeader.writeUInt16LE(0x0800, 6);
+        localHeader.writeUInt16LE(0, 8);
+        localHeader.writeUInt16LE(dosTime, 10);
+        localHeader.writeUInt16LE(dosDate, 12);
+        localHeader.writeUInt32LE(checksum, 14);
+        localHeader.writeUInt32LE(data.length, 18);
+        localHeader.writeUInt32LE(data.length, 22);
+        localHeader.writeUInt16LE(name.length, 26);
+        localParts.push(localHeader, name, data);
+
+        const centralHeader = Buffer.alloc(46);
+        centralHeader.writeUInt32LE(0x02014b50, 0);
+        centralHeader.writeUInt16LE(20, 4);
+        centralHeader.writeUInt16LE(20, 6);
+        centralHeader.writeUInt16LE(0x0800, 8);
+        centralHeader.writeUInt16LE(0, 10);
+        centralHeader.writeUInt16LE(dosTime, 12);
+        centralHeader.writeUInt16LE(dosDate, 14);
+        centralHeader.writeUInt32LE(checksum, 16);
+        centralHeader.writeUInt32LE(data.length, 20);
+        centralHeader.writeUInt32LE(data.length, 24);
+        centralHeader.writeUInt16LE(name.length, 28);
+        centralHeader.writeUInt32LE(offset, 42);
+        directoryParts.push(centralHeader, name);
+        offset += localHeader.length + name.length + data.length;
+    }
+
+    const directory = Buffer.concat(directoryParts);
+    const end = Buffer.alloc(22);
+    end.writeUInt32LE(0x06054b50, 0);
+    end.writeUInt16LE(files.length, 8);
+    end.writeUInt16LE(files.length, 10);
+    end.writeUInt32LE(directory.length, 12);
+    end.writeUInt32LE(offset, 16);
+    return Buffer.concat([...localParts, directory, end]);
 }
 
 function base64Url(input) {
@@ -132,7 +204,35 @@ function getMailer() {
     return mailer;
 }
 
-async function sendMail({ to, subject, text }) {
+function renderEmailTemplate({ title, greeting, message, contentHtml = '', note = '' }) {
+    return `<!doctype html>
+<html lang="de">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;background:#f1f5f9;font-family:Arial,sans-serif;color:#172033;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f1f5f9;padding:30px 14px;">
+        <tr><td align="center">
+            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:560px;background:#ffffff;border:1px solid #d8e0ea;border-radius:14px;overflow:hidden;">
+                <tr><td style="background:#0f766e;padding:22px 28px;color:#ffffff;font-size:24px;font-weight:700;">JustChat</td></tr>
+                <tr><td style="padding:30px 28px 18px;">
+                    <h1 style="margin:0 0 18px;font-size:24px;line-height:1.25;color:#172033;">${escapeHtml(title)}</h1>
+                    <p style="margin:0 0 14px;font-size:16px;line-height:1.55;">${escapeHtml(greeting)}</p>
+                    <p style="margin:0 0 20px;font-size:15px;line-height:1.6;color:#475467;">${escapeHtml(message)}</p>
+                    ${contentHtml}
+                    ${note ? `<p style="margin:22px 0 0;font-size:13px;line-height:1.5;color:#667085;">${escapeHtml(note)}</p>` : ''}
+                </td></tr>
+                <tr><td style="border-top:1px solid #e5e7eb;padding:18px 28px;font-size:12px;line-height:1.5;color:#667085;">Diese Nachricht wurde automatisch von JustChat gesendet. Bitte antworte nicht auf diese E-Mail.</td></tr>
+            </table>
+        </td></tr>
+    </table>
+</body>
+</html>`;
+}
+
+function emailCodeBlock(code) {
+    return `<div style="margin:20px 0;padding:18px;border-radius:10px;background:#f0fdfa;border:1px solid #99f6e4;text-align:center;font-size:30px;font-weight:700;letter-spacing:8px;color:#0f766e;">${escapeHtml(code)}</div>`;
+}
+
+async function sendMail({ to, subject, text, html }) {
     const transport = getMailer();
     if (!transport) return false;
 
@@ -141,6 +241,7 @@ async function sendMail({ to, subject, text }) {
         to,
         subject,
         text,
+        html,
     });
     return true;
 }
@@ -274,6 +375,13 @@ async function sendTwoFactorCode(user) {
         to: user.email,
         subject: 'Dein JustChat Login-Code',
         text: `Dein JustChat Login-Code lautet: ${code}\n\nDer Code ist 10 Minuten gültig.`,
+        html: renderEmailTemplate({
+            title: 'Login bestätigen',
+            greeting: `Hallo ${user.display_name || user.username},`,
+            message: 'verwende den folgenden Sicherheitscode, um deine Anmeldung bei JustChat abzuschließen.',
+            contentHtml: emailCodeBlock(code),
+            note: 'Der Code ist 10 Minuten gültig. Falls du dich nicht anmelden wolltest, kannst du diese E-Mail ignorieren.',
+        }),
     });
 }
 
@@ -299,6 +407,13 @@ async function sendPasswordResetCode(user) {
         to: user.email,
         subject: 'Dein JustChat Passwort-Code',
         text: `Dein Code zum Zurücksetzen des Passworts lautet: ${code}\n\nDer Code ist 15 Minuten gültig.`,
+        html: renderEmailTemplate({
+            title: 'Passwort zurücksetzen',
+            greeting: `Hallo ${user.display_name || user.username},`,
+            message: 'mit diesem Code kannst du ein neues Passwort für dein JustChat-Konto festlegen.',
+            contentHtml: emailCodeBlock(code),
+            note: 'Der Code ist 15 Minuten gültig. Falls du das nicht angefordert hast, ignoriere diese Nachricht.',
+        }),
     });
 }
 
@@ -348,6 +463,7 @@ async function initDatabase() {
             password_hash text not null,
             two_factor_enabled boolean not null default false,
             display_name_visibility text not null default 'contacts',
+            send_on_enter boolean not null default false,
             about text not null default '',
             avatar_color text not null default '#2563eb',
             created_at timestamptz not null default now(),
@@ -389,6 +505,20 @@ async function initDatabase() {
             created_at timestamptz not null default now(),
             primary key (blocker_id, blocked_user_id),
             check(blocker_id <> blocked_user_id)
+        );
+
+        create table if not exists contact_requests (
+            id bigserial primary key,
+            sender_id bigint not null references users(id) on delete cascade,
+            recipient_id bigint not null references users(id) on delete cascade,
+            status text not null default 'pending',
+            archived_by_sender boolean not null default false,
+            archived_by_recipient boolean not null default false,
+            created_at timestamptz not null default now(),
+            responded_at timestamptz,
+            unique(sender_id, recipient_id),
+            check(sender_id <> recipient_id),
+            check(status in ('pending', 'accepted', 'declined', 'blocked'))
         );
 
         create table if not exists messages (
@@ -443,8 +573,11 @@ async function initDatabase() {
         alter table users add column if not exists two_factor_enabled boolean not null default false;
         alter table users add column if not exists display_name_visibility text not null default 'contacts';
         alter table users add column if not exists notification_sound_asset_id bigint references notification_sound_assets(id);
+        alter table users add column if not exists send_on_enter boolean not null default false;
         alter table conversations add column if not exists hidden_for_user_one boolean not null default false;
         alter table conversations add column if not exists hidden_for_user_two boolean not null default false;
+        alter table conversations add column if not exists deleted_for_user_one_at timestamptz;
+        alter table conversations add column if not exists deleted_for_user_two_at timestamptz;
 
         create unique index if not exists idx_users_email_unique
             on users(email)
@@ -458,7 +591,30 @@ async function initDatabase() {
             on conversations(user_one_id);
         create index if not exists idx_conversations_user_two
             on conversations(user_two_id);
+        create index if not exists idx_contact_requests_sender
+            on contact_requests(sender_id);
+        create index if not exists idx_contact_requests_recipient
+            on contact_requests(recipient_id);
+        create unique index if not exists idx_contact_requests_pair_unique
+            on contact_requests(least(sender_id, recipient_id), greatest(sender_id, recipient_id));
     `);
+}
+
+async function purgeExpiredArchivedConversations() {
+    const deleted = await query(
+        `delete from conversations
+         where hidden_for_user_one = true and hidden_for_user_two = true
+            and deleted_for_user_one_at < now() - interval '${CHAT_RETENTION_DAYS} days'
+            and deleted_for_user_two_at < now() - interval '${CHAT_RETENTION_DAYS} days'
+         returning id`,
+    );
+    if (deleted.rowCount > 0) {
+        await query(
+            `insert into admin_audit_logs (admin_user, action, ip_address)
+             values ($1, $2, $3)`,
+            ['system', `archive_expiry_cleanup_${deleted.rowCount}`, null],
+        );
+    }
 }
 
 async function waitForDatabase() {
@@ -483,7 +639,7 @@ async function waitForDatabase() {
 async function getUserById(userId) {
     const result = await query(
         `select u.id, u.username, u.display_name, u.email, u.about, u.avatar_color, u.avatar_asset_id,
-            u.two_factor_enabled, u.display_name_visibility, u.notification_sound_asset_id,
+            u.two_factor_enabled, u.display_name_visibility, u.notification_sound_asset_id, u.send_on_enter,
             u.created_at, u.last_seen_at,
             case when aa.id is null then null else 'data:' || aa.mime_type || ';base64,' || encode(aa.data, 'base64') end as avatar_url
          from users u
@@ -556,6 +712,15 @@ async function getBlockStatus(userId, otherUserId) {
         [userId, otherUserId],
     );
     return result.rows[0];
+}
+
+async function getExistingConversation(userId, otherUserId) {
+    const [userOneId, userTwoId] = conversationPair(userId, otherUserId);
+    const result = await query(
+        'select id from conversations where user_one_id = $1 and user_two_id = $2',
+        [userOneId, userTwoId],
+    );
+    return result.rows[0] || null;
 }
 
 function conversationPair(userA, userB) {
@@ -743,7 +908,7 @@ function renderDashboard(data) {
         <header>
             <div>
                 <h1>${escapeHtml(data.appName)} Admin</h1>
-                <p class="muted">Betrieb, Nutzerverwaltung, Avatar-Bibliothek und Sicherheits-Export.</p>
+                <p class="muted">Betrieb, Nutzerverwaltung, Avatar-Bibliothek und gesicherter Archiv-Export.</p>
             </div>
             <div class="toolbar">
                 <button id="refreshButton" type="button">Aktualisieren</button>
@@ -767,8 +932,8 @@ function renderDashboard(data) {
                     </select>
                 </div>
                 <div class="toolbar">
-                    <a id="downloadExport" class="button" href="/admin/export">Export herunterladen</a>
-                    <button id="downloadSelected" class="secondary" type="button">Auswahl exportieren</button>
+                    <a id="downloadExport" class="button" href="/admin/export">ZIP-Archiv herunterladen</a>
+                    <button id="downloadSelected" class="secondary" type="button">Auswahl als ZIP</button>
                 </div>
                 <div style="overflow:auto; margin-top: 16px;">
                     <table>
@@ -838,7 +1003,7 @@ function renderDashboard(data) {
             </div>
         </section>
 
-        <div class="notice">Hinweis: Exporte enthalten private Chatdaten und Bildanhänge. Verwende sie nur mit berechtigtem Zweck und bewahre Downloads geschützt auf.</div>
+        <div class="notice">Hinweis: Von Nutzern entfernte Chats werden mindestens 30 Tage serverseitig aufbewahrt. ZIP-Archive enthalten private Chatdaten und Originaldateien; sie dürfen nur für einen berechtigten Zweck und mit passender rechtlicher Grundlage herausgegeben werden.</div>
 
         <script>
             const state = { users: [], avatars: [], sounds: [], audit: [], imageUpdate: null };
@@ -1073,7 +1238,7 @@ function renderMessengerApp() {
         .success { color: var(--accent); min-height: 20px; }
         .inline-panel { border: 1px solid var(--line); border-radius: 8px; background: #f7fbfa; padding: 12px; display: grid; gap: 10px; }
         .app { height: 100vh; height: 100dvh; display: grid; grid-template-columns: 360px 1fr; overflow: hidden; }
-        .sidebar { background: var(--sidebar); border-right: 1px solid var(--line); display: grid; grid-template-rows: auto auto 1fr; min-width: 0; min-height: 0; }
+        .sidebar { background: var(--sidebar); border-right: 1px solid var(--line); display: grid; grid-template-rows: auto auto auto 1fr; min-width: 0; min-height: 0; }
         .topbar { padding: 16px; border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; gap: 12px; }
         .me-box { display: grid; grid-template-columns: 44px 1fr; gap: 10px; align-items: center; min-width: 0; }
         .top-actions { display: flex; align-items: center; gap: 6px; }
@@ -1084,6 +1249,13 @@ function renderMessengerApp() {
         .brand span { display: block; color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
         .search { padding: 12px 16px; border-bottom: 1px solid var(--line); display: grid; gap: 8px; }
         .search input { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; width: 100%; }
+        .requests { border-bottom: 1px solid var(--line); padding: 10px 12px; display: grid; gap: 8px; max-height: 270px; overflow: auto; }
+        .requests h3 { margin: 0; color: var(--muted); font-size: 12px; text-transform: uppercase; }
+        .request-card { border: 1px solid var(--line); border-radius: 8px; padding: 9px; background: #fff; display: grid; gap: 7px; }
+        .request-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 13px; }
+        .request-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+        .request-actions button { padding: 6px 8px; border-radius: 6px; font-size: 12px; }
+        .request-status { color: var(--muted); font-size: 12px; }
         .list { overflow: auto; }
         .row { width: 100%; background: transparent; display: grid; grid-template-columns: 44px 1fr; gap: 12px; padding: 12px 16px; text-align: left; border-bottom: 1px solid #edf1f6; }
         .row:hover, .row.active { background: #eef8f6; }
@@ -1125,6 +1297,11 @@ function renderMessengerApp() {
         .contact-heading { text-align: center; display: grid; gap: 4px; }
         .contact-about { border: 1px solid var(--line); border-radius: 8px; padding: 12px; background: #f7fbfa; min-height: 48px; }
         .danger-button { background: #fff1f0; color: var(--danger); border: 1px solid #f3c6c1; border-radius: 8px; padding: 11px 14px; font-weight: 700; }
+        .blocked-list { display: grid; gap: 8px; }
+        .blocked-item { border: 1px solid var(--line); border-radius: 8px; background: #f7fbfa; padding: 10px; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+        .blocked-person { display: flex; align-items: center; gap: 10px; min-width: 0; }
+        .blocked-person .avatar { width: 38px; height: 38px; }
+        .blocked-person strong, .blocked-person span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .modal { position: fixed; inset: 0; background: rgba(15, 23, 42, .42); display: grid; place-items: center; padding: 18px; z-index: 20; }
         .modal-card { width: min(560px, 100%); max-height: min(760px, 100%); overflow: auto; background: #fff; border-radius: 8px; border: 1px solid var(--line); padding: 20px; box-shadow: 0 24px 80px rgba(15, 23, 42, .22); }
         .modal-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 16px; }
@@ -1273,12 +1450,16 @@ function renderMessengerApp() {
                     <button id="settingsButton" class="ghost icon-button" type="button" aria-label="Einstellungen" title="Einstellungen">
                         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z"></path><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.3a2 2 0 1 1-4 0V21a1.7 1.7 0 0 0-1.1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1A2 2 0 1 1 4.1 17l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.6-1H2.6a2 2 0 1 1 0-4H3a1.7 1.7 0 0 0 1.6-1.1A1.7 1.7 0 0 0 4.2 7l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.6v-.3a2 2 0 1 1 4 0V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1A2 2 0 1 1 19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9v.1a1.7 1.7 0 0 0 1.6 1h.3a2 2 0 1 1 0 4H21a1.7 1.7 0 0 0-1.6.9z"></path></svg>
                     </button>
-                    <button id="addPerson" class="primary icon-button" type="button" aria-label="Chat hinzufügen" title="Chat hinzufügen">+</button>
+                    <button id="addPerson" class="primary icon-button" type="button" aria-label="Kontakt hinzufügen" title="Kontakt hinzufügen">+</button>
                 </div>
             </div>
             <div class="search">
                 <input id="search" placeholder="Nutzer suchen">
                 <div id="searchResults"></div>
+            </div>
+            <div id="requestsPanel" class="requests hidden">
+                <h3>Kontaktanfragen</h3>
+                <div id="requestList"></div>
             </div>
             <div id="conversationList" class="list"></div>
         </aside>
@@ -1351,6 +1532,16 @@ function renderMessengerApp() {
                         </select>
                         <button id="previewSound" class="ghost" type="button">Ton anhören</button>
                     </div>
+                    <label class="segmented">
+                        <input id="sendOnEnter" type="checkbox" style="width:auto;">
+                        <span>Nachricht mit Enter senden (Shift+Enter für neue Zeile)</span>
+                    </label>
+                    <div class="field">
+                        <label>Blockierte Kontakte</label>
+                        <div id="blockedList" class="blocked-list">
+                            <span class="muted small">Keine blockierten Kontakte.</span>
+                        </div>
+                    </div>
                     <p class="muted small">Bei aktivierter 2FA wird beim Login ein Code an deine E-Mail gesendet.</p>
                     <div id="profileError" class="error"></div>
                     <div id="profileNotice" class="success"></div>
@@ -1381,6 +1572,7 @@ function renderMessengerApp() {
                     <div id="contactError" class="error"></div>
                     <button id="toggleBlock" class="danger-button" type="button">Person blockieren</button>
                     <button id="deleteChat" class="danger-button" type="button">Chat bei mir löschen</button>
+                    <p class="muted small">Gelöschte Chats werden serverseitig für mindestens 30 Tage gesichert.</p>
                 </div>
             </div>
         </section>
@@ -1389,7 +1581,7 @@ function renderMessengerApp() {
     <div id="addModal" class="modal hidden">
         <form id="addForm" class="modal-card stack">
             <div class="modal-head">
-                <h2>Person adden</h2>
+                <h2>Kontaktanfrage senden</h2>
                 <button id="closeAdd" class="ghost" type="button">Schließen</button>
             </div>
             <div class="field">
@@ -1397,7 +1589,7 @@ function renderMessengerApp() {
                 <input id="addUsername" placeholder="@benutzername" maxlength="41">
             </div>
             <div id="addError" class="error"></div>
-            <button class="primary" type="submit">Chat starten</button>
+            <button class="primary" type="submit">Anfrage senden</button>
         </form>
     </div>
 
@@ -1406,6 +1598,7 @@ function renderMessengerApp() {
             token: localStorage.getItem('justchat_token'),
             me: null,
             conversations: [],
+            contactRequests: [],
             activeConversation: null,
             eventSource: null,
             registerMode: false,
@@ -1415,6 +1608,7 @@ function renderMessengerApp() {
             profileAvatarId: null,
             pendingAttachment: null,
             sounds: [],
+            blockedUsers: [],
             typingSent: false,
             typingLastSentAt: 0,
             typingStopTimer: null,
@@ -1622,13 +1816,16 @@ function renderMessengerApp() {
                 ? 'Diese Person hat Nachrichten von dir blockiert.'
                 : (contact.blocked_by_me ? 'Diese Person ist blockiert und kann dir hier nicht schreiben.' : '');
             $('toggleBlock').textContent = contact.blocked_by_me ? 'Blockierung aufheben' : 'Person blockieren';
+            $('deleteChat').textContent = (contact.blocked_by_me || contact.blocked_me) ? 'Kontakt archivieren' : 'Chat bei mir löschen';
             $('contactError').textContent = '';
         }
 
         function renderConversationList() {
             $('conversationList').innerHTML = state.conversations.map((chat) => {
                 const active = state.activeConversation && state.activeConversation.id === chat.id ? ' active' : '';
-                const preview = chat.last_message || (chat.has_attachment ? 'Datei' : 'Noch keine Nachrichten');
+                const preview = (chat.blocked_by_me || chat.blocked_me)
+                    ? 'Geblockt'
+                    : (chat.last_message || (chat.has_attachment ? 'Datei' : 'Noch keine Nachrichten'));
                 const time = chat.last_message_at ? new Date(chat.last_message_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
                 const unread = Number(chat.unread_count || 0);
                 return '<button class="row' + active + '" data-chat="' + chat.id + '">' +
@@ -1638,6 +1835,50 @@ function renderMessengerApp() {
                     (unread ? '<span class="unread-badge">' + (unread > 99 ? '99+' : unread) + '</span>' : '') +
                     '</div></div></button>';
             }).join('');
+        }
+
+        function renderContactRequests() {
+            const panel = $('requestsPanel');
+            if (!state.contactRequests.length) {
+                panel.classList.add('hidden');
+                $('requestList').innerHTML = '';
+                return;
+            }
+            panel.classList.remove('hidden');
+            $('requestList').innerHTML = state.contactRequests.map((request) => {
+                const incoming = Number(request.recipient_id) === Number(state.me.id);
+                let status = incoming ? 'Anfrage erhalten' : 'Anfrage gesendet';
+                let actions = '';
+                if (request.status === 'pending' && incoming) {
+                    actions =
+                        '<button class="primary" type="button" data-accept-request="' + request.id + '">Annehmen</button>' +
+                        '<button class="ghost" type="button" data-decline-request="' + request.id + '">Ablehnen</button>' +
+                        '<button class="danger-button" type="button" data-block-request="' + request.id + '" data-user="' + request.user_id + '">Blockieren</button>';
+                } else if (request.status === 'declined') {
+                    status = 'Abgelehnt';
+                    actions = '<button class="ghost" type="button" data-archive-request="' + request.id + '">Archivieren</button>';
+                } else if (request.status === 'blocked') {
+                    status = 'Geblockt';
+                    actions = '<button class="ghost" type="button" data-archive-request="' + request.id + '">Archivieren</button>';
+                }
+                return '<div class="request-card"><div class="request-head"><strong>' + escapeText(request.display_name) +
+                    '</strong><span>@' + escapeText(request.username) + '</span></div>' +
+                    '<div class="request-status">' + status + '</div>' +
+                    (actions ? '<div class="request-actions">' + actions + '</div>' : '') + '</div>';
+            }).join('');
+        }
+
+        function renderBlockedUsers() {
+            if (!state.blockedUsers.length) {
+                $('blockedList').innerHTML = '<span class="muted small">Keine blockierten Kontakte.</span>';
+                return;
+            }
+            $('blockedList').innerHTML = state.blockedUsers.map((user) =>
+                '<div class="blocked-item"><div class="blocked-person">' + avatarMarkup(user) +
+                '<div><strong>' + escapeText(user.display_name) + '</strong><span class="muted small">@' +
+                escapeText(user.username) + '</span></div></div>' +
+                '<button class="ghost" type="button" data-unblock-user="' + user.id + '">Entblocken</button></div>'
+            ).join('');
         }
 
         function escapeText(value) {
@@ -1728,6 +1969,7 @@ function renderMessengerApp() {
             $('profile2fa').checked = Boolean(state.me.two_factor_enabled);
             $('displayNameVisibility').value = state.me.display_name_visibility || 'contacts';
             $('notificationSound').value = state.me.notification_sound_asset_id ? String(state.me.notification_sound_asset_id) : '';
+            $('sendOnEnter').checked = Boolean(state.me.send_on_enter);
             state.profileAvatarId = state.me.avatar_asset_id;
             renderProfileAvatarPicker();
             $('profileError').textContent = '';
@@ -1737,7 +1979,7 @@ function renderMessengerApp() {
             $('accountPanel').classList.remove('hidden');
             $('sidebar').classList.add('chat-open');
             $('chat').classList.add('chat-open');
-            Promise.all([loadAvatars(), loadNotificationSounds()])
+            Promise.all([loadAvatars(), loadNotificationSounds(), loadBlockedUsers()])
                 .then(() => {
                     state.profileAvatarId = state.me.avatar_asset_id;
                     renderProfileAvatarPicker();
@@ -1762,6 +2004,28 @@ function renderMessengerApp() {
             const data = await api('/api/conversations');
             state.conversations = data.conversations;
             renderConversationList();
+        }
+
+        async function loadContactRequests() {
+            const data = await api('/api/contact-requests');
+            state.contactRequests = data.requests || [];
+            renderContactRequests();
+        }
+
+        async function loadBlockedUsers() {
+            const data = await api('/api/blocked-users');
+            state.blockedUsers = data.users || [];
+            renderBlockedUsers();
+        }
+
+        async function refreshOpenMessages(conversationId) {
+            if (!state.activeConversation || Number(state.activeConversation.id) !== Number(conversationId)) return;
+            const data = await api('/api/conversations/' + conversationId + '/messages');
+            state.activeConversation = data.conversation;
+            if (!$('chatPane').classList.contains('hidden')) {
+                renderMessages(data.messages);
+                updateMessageControls();
+            }
         }
 
         async function openConversation(id) {
@@ -1817,6 +2081,10 @@ function renderMessengerApp() {
                     setRemoteTyping(payload.typing);
                 }
             });
+            state.eventSource.addEventListener('message:read', async (event) => {
+                const payload = JSON.parse(event.data);
+                await refreshOpenMessages(payload.conversationId);
+            });
             state.eventSource.addEventListener('conversation:deleted', async (event) => {
                 const payload = JSON.parse(event.data);
                 await loadConversations();
@@ -1831,6 +2099,7 @@ function renderMessengerApp() {
             });
             state.eventSource.addEventListener('contact:changed', async (event) => {
                 const payload = JSON.parse(event.data);
+                if (!$('accountPanel').classList.contains('hidden')) await loadBlockedUsers();
                 if (state.activeConversation && Number(state.activeConversation.user_id) === Number(payload.userId)) {
                     const showingProfile = !$('contactPanel').classList.contains('hidden');
                     await openConversation(state.activeConversation.id);
@@ -1841,6 +2110,10 @@ function renderMessengerApp() {
                     }
                 }
             });
+            state.eventSource.addEventListener('contact:request', async () => {
+                await loadContactRequests();
+                await loadConversations();
+            });
         }
 
         async function boot() {
@@ -1849,6 +2122,8 @@ function renderMessengerApp() {
                 await loadMe();
                 await loadNotificationSounds();
                 await loadConversations();
+                await loadContactRequests();
+                await loadBlockedUsers();
                 showApp();
                 connectEvents();
             } catch {
@@ -1971,6 +2246,7 @@ function renderMessengerApp() {
                         twoFactorEnabled: $('profile2fa').checked,
                         displayNameVisibility: $('displayNameVisibility').value,
                         notificationSoundAssetId: $('notificationSound').value || null,
+                        sendOnEnter: $('sendOnEnter').checked,
                     }),
                 });
                 await loadMe();
@@ -1981,19 +2257,32 @@ function renderMessengerApp() {
             }
         });
         $('previewSound').addEventListener('click', () => playNotificationSound($('notificationSound').value));
+        $('blockedList').addEventListener('click', async (event) => {
+            const button = event.target.closest('[data-unblock-user]');
+            if (!button) return;
+            $('profileError').textContent = '';
+            $('profileNotice').textContent = '';
+            try {
+                await api('/api/users/' + button.dataset.unblockUser + '/block', { method: 'DELETE', body: '{}' });
+                await loadBlockedUsers();
+                await loadConversations();
+                $('profileNotice').textContent = 'Kontakt wurde entblockt.';
+            } catch (error) {
+                $('profileError').textContent = error.message;
+            }
+        });
         $('addForm').addEventListener('submit', async (event) => {
             event.preventDefault();
             $('addError').textContent = '';
             const username = $('addUsername').value.trim().replace(/^@/, '');
             try {
-                const data = await api('/api/conversations/by-username', {
+                await api('/api/contact-requests/by-username', {
                     method: 'POST',
                     body: JSON.stringify({ username }),
                 });
                 $('addUsername').value = '';
                 $('addModal').classList.add('hidden');
-                await loadConversations();
-                await openConversation(data.conversation.id);
+                await loadContactRequests();
             } catch (error) {
                 $('addError').textContent = error.message;
             }
@@ -2086,6 +2375,11 @@ function renderMessengerApp() {
         });
         $('messageInput').addEventListener('input', updateTyping);
         $('messageInput').addEventListener('blur', stopTyping);
+        $('messageInput').addEventListener('keydown', (event) => {
+            if (event.key !== 'Enter' || event.shiftKey || event.isComposing || !state.me || !state.me.send_on_enter) return;
+            event.preventDefault();
+            $('composer').requestSubmit();
+        });
         $('attachmentInput').addEventListener('change', (event) => chooseAttachment(event.target.files[0]));
         $('attachmentPreview').addEventListener('click', (event) => {
             if (!event.target.closest('#removeAttachment')) return;
@@ -2119,6 +2413,38 @@ function renderMessengerApp() {
         $('conversationList').addEventListener('click', (event) => {
             const row = event.target.closest('[data-chat]');
             if (row) openConversation(row.dataset.chat);
+        });
+        $('requestList').addEventListener('click', async (event) => {
+            const accept = event.target.closest('[data-accept-request]');
+            const decline = event.target.closest('[data-decline-request]');
+            const archive = event.target.closest('[data-archive-request]');
+            const block = event.target.closest('[data-block-request]');
+            try {
+                if (accept || decline) {
+                    const button = accept || decline;
+                    await api('/api/contact-requests/' + (accept ? accept.dataset.acceptRequest : decline.dataset.declineRequest) + '/respond', {
+                        method: 'POST',
+                        body: JSON.stringify({ action: accept ? 'accept' : 'decline' }),
+                    });
+                    await loadContactRequests();
+                    await loadConversations();
+                    return;
+                }
+                if (block) {
+                    await api('/api/users/' + block.dataset.user + '/block', { method: 'PUT', body: '{}' });
+                    await loadContactRequests();
+                    return;
+                }
+                if (archive) {
+                    await api('/api/contact-requests/' + archive.dataset.archiveRequest + '/archive', {
+                        method: 'POST',
+                        body: '{}',
+                    });
+                    await loadContactRequests();
+                }
+            } catch (error) {
+                $('composerError').textContent = error.message;
+            }
         });
         $('search').addEventListener('input', async (event) => {
             const q = event.target.value.trim();
@@ -2392,54 +2718,97 @@ app.get('/admin/export', requireAdminAuth, async (req, res, next) => {
         await query(
             `insert into admin_audit_logs (admin_user, action, ip_address)
              values ($1, $2, $3)`,
-            [ADMIN_USER, userId ? `chat_export_user_${userId}` : 'chat_export_all', req.ip],
+            [ADMIN_USER, userId ? `chat_archive_zip_export_user_${userId}` : 'chat_archive_zip_export_all', req.ip],
         );
 
         const users = await query(
             `select id, username, display_name, email, about, avatar_color, created_at, last_seen_at
              from users
-             where ($1::bigint is null or id = $1)
+             where ($1::bigint is null or id in (
+                select user_one_id from conversations where $1 in (user_one_id, user_two_id)
+                union
+                select user_two_id from conversations where $1 in (user_one_id, user_two_id)
+             ))
              order by id`,
             [userId],
         );
         const conversations = await query(
-            `select id, user_one_id, user_two_id, created_at
+            `select id, user_one_id, user_two_id, created_at,
+                hidden_for_user_one, hidden_for_user_two,
+                deleted_for_user_one_at, deleted_for_user_two_at,
+                greatest(deleted_for_user_one_at, deleted_for_user_two_at) + interval '${CHAT_RETENTION_DAYS} days' as minimum_retention_until
              from conversations
              where ($1::bigint is null or $1 in (user_one_id, user_two_id))
              order by id`,
             [userId],
         );
         const messages = await query(
-            `select m.id, m.conversation_id, m.sender_id, m.body, m.created_at, m.read_at,
-                json_agg(
-                    json_build_object(
-                        'id', a.id,
-                        'file_name', a.file_name,
-                        'mime_type', a.mime_type,
-                        'size_bytes', a.size_bytes,
-                        'data_base64', encode(a.data, 'base64'),
-                        'created_at', a.created_at
-                    )
-                ) filter (where a.id is not null) as attachments
+            `select m.id, m.conversation_id, m.sender_id, m.body, m.created_at, m.read_at
              from messages m
-             left join message_attachments a on a.message_id = m.id
              join conversations c on c.id = m.conversation_id
              where ($1::bigint is null or $1 in (c.user_one_id, c.user_two_id))
-             group by m.id
              order by m.conversation_id, m.created_at`,
             [userId],
         );
+        const contactRequests = await query(
+            `select id, sender_id, recipient_id, status, archived_by_sender, archived_by_recipient, created_at, responded_at
+             from contact_requests
+             where ($1::bigint is null or $1 in (sender_id, recipient_id))
+             order by created_at`,
+            [userId],
+        );
+        const attachments = await query(
+            `select a.id, a.message_id, a.file_name, a.mime_type, a.size_bytes, a.created_at, a.data,
+                m.conversation_id
+             from message_attachments a
+             join messages m on m.id = a.message_id
+             join conversations c on c.id = m.conversation_id
+             where ($1::bigint is null or $1 in (c.user_one_id, c.user_two_id))
+             order by m.conversation_id, a.message_id, a.id`,
+            [userId],
+        );
         const exportedAt = new Date().toISOString();
-
-        res.setHeader('Content-Type', 'application/json');
-        res.setHeader('Content-Disposition', `attachment; filename="justchat-export-${exportedAt.slice(0, 10)}.json"`);
-        return res.json({
+        const attachmentMetadata = attachments.rows.map((attachment) => ({
+            id: attachment.id,
+            message_id: attachment.message_id,
+            conversation_id: attachment.conversation_id,
+            file_name: attachment.file_name,
+            mime_type: attachment.mime_type,
+            size_bytes: attachment.size_bytes,
+            created_at: attachment.created_at,
+            archive_path: `dateien/chat-${attachment.conversation_id}/nachricht-${attachment.message_id}/${attachment.id}-${zipPathSegment(attachment.file_name)}`,
+        }));
+        const metadataByMessage = new Map();
+        for (const attachment of attachmentMetadata) {
+            const items = metadataByMessage.get(String(attachment.message_id)) || [];
+            items.push(attachment);
+            metadataByMessage.set(String(attachment.message_id), items);
+        }
+        const messageMetadata = messages.rows.map((message) => ({
+            ...message,
+            attachments: metadataByMessage.get(String(message.id)) || [],
+        }));
+        const manifest = {
             exported_at: exportedAt,
-            purpose: 'Sicherheits- und Moderationsprüfung durch berechtigte Administratoren',
+            purpose: 'Archivexport für berechtigte Sicherheits-, Rechts- oder Behördenanfragen',
+            retention_policy: `Von Nutzern entfernte Chats werden mindestens ${CHAT_RETENTION_DAYS} Tage aufbewahrt. Beidseitig entfernte Chats dürfen danach bereinigt werden.`,
+            selected_user_id: userId || null,
             users: users.rows,
             conversations: conversations.rows,
-            messages: messages.rows,
-        });
+            contact_requests: contactRequests.rows,
+            messages: messageMetadata,
+        };
+        const files = [
+            { name: 'manifest.json', data: Buffer.from(JSON.stringify(manifest, null, 2), 'utf8') },
+        ];
+        for (let index = 0; index < attachments.rows.length; index += 1) {
+            files.push({ name: attachmentMetadata[index].archive_path, data: attachments.rows[index].data });
+        }
+        const archive = createZipArchive(files);
+
+        res.setHeader('Content-Type', 'application/zip');
+        res.setHeader('Content-Disposition', `attachment; filename="justchat-archiv-${exportedAt.slice(0, 10)}.zip"`);
+        return res.send(archive);
     } catch (error) {
         return next(error);
     }
@@ -2486,7 +2855,14 @@ app.post('/api/auth/register', async (req, res, next) => {
         sendMail({
             to: email,
             subject: 'Willkommen bei JustChat',
-            text: `Hallo ${displayName},\n\n dein JustChat-Konto wurde erstellt.\n\nBenutzername: ${username}\n\nViele Grüße\nJustChat`,
+            text: `Hallo ${displayName},\n\ndein JustChat-Konto wurde erstellt.\n\nBenutzername: @${username}\n\nViele Grüße\nJustChat`,
+            html: renderEmailTemplate({
+                title: 'Willkommen bei JustChat',
+                greeting: `Hallo ${displayName},`,
+                message: 'dein Konto wurde erfolgreich erstellt. Du kannst dich ab sofort mit deinem Benutzernamen anmelden.',
+                contentHtml: `<div style="margin:20px 0;padding:16px;border-radius:10px;background:#f0fdfa;border:1px solid #99f6e4;color:#0f766e;"><span style="display:block;margin-bottom:6px;font-size:12px;font-weight:700;text-transform:uppercase;">Benutzername</span><strong style="font-size:20px;">@${escapeHtml(username)}</strong></div>`,
+                note: 'Bewahre deine Zugangsdaten sicher auf und teile sie nicht mit anderen Personen.',
+            }),
         }).catch((error) => console.error('E-Mail konnte nicht gesendet werden:', error.message));
 
         return res.status(201).json({ token: createToken(user), user });
@@ -2583,10 +2959,20 @@ app.post('/api/auth/forgot-username', async (req, res, next) => {
         const result = await query('select username, display_name, email from users where email = $1 order by created_at asc', [email]);
         if (result.rows.length && getMailer()) {
             const names = result.rows.map((user) => `@${user.username} (${user.display_name})`).join('\n');
+            const accountsHtml = result.rows.map((user) =>
+                `<div style="padding:10px 0;border-bottom:1px solid #ccfbf1;"><strong style="color:#0f766e;">@${escapeHtml(user.username)}</strong><span style="display:block;color:#475467;">${escapeHtml(user.display_name)}</span></div>`
+            ).join('');
             await sendMail({
                 to: email,
                 subject: 'Dein JustChat Benutzername',
                 text: `Zu dieser E-Mail gehören folgende JustChat-Konten:\n\n${names}`,
+                html: renderEmailTemplate({
+                    title: 'Benutzername wiederfinden',
+                    greeting: 'Hallo,',
+                    message: 'zu dieser E-Mail-Adresse gehören die folgenden JustChat-Konten:',
+                    contentHtml: `<div style="margin:20px 0;padding:4px 16px;border-radius:10px;background:#f0fdfa;border:1px solid #99f6e4;">${accountsHtml}</div>`,
+                    note: 'Falls du diese Anfrage nicht gestellt hast, kannst du diese E-Mail ignorieren.',
+                }),
             });
         }
         return res.json({ ok: true });
@@ -2763,6 +3149,7 @@ app.patch('/api/me', requireAuth, async (req, res, next) => {
         const twoFactorEnabled = Boolean(req.body.twoFactorEnabled);
         const displayNameVisibility = req.body.displayNameVisibility === 'everyone' ? 'everyone' : 'contacts';
         const notificationSoundAssetId = parseId(req.body.notificationSoundAssetId);
+        const sendOnEnter = Boolean(req.body.sendOnEnter);
 
         validateCleanName(displayName, 'Anzeigename');
         if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
@@ -2782,10 +3169,10 @@ app.patch('/api/me', requireAuth, async (req, res, next) => {
         const result = await query(
             `update users
              set display_name = $1, email = $2, about = $3, avatar_asset_id = $4, two_factor_enabled = $5,
-                 display_name_visibility = $6, notification_sound_asset_id = $7
-             where id = $8
+                 display_name_visibility = $6, notification_sound_asset_id = $7, send_on_enter = $8
+             where id = $9
              returning id`,
-            [displayName, email, about, avatarAssetId, twoFactorEnabled, displayNameVisibility, notificationSoundAssetId, req.user.id],
+            [displayName, email, about, avatarAssetId, twoFactorEnabled, displayNameVisibility, notificationSoundAssetId, sendOnEnter, req.user.id],
         );
         if (!result.rows[0]) return res.status(404).json({ error: 'Benutzer nicht gefunden' });
 
@@ -2835,8 +3222,18 @@ app.put('/api/users/:id/block', requireAuth, async (req, res, next) => {
              on conflict (blocker_id, blocked_user_id) do nothing`,
             [req.user.id, otherUserId],
         );
+        await query(
+            `update contact_requests
+             set status = 'blocked', responded_at = now(),
+                 archived_by_sender = false, archived_by_recipient = false
+             where status <> 'accepted'
+                and ((sender_id = $1 and recipient_id = $2) or (sender_id = $2 and recipient_id = $1))`,
+            [req.user.id, otherUserId],
+        );
         sendEvent(otherUserId, 'contact:changed', { userId: req.user.id });
         sendEvent(req.user.id, 'contact:changed', { userId: otherUserId });
+        sendEvent(otherUserId, 'contact:request', { userId: req.user.id });
+        sendEvent(req.user.id, 'contact:request', { userId: otherUserId });
         return res.json({ ok: true });
     } catch (error) {
         return next(error);
@@ -2861,6 +3258,141 @@ app.delete('/api/users/:id/block', requireAuth, async (req, res, next) => {
     }
 });
 
+app.get('/api/blocked-users', requireAuth, async (req, res, next) => {
+    try {
+        const result = await query(
+            `select u.id, u.username, u.display_name, u.avatar_color,
+                case when aa.id is null then null else 'data:' || aa.mime_type || ';base64,' || encode(aa.data, 'base64') end as avatar_url
+             from user_blocks b
+             join users u on u.id = b.blocked_user_id
+             left join avatar_assets aa on aa.id = u.avatar_asset_id and aa.is_active = true
+             where b.blocker_id = $1
+             order by b.created_at desc`,
+            [req.user.id],
+        );
+        return res.json({ users: result.rows });
+    } catch (error) {
+        return next(error);
+    }
+});
+
+app.get('/api/contact-requests', requireAuth, async (req, res, next) => {
+    try {
+        const result = await query(
+            `select r.id, r.sender_id, r.recipient_id, r.status, r.created_at, r.responded_at,
+                other_user.id as user_id, other_user.username, other_user.display_name,
+                other_user.avatar_color,
+                case when aa.id is null then null else 'data:' || aa.mime_type || ';base64,' || encode(aa.data, 'base64') end as avatar_url
+             from contact_requests r
+             join users other_user on other_user.id = case when r.sender_id = $1 then r.recipient_id else r.sender_id end
+             left join avatar_assets aa on aa.id = other_user.avatar_asset_id and aa.is_active = true
+             where $1 in (r.sender_id, r.recipient_id)
+                and r.status <> 'accepted'
+                and case when r.sender_id = $1 then not r.archived_by_sender else not r.archived_by_recipient end
+             order by r.created_at desc`,
+            [req.user.id],
+        );
+        return res.json({ requests: result.rows });
+    } catch (error) {
+        return next(error);
+    }
+});
+
+app.post('/api/contact-requests/by-username', requireAuth, async (req, res, next) => {
+    try {
+        const username = normalizeUsername(req.body.username);
+        if (!username || !/^[a-z0-9_]{3,32}$/.test(username)) {
+            return res.status(400).json({ error: 'Bitte vollständigen @name eingeben' });
+        }
+        const found = await query('select id from users where username = $1 and id <> $2', [username, req.user.id]);
+        const user = found.rows[0];
+        if (!user) return res.status(404).json({ error: 'Nutzer nicht gefunden' });
+        if (await getExistingConversation(req.user.id, user.id)) {
+            return res.status(409).json({ error: 'Dieser Kontakt ist bereits in deinen Chats' });
+        }
+        const blockStatus = await getBlockStatus(req.user.id, user.id);
+        if (blockStatus.blocked_by_me || blockStatus.blocked_me) {
+            return res.status(403).json({ error: 'Für diesen Kontakt sind Anfragen blockiert' });
+        }
+        const existing = await query(
+            `select id, status from contact_requests
+             where (sender_id = $1 and recipient_id = $2) or (sender_id = $2 and recipient_id = $1)
+             limit 1`,
+            [req.user.id, user.id],
+        );
+        if (existing.rows[0]) {
+            const statusText = existing.rows[0].status === 'pending' ? 'Es besteht bereits eine offene Anfrage' : 'Diese Anfrage ist bereits erledigt';
+            return res.status(409).json({ error: statusText });
+        }
+        const created = await query(
+            `insert into contact_requests (sender_id, recipient_id)
+             values ($1, $2)
+             returning id, status`,
+            [req.user.id, user.id],
+        );
+        sendEvent(user.id, 'contact:request', { userId: req.user.id });
+        return res.status(201).json({ request: created.rows[0] });
+    } catch (error) {
+        if (error.code === '23505') return res.status(409).json({ error: 'Es besteht bereits eine Anfrage für diesen Kontakt' });
+        return next(error);
+    }
+});
+
+app.post('/api/contact-requests/:id/respond', requireAuth, async (req, res, next) => {
+    try {
+        const requestId = parseId(req.params.id);
+        const action = req.body.action === 'accept' ? 'accept' : req.body.action === 'decline' ? 'decline' : null;
+        if (!requestId || !action) return res.status(400).json({ error: 'Ungültige Aktion' });
+        const existing = await query(
+            `select * from contact_requests
+             where id = $1 and recipient_id = $2 and status = 'pending'`,
+            [requestId, req.user.id],
+        );
+        const request = existing.rows[0];
+        if (!request) return res.status(404).json({ error: 'Offene Anfrage nicht gefunden' });
+        const status = action === 'accept' ? 'accepted' : 'declined';
+        await query('update contact_requests set status = $1, responded_at = now() where id = $2', [status, request.id]);
+        let conversationId = null;
+        if (action === 'accept') {
+            const [userOneId, userTwoId] = conversationPair(request.sender_id, request.recipient_id);
+            const conversation = await query(
+                `insert into conversations (user_one_id, user_two_id)
+                 values ($1, $2)
+                 on conflict (user_one_id, user_two_id) do update set
+                    hidden_for_user_one = false, hidden_for_user_two = false,
+                    deleted_for_user_one_at = null, deleted_for_user_two_at = null
+                 returning id`,
+                [userOneId, userTwoId],
+            );
+            conversationId = conversation.rows[0].id;
+        }
+        sendEvent(request.sender_id, 'contact:request', { userId: req.user.id, status, conversationId });
+        sendEvent(request.recipient_id, 'contact:request', { userId: request.sender_id, status, conversationId });
+        return res.json({ ok: true, status, conversationId });
+    } catch (error) {
+        return next(error);
+    }
+});
+
+app.post('/api/contact-requests/:id/archive', requireAuth, async (req, res, next) => {
+    try {
+        const requestId = parseId(req.params.id);
+        if (!requestId) return res.status(400).json({ error: 'Ungültige Anfrage' });
+        const archived = await query(
+            `update contact_requests
+             set archived_by_sender = case when sender_id = $2 then true else archived_by_sender end,
+                 archived_by_recipient = case when recipient_id = $2 then true else archived_by_recipient end
+             where id = $1 and $2 in (sender_id, recipient_id) and status in ('declined', 'blocked')
+             returning id`,
+            [requestId, req.user.id],
+        );
+        if (!archived.rows[0]) return res.status(404).json({ error: 'Kontakt kann nicht archiviert werden' });
+        return res.json({ ok: true });
+    } catch (error) {
+        return next(error);
+    }
+});
+
 app.get('/api/conversations', requireAuth, async (req, res, next) => {
     try {
         const result = await query(
@@ -2875,7 +3407,9 @@ app.get('/api/conversations', requireAuth, async (req, res, next) => {
                 latest.has_attachment as has_attachment,
                 latest.created_at as last_message_at,
                 latest.sender_id as last_sender_id,
-                unread.count as unread_count
+                unread.count as unread_count,
+                exists(select 1 from user_blocks where blocker_id = $1 and blocked_user_id = other_user.id) as blocked_by_me,
+                exists(select 1 from user_blocks where blocker_id = other_user.id and blocked_user_id = $1) as blocked_me
              from conversations c
              join users other_user
                 on other_user.id = case when c.user_one_id = $1 then c.user_two_id else c.user_one_id end
@@ -2914,23 +3448,18 @@ app.post('/api/conversations', requireAuth, async (req, res, next) => {
 
         const otherUser = await getUserById(otherUserId);
         if (!otherUser) return res.status(404).json({ error: 'Benutzer nicht gefunden' });
-        const blockStatus = await getBlockStatus(req.user.id, otherUserId);
-        if (blockStatus.blocked_by_me || blockStatus.blocked_me) {
-            return res.status(403).json({ error: 'Mit blockierten Personen kann kein neuer Chat gestartet werden' });
-        }
-
-        const [userOneId, userTwoId] = conversationPair(req.user.id, otherUserId);
-        const result = await query(
-            `insert into conversations (user_one_id, user_two_id)
-             values ($1, $2)
-             on conflict (user_one_id, user_two_id) do update set
-                hidden_for_user_one = case when conversations.user_one_id = $3 then false else conversations.hidden_for_user_one end,
-                hidden_for_user_two = case when conversations.user_two_id = $3 then false else conversations.hidden_for_user_two end
-             returning id`,
-            [userOneId, userTwoId, req.user.id],
+        const existing = await getExistingConversation(req.user.id, otherUserId);
+        if (!existing) return res.status(403).json({ error: 'Vor dem Chatten muss die Kontaktanfrage angenommen werden' });
+        await query(
+            `update conversations
+             set hidden_for_user_one = case when user_one_id = $2 then false else hidden_for_user_one end,
+                 hidden_for_user_two = case when user_two_id = $2 then false else hidden_for_user_two end,
+                 deleted_for_user_one_at = case when user_one_id = $2 then null else deleted_for_user_one_at end,
+                 deleted_for_user_two_at = case when user_two_id = $2 then null else deleted_for_user_two_at end
+             where id = $1`,
+            [existing.id, req.user.id],
         );
-
-        return res.status(201).json({ conversation: { id: result.rows[0].id } });
+        return res.json({ conversation: { id: existing.id } });
     } catch (error) {
         return next(error);
     }
@@ -2947,23 +3476,9 @@ app.post('/api/conversations/by-username', requireAuth, async (req, res, next) =
         const result = await query('select id from users where username = $1 and id <> $2', [username, req.user.id]);
         const user = result.rows[0];
         if (!user) return res.status(404).json({ error: 'Nutzer nicht gefunden' });
-        const blockStatus = await getBlockStatus(req.user.id, user.id);
-        if (blockStatus.blocked_by_me || blockStatus.blocked_me) {
-            return res.status(403).json({ error: 'Mit blockierten Personen kann kein neuer Chat gestartet werden' });
-        }
-
-        const [userOneId, userTwoId] = conversationPair(req.user.id, user.id);
-        const conversation = await query(
-            `insert into conversations (user_one_id, user_two_id)
-             values ($1, $2)
-             on conflict (user_one_id, user_two_id) do update set
-                hidden_for_user_one = case when conversations.user_one_id = $3 then false else conversations.hidden_for_user_one end,
-                hidden_for_user_two = case when conversations.user_two_id = $3 then false else conversations.hidden_for_user_two end
-             returning id`,
-            [userOneId, userTwoId, req.user.id],
-        );
-
-        return res.status(201).json({ conversation: { id: conversation.rows[0].id } });
+        const conversation = await getExistingConversation(req.user.id, user.id);
+        if (!conversation) return res.status(403).json({ error: 'Sende zuerst eine Kontaktanfrage' });
+        return res.json({ conversation: { id: conversation.id } });
     } catch (error) {
         return next(error);
     }
@@ -3044,7 +3559,10 @@ app.post('/api/conversations/:id/messages', requireAuth, async (req, res, next) 
             return res.status(403).json({ error: 'In diesem Chat sind Nachrichten blockiert' });
         }
         await query(
-            'update conversations set hidden_for_user_one = false, hidden_for_user_two = false where id = $1',
+            `update conversations
+             set hidden_for_user_one = false, hidden_for_user_two = false,
+                 deleted_for_user_one_at = null, deleted_for_user_two_at = null
+             where id = $1`,
             [conversation.id],
         );
 
@@ -3114,7 +3632,9 @@ app.delete('/api/conversations/:id', requireAuth, async (req, res, next) => {
         await query(
             `update conversations
              set hidden_for_user_one = case when user_one_id = $2 then true else hidden_for_user_one end,
-                 hidden_for_user_two = case when user_two_id = $2 then true else hidden_for_user_two end
+                 hidden_for_user_two = case when user_two_id = $2 then true else hidden_for_user_two end,
+                 deleted_for_user_one_at = case when user_one_id = $2 then now() else deleted_for_user_one_at end,
+                 deleted_for_user_two_at = case when user_two_id = $2 then now() else deleted_for_user_two_at end
              where id = $1`,
             [conversation.id, req.user.id],
         );
@@ -3130,13 +3650,16 @@ app.post('/api/conversations/:id/read', requireAuth, async (req, res, next) => {
         const conversation = await getConversationForUser(req.params.id, req.user.id);
         if (!conversation) return res.status(404).json({ error: 'Chat nicht gefunden' });
 
-        await query(
+        const markedRead = await query(
             `update messages
              set read_at = coalesce(read_at, now())
-             where conversation_id = $1 and sender_id <> $2 and read_at is null`,
+             where conversation_id = $1 and sender_id <> $2 and read_at is null
+             returning id`,
             [conversation.id, req.user.id],
         );
-        sendEvent(conversation.other_user_id, 'message:read', { conversationId: conversation.id });
+        if (markedRead.rowCount > 0) {
+            sendEvent(conversation.other_user_id, 'message:read', { conversationId: conversation.id });
+        }
         return res.json({ ok: true });
     } catch (error) {
         return next(error);
@@ -3146,10 +3669,13 @@ app.post('/api/conversations/:id/read', requireAuth, async (req, res, next) => {
 app.get('/api/events', requireAuth, (req, res) => {
     res.writeHead(200, {
         'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache',
+        'Cache-Control': 'no-cache, no-transform',
+        'X-Accel-Buffering': 'no',
         Connection: 'keep-alive',
     });
     res.write('event: ready\ndata: {"ok":true}\n\n');
+    const keepAlive = setInterval(() => res.write(': keep-alive\n\n'), 25000);
+    res.on('close', () => clearInterval(keepAlive));
     addEventClient(req.user.id, res);
 });
 
@@ -3160,7 +3686,16 @@ app.use((error, req, res, next) => {
 });
 
 waitForDatabase()
-    .then(() => {
+    .then(async () => {
+        if (DATABASE_URL) {
+            await purgeExpiredArchivedConversations();
+            const archiveCleanupTimer = setInterval(() => {
+                purgeExpiredArchivedConversations().catch((error) => {
+                    console.error('Archiv-Bereinigung fehlgeschlagen:', error.message);
+                });
+            }, 60 * 60 * 1000);
+            archiveCleanupTimer.unref();
+        }
         app.listen(PORT, '0.0.0.0', () => {
             console.log(`JustChat läuft auf Port ${PORT}`);
         });
