@@ -706,6 +706,7 @@ async function getUserById(userId) {
         `select u.id, u.username, u.display_name, u.email, u.about, u.avatar_color, u.avatar_asset_id,
             u.two_factor_enabled, u.display_name_visibility, u.username_history_visibility, u.notification_sound_asset_id, u.send_on_enter, u.gif_playback,
             u.created_at, u.last_seen_at,
+            u.id in (select early_user.id from users early_user order by early_user.created_at, early_user.id limit 10) as first_account,
             case when aa.id is null then null else 'data:' || aa.mime_type || ';base64,' || encode(aa.data, 'base64') end as avatar_url
          from users u
          left join avatar_assets aa on aa.id = u.avatar_asset_id and aa.is_active = true
@@ -1406,7 +1407,10 @@ function renderMessengerApp() {
         .avatar-frame.gold { background: linear-gradient(135deg, #fde68a, #d97706); }
         .avatar-frame.diamond { background: linear-gradient(120deg, #a5f3fc, #fff, #c4b5fd, #67e8f9); background-size: 240% 240%; animation: diamondSparkle 2.2s ease-in-out infinite; box-shadow: 0 0 12px rgba(103, 232, 249, .8); }
         .avatar-frame.none { padding: 0; }
+        .avatar-frame.founder { position: relative; }
+        .founder-badge { position: absolute; right: -8px; bottom: -5px; z-index: 1; border: 1px solid #fff; border-radius: 999px; padding: 2px 5px; color: #704300; background: linear-gradient(135deg, #fff2ab, #f3bc37 58%, #cf8512); box-shadow: 0 2px 6px rgba(151, 98, 15, .28); font-size: 9px; line-height: 1.1; font-weight: 900; letter-spacing: .02em; }
         .contact-frame { margin: 0 auto; }
+        .contact-frame .founder-badge { right: -10px; bottom: 1px; padding: 4px 8px; font-size: 12px; }
         @keyframes diamondSparkle { 0%, 100% { background-position: 0% 50%; } 50% { background-position: 100% 50%; box-shadow: 0 0 17px rgba(196, 181, 253, .95); } }
         .row-main { min-width: 0; }
         .row-title { display: flex; justify-content: space-between; gap: 8px; min-width: 0; }
@@ -1460,9 +1464,21 @@ function renderMessengerApp() {
         .settings-actions { display: grid; gap: 10px; }
         .history-list { display: flex; flex-wrap: wrap; gap: 6px; min-height: 24px; }
         .history-item { font-size: 13px; border-radius: 999px; padding: 5px 9px; background: #eef8f6; color: var(--text); }
-        .contact-avatar { width: 88px; height: 88px; font-size: 30px; margin: 0 auto; }
-        .contact-heading { text-align: center; display: grid; gap: 4px; }
-        .contact-about { border: 1px solid var(--line); border-radius: 8px; padding: 12px; background: #f7fbfa; min-height: 48px; }
+        .contact-card { width: min(560px, 100%); padding: 0; overflow: hidden; border-radius: 18px; box-shadow: 0 12px 32px rgba(15, 23, 42, .07); }
+        .modal-head.contact-header { margin-bottom: 0; padding: 18px 20px 0; }
+        .contact-hero { display: grid; justify-items: center; gap: 14px; padding: 16px 22px 22px; background: linear-gradient(180deg, #f2fbf8 0%, #fff 100%); border-bottom: 1px solid var(--line); }
+        .contact-avatar { width: 96px; height: 96px; font-size: 32px; margin: 0 auto; }
+        .contact-heading { text-align: center; display: grid; gap: 3px; }
+        .contact-heading strong { font-size: 21px; }
+        .contact-details { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; padding: 18px 20px 0; }
+        .contact-detail { border: 1px solid var(--line); border-radius: 10px; padding: 11px 12px; background: #f8fcfb; min-height: 70px; }
+        .contact-detail.wide { grid-column: 1 / -1; }
+        .contact-detail label { display: block; margin-bottom: 6px; color: var(--muted); font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
+        .contact-about { color: var(--text); font-size: 15px; line-height: 1.45; }
+        .contact-actions { display: grid; gap: 10px; margin: 18px 20px 20px; padding: 14px; border-radius: 12px; border: 1px solid #fee2df; background: #fff9f8; }
+        .contact-actions .muted { margin: 0; }
+        .contact-actions #contactBlockInfo:empty, .contact-actions #contactError:empty { display: none; }
+        .contact-action-buttons { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
         .danger-button { background: #fff1f0; color: var(--danger); border: 1px solid #f3c6c1; border-radius: 8px; padding: 11px 14px; font-weight: 700; }
         .blocked-list { display: grid; gap: 8px; }
         .blocked-item { border: 1px solid var(--line); border-radius: 8px; background: #f7fbfa; padding: 10px; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
@@ -1512,6 +1528,8 @@ function renderMessengerApp() {
                 resize: none;
             }
             .settings-view { padding: calc(16px + env(safe-area-inset-top)) 12px calc(16px + env(safe-area-inset-bottom)); }
+            .contact-details { grid-template-columns: 1fr; }
+            .contact-action-buttons { grid-template-columns: 1fr; }
         }
     </style>
 </head>
@@ -1822,37 +1840,45 @@ function renderMessengerApp() {
                 </form>
             </div>
             <div id="contactPanel" class="settings-view hidden">
-                <div class="settings-card stack">
-                    <div class="modal-head">
+                <div class="settings-card contact-card">
+                    <div class="modal-head contact-header">
                         <h2>Kontaktprofil</h2>
                         <button id="closeContact" class="ghost close-button" type="button" aria-label="Profil schließen" title="Schließen">&times;</button>
                     </div>
-                    <div id="contactAvatarSlot"><div id="contactAvatar" class="avatar contact-avatar">?</div></div>
-                    <div class="contact-heading">
-                        <strong id="contactName"></strong>
-                        <span id="contactUsername" class="muted"></span>
+                    <div class="contact-hero">
+                        <div id="contactAvatarSlot"><div id="contactAvatar" class="avatar contact-avatar">?</div></div>
+                        <div class="contact-heading">
+                            <strong id="contactName"></strong>
+                            <span id="contactUsername" class="muted"></span>
+                        </div>
                     </div>
-                    <div class="field">
-                        <label>Info</label>
-                        <div id="contactAbout" class="contact-about"></div>
+                    <div class="contact-details">
+                        <div class="contact-detail wide">
+                            <label>Info</label>
+                            <div id="contactAbout" class="contact-about"></div>
+                        </div>
+                        <div class="contact-detail">
+                            <label>Zuletzt aktiv</label>
+                            <div id="contactLastSeen" class="contact-about"></div>
+                        </div>
+                        <div class="contact-detail">
+                            <label>Registriert seit</label>
+                            <div id="contactRegisteredSince" class="contact-about"></div>
+                        </div>
+                        <div class="contact-detail wide">
+                            <label>Frühere Benutzernamen</label>
+                            <div id="contactUsernameHistory" class="history-list"><span class="muted small">Keine sichtbaren früheren Namen.</span></div>
+                        </div>
                     </div>
-                    <div class="field">
-                        <label>Zuletzt aktiv</label>
-                        <div id="contactLastSeen" class="contact-about"></div>
+                    <div class="contact-actions">
+                        <p id="contactBlockInfo" class="muted small"></p>
+                        <div id="contactError" class="error"></div>
+                        <div class="contact-action-buttons">
+                            <button id="toggleBlock" class="danger-button" type="button">Person blockieren</button>
+                            <button id="deleteChat" class="danger-button" type="button">Chat bei mir löschen</button>
+                        </div>
+                        <p class="muted small">Gelöschte Chats werden serverseitig für mindestens 30 Tage gesichert.</p>
                     </div>
-                    <div class="field">
-                        <label>Registriert seit</label>
-                        <div id="contactRegisteredSince" class="contact-about"></div>
-                    </div>
-                    <div class="field">
-                        <label>Frühere Benutzernamen</label>
-                        <div id="contactUsernameHistory" class="history-list"><span class="muted small">Keine sichtbaren früheren Namen.</span></div>
-                    </div>
-                    <p id="contactBlockInfo" class="muted small"></p>
-                    <div id="contactError" class="error"></div>
-                    <button id="toggleBlock" class="danger-button" type="button">Person blockieren</button>
-                    <button id="deleteChat" class="danger-button" type="button">Chat bei mir löschen</button>
-                    <p class="muted small">Gelöschte Chats werden serverseitig für mindestens 30 Tage gesichert.</p>
                 </div>
             </div>
         </section>
@@ -1953,7 +1979,9 @@ function renderMessengerApp() {
                 ? '<img' + idAttribute + ' class="' + classes + '" src="' + entity.avatar_url + '" alt="">'
                 : '<div' + idAttribute + ' class="' + classes + '" style="background:' + entity.avatar_color + '">' + initials(entity.display_name) + '</div>';
             const frameClass = extraClass.includes('contact-avatar') ? ' contact-frame' : '';
-            return '<span class="avatar-frame ' + loyaltyTier(entity) + frameClass + '">' + inner + '</span>';
+            const founderClass = entity.first_account ? ' founder' : '';
+            const founderBadge = entity.first_account ? '<span class="founder-badge" title="Einer der ersten 10 Accounts">1st</span>' : '';
+            return '<span class="avatar-frame ' + loyaltyTier(entity) + frameClass + founderClass + '">' + inner + founderBadge + '</span>';
         }
 
         function membershipText(value) {
@@ -4029,6 +4057,7 @@ app.get('/api/users', requireAuth, async (req, res, next) => {
 
         const result = await query(
             `select u.id, u.username, u.display_name, u.about, u.avatar_color, u.last_seen_at, u.created_at as member_since,
+                u.id in (select early_user.id from users early_user order by early_user.created_at, early_user.id limit 10) as first_account,
                 case when aa.id is null then null else 'data:' || aa.mime_type || ';base64,' || encode(aa.data, 'base64') end as avatar_url
              from users u
              join conversations c
@@ -4100,6 +4129,7 @@ app.get('/api/blocked-users', requireAuth, async (req, res, next) => {
     try {
         const result = await query(
             `select u.id, u.username, u.display_name, u.avatar_color, u.created_at as member_since,
+                u.id in (select early_user.id from users early_user order by early_user.created_at, early_user.id limit 10) as first_account,
                 case when aa.id is null then null else 'data:' || aa.mime_type || ';base64,' || encode(aa.data, 'base64') end as avatar_url
              from user_blocks b
              join users u on u.id = b.blocked_user_id
@@ -4120,6 +4150,7 @@ app.get('/api/contact-requests', requireAuth, async (req, res, next) => {
             `select r.id, r.sender_id, r.recipient_id, r.status, r.created_at, r.responded_at,
                 other_user.id as user_id, other_user.username, other_user.display_name, other_user.created_at as member_since,
                 other_user.avatar_color,
+                other_user.id in (select early_user.id from users early_user order by early_user.created_at, early_user.id limit 10) as first_account,
                 case when aa.id is null then null else 'data:' || aa.mime_type || ';base64,' || encode(aa.data, 'base64') end as avatar_url
              from contact_requests r
              join users other_user on other_user.id = case when r.sender_id = $1 then r.recipient_id else r.sender_id end
@@ -4241,6 +4272,7 @@ app.get('/api/conversations', requireAuth, async (req, res, next) => {
                 other_user.avatar_color,
                 other_user.last_seen_at,
                 other_user.created_at as member_since,
+                other_user.id in (select early_user.id from users early_user order by early_user.created_at, early_user.id limit 10) as first_account,
                 case when aa.id is null then null else 'data:' || aa.mime_type || ';base64,' || encode(aa.data, 'base64') end as avatar_url,
                 latest.body as last_message,
                 latest.has_attachment as has_attachment,
@@ -4372,6 +4404,7 @@ app.get('/api/conversations/:id/messages', requireAuth, async (req, res, next) =
                 display_name: otherUser.display_name,
                 avatar_color: otherUser.avatar_color,
                 avatar_url: otherUser.avatar_url,
+                first_account: otherUser.first_account,
                 about: otherUser.about,
                 created_at: otherUser.created_at,
                 last_seen_at: otherUser.last_seen_at,
