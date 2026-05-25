@@ -1215,6 +1215,11 @@ function renderMessengerApp() {
         body { margin: 0; min-height: 100vh; font-family: Arial, sans-serif; background: var(--bg); color: var(--text); }
         button, input, textarea { font: inherit; }
         button { cursor: pointer; border: 0; }
+        .loading-shell { min-height: 100vh; min-height: 100dvh; display: grid; place-items: center; padding: 24px; background: linear-gradient(135deg, #f7fbff 0%, #edf7f4 100%); }
+        .loading-card { display: grid; justify-items: center; gap: 16px; color: var(--accent); }
+        .loading-brand { font-size: 34px; font-weight: 800; color: var(--text); }
+        .spinner { width: 42px; height: 42px; border-radius: 50%; border: 4px solid #cfe8e5; border-top-color: var(--accent); animation: spin .85s linear infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
         .auth-shell { min-height: 100vh; display: grid; place-items: center; padding: 24px; background: linear-gradient(135deg, #f7fbff 0%, #edf7f4 100%); }
         .auth-card { width: min(460px, 100%); background: rgba(255,255,255,.96); border: 1px solid var(--line); border-radius: 8px; padding: 26px; box-shadow: 0 18px 50px rgba(15, 23, 42, .12); }
         .auth-card h1 { margin: 0 0 6px; font-size: 36px; letter-spacing: 0; }
@@ -1348,7 +1353,15 @@ function renderMessengerApp() {
     </style>
 </head>
 <body>
-    <div id="auth" class="auth-shell">
+    <div id="loading" class="loading-shell">
+        <div class="loading-card" role="status" aria-label="JustChat wird geladen">
+            <div class="loading-brand">JustChat</div>
+            <div class="spinner" aria-hidden="true"></div>
+            <span class="muted">Chats werden geladen...</span>
+        </div>
+    </div>
+
+    <div id="auth" class="auth-shell hidden">
         <form id="authForm" class="auth-card stack">
             <div>
                 <h1>JustChat</h1>
@@ -1640,6 +1653,7 @@ function renderMessengerApp() {
         }
 
         function showAuth() {
+            $('loading').classList.add('hidden');
             $('auth').classList.remove('hidden');
             $('messenger').classList.add('hidden');
             fetch('/api/config').then((res) => res.json()).then((config) => {
@@ -1648,6 +1662,7 @@ function renderMessengerApp() {
         }
 
         function showApp() {
+            $('loading').classList.add('hidden');
             $('auth').classList.add('hidden');
             $('messenger').classList.remove('hidden');
         }
