@@ -435,6 +435,54 @@ async function sendTwoFactorCode(user) {
     return { sent: true, retryAfterSeconds: 60 };
 }
 
+async function sendEmailVerificationCode(user) {
+    if (!user.email) {
+        const error = new Error('Für die Registrierung ist eine E-Mail-Adresse erforderlich');
+        error.statusCode = 400;
+        throw error;
+    }
+    if (!getMailer()) {
+        const error = new Error('Registrierung braucht vollständige SMTP-Konfiguration');
+        error.statusCode = 503;
+        throw error;
+    }
+
+    const recentCode = await query(
+        `select greatest(0, ceil(extract(epoch from (created_at + interval '60 seconds' - now()))))::int as retry_after_seconds
+         from email_verification_codes
+         where user_id = $1 and used_at is null and created_at > now() - interval '60 seconds'
+         order by created_at desc
+         limit 1`,
+        [user.id],
+    );
+    if (recentCode.rows[0]) {
+        return {
+            sent: false,
+            retryAfterSeconds: recentCode.rows[0].retry_after_seconds,
+        };
+    }
+
+    const code = createLoginCode();
+    await query(
+        `insert into email_verification_codes (user_id, code_hash, expires_at)
+         values ($1, $2, now() + interval '15 minutes')`,
+        [user.id, hashPassword(code)],
+    );
+    await sendMail({
+        to: user.email,
+        subject: 'Bestätige deine JustChat E-Mail-Adresse',
+        text: `Dein Code zur Bestätigung deiner E-Mail-Adresse lautet: ${code}\n\nDer Code ist 15 Minuten gültig.`,
+        html: renderEmailTemplate({
+            title: 'E-Mail-Adresse bestätigen',
+            greeting: `Hallo ${user.display_name || user.username},`,
+            message: 'gib diesen Code in JustChat ein, um deine Registrierung abzuschließen.',
+            contentHtml: emailCodeBlock(code),
+            note: 'Der Code ist 15 Minuten gültig. Falls du kein Konto erstellt hast, ignoriere diese Nachricht.',
+        }),
+    });
+    return { sent: true, retryAfterSeconds: 60 };
+}
+
 async function sendPasswordResetCode(user) {
     if (!user.email) {
         const error = new Error('Für Passwort-Reset ist eine E-Mail-Adresse erforderlich');
@@ -619,6 +667,15 @@ async function initDatabase() {
             created_at timestamptz not null default now()
         );
 
+        create table if not exists email_verification_codes (
+            id bigserial primary key,
+            user_id bigint not null references users(id) on delete cascade,
+            code_hash text not null,
+            expires_at timestamptz not null,
+            used_at timestamptz,
+            created_at timestamptz not null default now()
+        );
+
         create table if not exists username_history (
             id bigserial primary key,
             user_id bigint not null references users(id) on delete cascade,
@@ -629,6 +686,7 @@ async function initDatabase() {
         alter table users add column if not exists email text;
         alter table users add column if not exists google_id text;
         alter table users add column if not exists email_verified_at timestamptz;
+        alter table users add column if not exists email_verification_required boolean not null default false;
         alter table users add column if not exists avatar_asset_id bigint references avatar_assets(id);
         alter table users add column if not exists two_factor_enabled boolean not null default false;
         alter table users add column if not exists display_name_visibility text not null default 'contacts';
@@ -706,7 +764,7 @@ async function getUserById(userId) {
         `select u.id, u.username, u.display_name, u.email, u.about, u.avatar_color, u.avatar_asset_id,
             u.two_factor_enabled, u.display_name_visibility, u.username_history_visibility, u.notification_sound_asset_id, u.send_on_enter, u.gif_playback,
             u.created_at, u.last_seen_at,
-            u.id in (select early_user.id from users early_user order by early_user.created_at, early_user.id limit 10) as first_account,
+            u.id in (select early_user.id from users early_user where not early_user.email_verification_required or early_user.email_verified_at is not null order by early_user.created_at, early_user.id limit 10) as first_account,
             case when aa.id is null then null else 'data:' || aa.mime_type || ';base64,' || encode(aa.data, 'base64') end as avatar_url
          from users u
          left join avatar_assets aa on aa.id = u.avatar_asset_id and aa.is_active = true
@@ -1604,6 +1662,17 @@ function renderMessengerApp() {
                 </div>
             </div>
             <div id="authError" class="error"></div>
+            <div id="emailVerificationPanel" class="inline-panel hidden">
+                <strong>E-Mail bestätigen</strong>
+                <p class="muted small">Wir haben dir einen Code per E-Mail gesendet. Gib ihn hier ein, um dein Konto zu aktivieren.</p>
+                <div class="field">
+                    <label for="emailVerificationCode">Bestätigungscode</label>
+                    <input id="emailVerificationCode" inputmode="numeric" autocomplete="one-time-code" maxlength="6">
+                </div>
+                <button id="verifyEmail" class="primary" type="button">E-Mail bestätigen</button>
+                <button id="resendEmailVerification" class="ghost" type="button" disabled>Code erneut senden (60 s)</button>
+                <button id="cancelEmailVerification" class="ghost close-button" type="button" aria-label="Bestätigung schließen" title="Schließen">&times;</button>
+            </div>
             <div id="twoFactorPanel" class="inline-panel hidden">
                 <strong>2FA-Bestätigung</strong>
                 <p class="muted small">Gib den Code aus deiner E-Mail direkt hier ein.</p>
@@ -1934,6 +2003,7 @@ function renderMessengerApp() {
             eventSource: null,
             registerMode: false,
             pendingTwoFactorUserId: null,
+            pendingEmailVerificationUserId: null,
             avatars: [],
             selectedAvatarId: null,
             profileAvatarId: null,
@@ -1951,6 +2021,8 @@ function renderMessengerApp() {
             bootRetryTimer: null,
             twoFactorResendTimer: null,
             twoFactorResendUntil: 0,
+            emailVerificationResendTimer: null,
+            emailVerificationResendUntil: 0,
             profileAvatarImage: null,
             profileAvatarFile: null,
         };
@@ -2077,14 +2149,20 @@ function renderMessengerApp() {
 
         function resetAuthPanels() {
             state.pendingTwoFactorUserId = null;
+            state.pendingEmailVerificationUserId = null;
             state.twoFactorResendUntil = 0;
             if (state.twoFactorResendTimer) clearInterval(state.twoFactorResendTimer);
             state.twoFactorResendTimer = null;
+            state.emailVerificationResendUntil = 0;
+            if (state.emailVerificationResendTimer) clearInterval(state.emailVerificationResendTimer);
+            state.emailVerificationResendTimer = null;
             $('authPrimaryFields').classList.remove('hidden');
+            $('emailVerificationPanel').classList.add('hidden');
             $('twoFactorPanel').classList.add('hidden');
             $('forgotUsernamePanel').classList.add('hidden');
             $('forgotPasswordPanel').classList.add('hidden');
             $('resetFields').classList.add('hidden');
+            $('emailVerificationCode').value = '';
             $('twoFactorCode').value = '';
             $('authNotice').textContent = '';
             $('authHint').textContent = state.registerMode
@@ -2119,6 +2197,35 @@ function renderMessengerApp() {
                 : 'Ein Login-Code wurde an deine E-Mail gesendet.';
             startTwoFactorResendCountdown(data.resendAfterSeconds || 60);
             $('twoFactorCode').focus();
+        }
+
+        function startEmailVerificationResendCountdown(seconds) {
+            if (state.emailVerificationResendTimer) clearInterval(state.emailVerificationResendTimer);
+            state.emailVerificationResendUntil = Date.now() + Math.max(0, Number(seconds) || 60) * 1000;
+            const button = $('resendEmailVerification');
+            const updateButton = () => {
+                const remaining = Math.max(0, Math.ceil((state.emailVerificationResendUntil - Date.now()) / 1000));
+                button.disabled = remaining > 0;
+                button.textContent = remaining > 0 ? 'Code erneut senden (' + remaining + ' s)' : 'Code erneut senden';
+                if (!remaining && state.emailVerificationResendTimer) {
+                    clearInterval(state.emailVerificationResendTimer);
+                    state.emailVerificationResendTimer = null;
+                }
+            };
+            updateButton();
+            state.emailVerificationResendTimer = setInterval(updateButton, 1000);
+        }
+
+        function beginEmailVerification(data) {
+            state.pendingEmailVerificationUserId = data.userId;
+            $('authPrimaryFields').classList.add('hidden');
+            $('emailVerificationPanel').classList.remove('hidden');
+            $('authHint').textContent = 'Bestätige deine E-Mail-Adresse, um dein Konto zu aktivieren.';
+            $('authNotice').textContent = data.codeSent === false
+                ? 'Ein Bestätigungscode wurde bereits gesendet. Prüfe bitte dein Postfach.'
+                : 'Ein Bestätigungscode wurde an deine E-Mail gesendet.';
+            startEmailVerificationResendCountdown(data.resendAfterSeconds || 60);
+            $('emailVerificationCode').focus();
         }
 
         function setAuthMode(registerMode) {
@@ -2763,6 +2870,10 @@ function renderMessengerApp() {
         $('authForm').addEventListener('submit', async (event) => {
             event.preventDefault();
             $('authError').textContent = '';
+            if (state.pendingEmailVerificationUserId) {
+                $('verifyEmail').click();
+                return;
+            }
             if (state.pendingTwoFactorUserId) {
                 $('verifyTwoFactor').click();
                 return;
@@ -2779,6 +2890,10 @@ function renderMessengerApp() {
             try {
                 const endpoint = state.registerMode ? '/api/auth/register' : '/api/auth/login';
                 const data = await api(endpoint, { method: 'POST', body: JSON.stringify(body) });
+                if (data.emailVerificationRequired) {
+                    beginEmailVerification(data);
+                    return;
+                }
                 if (data.twoFactorRequired) {
                     beginTwoFactor(data);
                     return;
@@ -2791,6 +2906,42 @@ function renderMessengerApp() {
             }
         });
 
+        $('verifyEmail').addEventListener('click', async () => {
+            $('authError').textContent = '';
+            try {
+                const code = $('emailVerificationCode').value.trim();
+                if (!code || !state.pendingEmailVerificationUserId) return;
+                const verified = await api('/api/auth/verify-email', {
+                    method: 'POST',
+                    body: JSON.stringify({ userId: state.pendingEmailVerificationUserId, code }),
+                });
+                state.token = verified.token;
+                localStorage.setItem('justchat_token', state.token);
+                await boot();
+            } catch (error) {
+                $('authError').textContent = error.message;
+            }
+        });
+        $('resendEmailVerification').addEventListener('click', async () => {
+            if (!state.pendingEmailVerificationUserId || Date.now() < state.emailVerificationResendUntil) return;
+            $('authError').textContent = '';
+            try {
+                const data = await api('/api/auth/resend-email-verification', {
+                    method: 'POST',
+                    body: JSON.stringify({ userId: state.pendingEmailVerificationUserId }),
+                });
+                $('authNotice').textContent = 'Ein neuer Bestätigungscode wurde an deine E-Mail gesendet.';
+                startEmailVerificationResendCountdown(data.resendAfterSeconds || 60);
+            } catch (error) {
+                const retryAfterSeconds = error.data && error.data.retryAfterSeconds;
+                if (retryAfterSeconds) startEmailVerificationResendCountdown(retryAfterSeconds);
+                $('authError').textContent = error.message;
+            }
+        });
+        $('cancelEmailVerification').addEventListener('click', () => {
+            resetAuthPanels();
+            $('authError').textContent = '';
+        });
         $('toggleAuth').addEventListener('click', () => setAuthMode(!state.registerMode));
         $('settingsButton').addEventListener('click', openAccount);
         $('closeAccount').addEventListener('click', closeAccount);
@@ -3564,8 +3715,27 @@ app.post('/api/auth/register', async (req, res, next) => {
         if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
             return res.status(400).json({ error: 'Bitte gib eine gültige E-Mail-Adresse ein' });
         }
-        if (twoFactorEnabled && !getMailer()) {
-            return res.status(400).json({ error: '2FA braucht vollständige SMTP-Konfiguration' });
+        if (!getMailer()) {
+            return res.status(503).json({ error: 'Registrierung braucht vollständige SMTP-Konfiguration' });
+        }
+        const existingAccount = await query('select * from users where username = $1 or email = $2 limit 1', [username, email]);
+        if (existingAccount.rows[0]) {
+            const existingUser = existingAccount.rows[0];
+            const canResumeVerification = existingUser.username === username
+                && existingUser.email === email
+                && existingUser.email_verification_required
+                && !existingUser.email_verified_at
+                && verifyPassword(password, existingUser.password_hash);
+            if (!canResumeVerification) {
+                return res.status(409).json({ error: 'Benutzername oder E-Mail ist bereits vergeben' });
+            }
+            const delivery = await sendEmailVerificationCode(existingUser);
+            return res.json({
+                emailVerificationRequired: true,
+                userId: existingUser.id,
+                codeSent: delivery.sent,
+                resendAfterSeconds: delivery.retryAfterSeconds,
+            });
         }
         if (avatarAssetId) {
             const avatar = await query(
@@ -3576,27 +3746,20 @@ app.post('/api/auth/register', async (req, res, next) => {
         }
 
         const result = await query(
-            `insert into users (username, display_name, email, avatar_asset_id, password_hash, avatar_color, two_factor_enabled)
-             values ($1, $2, $3, $4, $5, $6, $7)
+            `insert into users (username, display_name, email, avatar_asset_id, password_hash, avatar_color, two_factor_enabled, email_verification_required)
+             values ($1, $2, $3, $4, $5, $6, $7, true)
              returning id, username, display_name, email, avatar_asset_id, about, avatar_color, two_factor_enabled, display_name_visibility, created_at, last_seen_at`,
             [username, displayName, email, avatarAssetId, hashPassword(password), avatarColor, twoFactorEnabled],
         );
         const user = result.rows[0];
 
-        sendMail({
-            to: email,
-            subject: 'Willkommen bei JustChat',
-            text: `Hallo ${displayName},\n\ndein JustChat-Konto wurde erstellt.\n\nBenutzername: @${username}\n\nViele Grüße\nJustChat`,
-            html: renderEmailTemplate({
-                title: 'Willkommen bei JustChat',
-                greeting: `Hallo ${displayName},`,
-                message: 'dein Konto wurde erfolgreich erstellt. Du kannst dich ab sofort mit deinem Benutzernamen anmelden.',
-                contentHtml: `<div style="margin:20px 0;padding:16px;border-radius:10px;background:#f0fdfa;border:1px solid #99f6e4;color:#0f766e;"><span style="display:block;margin-bottom:6px;font-size:12px;font-weight:700;text-transform:uppercase;">Benutzername</span><strong style="font-size:20px;">@${escapeHtml(username)}</strong></div>`,
-                note: 'Bewahre deine Zugangsdaten sicher auf und teile sie nicht mit anderen Personen.',
-            }),
-        }).catch((error) => console.error('E-Mail konnte nicht gesendet werden:', error.message));
-
-        return res.status(201).json({ token: createToken(user), user });
+        const delivery = await sendEmailVerificationCode(user);
+        return res.status(201).json({
+            emailVerificationRequired: true,
+            userId: user.id,
+            codeSent: delivery.sent,
+            resendAfterSeconds: delivery.retryAfterSeconds,
+        });
     } catch (error) {
         if (error.code === '23505') return res.status(409).json({ error: 'Benutzername oder E-Mail ist bereits vergeben' });
         return next(error);
@@ -3612,6 +3775,16 @@ app.post('/api/auth/login', async (req, res, next) => {
 
         if (!user || !verifyPassword(password, user.password_hash)) {
             return res.status(401).json({ error: 'Login fehlgeschlagen' });
+        }
+
+        if (user.email_verification_required && !user.email_verified_at) {
+            const delivery = await sendEmailVerificationCode(user);
+            return res.json({
+                emailVerificationRequired: true,
+                userId: user.id,
+                codeSent: delivery.sent,
+                resendAfterSeconds: delivery.retryAfterSeconds,
+            });
         }
 
         await query('update users set last_seen_at = now() where id = $1', [user.id]);
@@ -3638,6 +3811,77 @@ app.post('/api/auth/login', async (req, res, next) => {
                 last_seen_at: user.last_seen_at,
             },
         });
+    } catch (error) {
+        return next(error);
+    }
+});
+
+app.post('/api/auth/resend-email-verification', async (req, res, next) => {
+    try {
+        const userId = parseId(req.body.userId);
+        if (!userId) return res.status(400).json({ error: 'Ungültige Bestätigungsanfrage' });
+        const result = await query(
+            'select * from users where id = $1 and email_verification_required = true and email_verified_at is null',
+            [userId],
+        );
+        const user = result.rows[0];
+        if (!user) return res.status(400).json({ error: 'E-Mail-Adresse ist bereits bestätigt' });
+
+        const delivery = await sendEmailVerificationCode(user);
+        if (!delivery.sent) {
+            return res.status(429).json({
+                error: 'Bitte warte, bevor du einen neuen Code anforderst.',
+                retryAfterSeconds: delivery.retryAfterSeconds,
+            });
+        }
+        return res.json({ ok: true, resendAfterSeconds: delivery.retryAfterSeconds });
+    } catch (error) {
+        return next(error);
+    }
+});
+
+app.post('/api/auth/verify-email', async (req, res, next) => {
+    try {
+        const userId = parseId(req.body.userId);
+        const code = String(req.body.code || '').trim();
+        if (!userId || !/^\d{6}$/.test(code)) {
+            return res.status(400).json({ error: 'Ungültiger Bestätigungscode' });
+        }
+
+        const result = await query(
+            `select evc.*, u.id as user_id, u.username, u.display_name, u.email, u.about, u.avatar_color,
+                u.avatar_asset_id, u.two_factor_enabled, u.created_at, u.last_seen_at
+             from email_verification_codes evc
+             join users u on u.id = evc.user_id
+             where evc.user_id = $1 and evc.used_at is null and evc.expires_at > now()
+                and u.email_verification_required = true and u.email_verified_at is null
+             order by evc.created_at desc
+             limit 1`,
+            [userId],
+        );
+        const row = result.rows[0];
+        if (!row || !verifyPassword(code, row.code_hash)) {
+            return res.status(401).json({ error: 'Bestätigungscode ist falsch oder abgelaufen' });
+        }
+
+        await query('update email_verification_codes set used_at = now() where id = $1', [row.id]);
+        await query(
+            'update users set email_verified_at = now(), email_verification_required = false, last_seen_at = now() where id = $1',
+            [row.user_id],
+        );
+        const user = {
+            id: row.user_id,
+            username: row.username,
+            display_name: row.display_name,
+            email: row.email,
+            about: row.about,
+            avatar_color: row.avatar_color,
+            avatar_asset_id: row.avatar_asset_id,
+            two_factor_enabled: row.two_factor_enabled,
+            created_at: row.created_at,
+            last_seen_at: new Date().toISOString(),
+        };
+        return res.json({ token: createToken(user), user });
     } catch (error) {
         return next(error);
     }
@@ -4090,7 +4334,7 @@ app.get('/api/users', requireAuth, async (req, res, next) => {
 
         const result = await query(
             `select u.id, u.username, u.display_name, u.about, u.avatar_color, u.last_seen_at, u.created_at as member_since,
-                u.id in (select early_user.id from users early_user order by early_user.created_at, early_user.id limit 10) as first_account,
+                u.id in (select early_user.id from users early_user where not early_user.email_verification_required or early_user.email_verified_at is not null order by early_user.created_at, early_user.id limit 10) as first_account,
                 case when aa.id is null then null else 'data:' || aa.mime_type || ';base64,' || encode(aa.data, 'base64') end as avatar_url
              from users u
              join conversations c
@@ -4162,7 +4406,7 @@ app.get('/api/blocked-users', requireAuth, async (req, res, next) => {
     try {
         const result = await query(
             `select u.id, u.username, u.display_name, u.avatar_color, u.created_at as member_since,
-                u.id in (select early_user.id from users early_user order by early_user.created_at, early_user.id limit 10) as first_account,
+                u.id in (select early_user.id from users early_user where not early_user.email_verification_required or early_user.email_verified_at is not null order by early_user.created_at, early_user.id limit 10) as first_account,
                 case when aa.id is null then null else 'data:' || aa.mime_type || ';base64,' || encode(aa.data, 'base64') end as avatar_url
              from user_blocks b
              join users u on u.id = b.blocked_user_id
@@ -4183,7 +4427,7 @@ app.get('/api/contact-requests', requireAuth, async (req, res, next) => {
             `select r.id, r.sender_id, r.recipient_id, r.status, r.created_at, r.responded_at,
                 other_user.id as user_id, other_user.username, other_user.display_name, other_user.created_at as member_since,
                 other_user.avatar_color,
-                other_user.id in (select early_user.id from users early_user order by early_user.created_at, early_user.id limit 10) as first_account,
+                other_user.id in (select early_user.id from users early_user where not early_user.email_verification_required or early_user.email_verified_at is not null order by early_user.created_at, early_user.id limit 10) as first_account,
                 case when aa.id is null then null else 'data:' || aa.mime_type || ';base64,' || encode(aa.data, 'base64') end as avatar_url
              from contact_requests r
              join users other_user on other_user.id = case when r.sender_id = $1 then r.recipient_id else r.sender_id end
@@ -4305,7 +4549,7 @@ app.get('/api/conversations', requireAuth, async (req, res, next) => {
                 other_user.avatar_color,
                 other_user.last_seen_at,
                 other_user.created_at as member_since,
-                other_user.id in (select early_user.id from users early_user order by early_user.created_at, early_user.id limit 10) as first_account,
+                other_user.id in (select early_user.id from users early_user where not early_user.email_verification_required or early_user.email_verified_at is not null order by early_user.created_at, early_user.id limit 10) as first_account,
                 case when aa.id is null then null else 'data:' || aa.mime_type || ';base64,' || encode(aa.data, 'base64') end as avatar_url,
                 latest.body as last_message,
                 latest.has_attachment as has_attachment,
