@@ -1,0 +1,15 @@
+services:
+  justchat-backend:
+    build: .
+    container_name: justchat-backend
+    restart: unless-stopped
+    ports:
+      - "50070:50070"
+    environment:
+      NODE_ENV: production
+      PORT: 50070
+      APP_NAME: JustChat Backend
+      ADMIN_USER: admin
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+      DATABASE_URL: ${DATABASE_URL:-}
+      DB_SSL: ${DB_SSL:-false}
