@@ -526,6 +526,7 @@ async function initDatabase() {
             mime_type text not null,
             size_bytes integer not null,
             data bytea not null,
+            owner_user_id bigint references users(id) on delete cascade,
             is_active boolean not null default true,
             created_at timestamptz not null default now()
         );
@@ -624,6 +625,7 @@ async function initDatabase() {
         alter table users add column if not exists display_name_visibility text not null default 'contacts';
         alter table users add column if not exists notification_sound_asset_id bigint references notification_sound_assets(id);
         alter table users add column if not exists send_on_enter boolean not null default false;
+        alter table avatar_assets add column if not exists owner_user_id bigint references users(id) on delete cascade;
         alter table conversations add column if not exists hidden_for_user_one boolean not null default false;
         alter table conversations add column if not exists hidden_for_user_two boolean not null default false;
         alter table conversations add column if not exists deleted_for_user_one_at timestamptz;
@@ -1341,6 +1343,9 @@ function renderMessengerApp() {
         .avatar-option { border: 2px solid var(--line); background: #fff; border-radius: 8px; padding: 6px; min-height: 74px; display: grid; place-items: center; }
         .avatar-option.selected { border-color: var(--accent); background: #eef8f6; }
         .avatar-option img { width: 48px; height: 48px; border-radius: 50%; object-fit: cover; }
+        .personal-avatar { display: grid; gap: 4px; }
+        .personal-avatar-remove { padding: 4px; color: var(--danger); font-size: 12px; background: transparent; }
+        .profile-upload { display: grid; gap: 8px; margin-top: 8px; }
         .primary { background: var(--accent); color: #fff; border-radius: 8px; padding: 11px 14px; font-weight: 700; }
         .primary:hover { background: var(--accent-strong); }
         .ghost { background: transparent; color: var(--accent); font-weight: 700; padding: 8px; }
@@ -1635,6 +1640,11 @@ function renderMessengerApp() {
                     <div class="field">
                         <label>Profilbild</label>
                         <div id="profileAvatarPicker" class="avatar-picker"></div>
+                        <div class="profile-upload">
+                            <input id="profileAvatarUpload" type="file" accept="image/png,image/jpeg,image/webp,image/gif">
+                            <button id="uploadProfileAvatar" class="ghost" type="button">Eigenes Profilbild hochladen</button>
+                            <p class="muted small">JPEG, PNG, WebP oder GIF, maximal 5 MB. Die vorgegebenen Bilder bleiben verfügbar.</p>
+                        </div>
                     </div>
                     <label class="segmented">
                         <input id="profile2fa" type="checkbox" style="width:auto;">
@@ -1881,9 +1891,39 @@ function renderMessengerApp() {
                 return;
             }
             $('profileAvatarPicker').innerHTML = state.avatars.map((avatar) =>
+                '<div class="' + (avatar.mine ? 'personal-avatar' : '') + '">' +
                 '<button type="button" class="avatar-option ' + (Number(state.profileAvatarId) === Number(avatar.id) ? 'selected' : '') + '" data-profile-avatar="' + avatar.id + '">' +
-                '<img src="' + avatar.data_url + '" alt="' + escapeText(avatar.name) + '"></button>'
+                '<img src="' + avatar.data_url + '" alt="' + escapeText(avatar.name) + '"></button>' +
+                (avatar.mine ? '<button type="button" class="personal-avatar-remove" data-delete-profile-avatar="' + avatar.id + '">Löschen</button>' : '') +
+                '</div>'
             ).join('');
+        }
+
+        async function loadProfileAvatars() {
+            const data = await api('/api/me/avatars');
+            state.avatars = data.avatars || [];
+            renderProfileAvatarPicker();
+        }
+
+        function readProfileAvatarFile() {
+            const file = $('profileAvatarUpload').files[0];
+            if (!file) return Promise.reject(new Error('Bitte ein Bild auswählen.'));
+            if (!['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(file.type)) {
+                return Promise.reject(new Error('Nur JPEG, PNG, WebP und GIF sind erlaubt.'));
+            }
+            if (file.size > 5 * 1024 * 1024) {
+                return Promise.reject(new Error('Bild muss kleiner als 5 MB sein.'));
+            }
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => resolve({
+                    fileName: file.name,
+                    mimeType: file.type,
+                    dataBase64: String(reader.result).slice(String(reader.result).indexOf(',') + 1),
+                });
+                reader.onerror = () => reject(new Error('Bild konnte nicht gelesen werden.'));
+                reader.readAsDataURL(file);
+            });
         }
 
         async function loadNotificationSounds() {
@@ -2159,7 +2199,7 @@ function renderMessengerApp() {
             $('accountPanel').classList.remove('hidden');
             $('sidebar').classList.add('chat-open');
             $('chat').classList.add('chat-open');
-            Promise.all([loadAvatars(), loadNotificationSounds(), loadBlockedUsers()])
+            Promise.all([loadProfileAvatars(), loadNotificationSounds(), loadBlockedUsers()])
                 .then(() => {
                     state.profileAvatarId = state.me.avatar_asset_id;
                     renderProfileAvatarPicker();
@@ -2416,10 +2456,42 @@ function renderMessengerApp() {
             renderAvatarPicker();
         });
         $('profileAvatarPicker').addEventListener('click', (event) => {
+            const deleteButton = event.target.closest('[data-delete-profile-avatar]');
+            if (deleteButton) {
+                $('profileError').textContent = '';
+                $('profileNotice').textContent = '';
+                api('/api/me/avatar-assets/' + deleteButton.dataset.deleteProfileAvatar, { method: 'DELETE' })
+                    .then(async () => {
+                        await loadMe();
+                        await loadProfileAvatars();
+                        $('profileNotice').textContent = 'Eigenes Profilbild wurde gelöscht.';
+                    })
+                    .catch((error) => {
+                        $('profileError').textContent = error.message;
+                    });
+                return;
+            }
             const button = event.target.closest('[data-profile-avatar]');
             if (!button) return;
             state.profileAvatarId = button.dataset.profileAvatar;
             renderProfileAvatarPicker();
+        });
+        $('uploadProfileAvatar').addEventListener('click', async () => {
+            $('profileError').textContent = '';
+            $('profileNotice').textContent = '';
+            try {
+                const attachment = await readProfileAvatarFile();
+                const data = await api('/api/me/avatar-assets', {
+                    method: 'POST',
+                    body: JSON.stringify({ attachment }),
+                });
+                state.profileAvatarId = data.avatar.id;
+                $('profileAvatarUpload').value = '';
+                await loadProfileAvatars();
+                $('profileNotice').textContent = 'Eigenes Profilbild hochgeladen. Speichere das Profil, um es zu verwenden.';
+            } catch (error) {
+                $('profileError').textContent = error.message;
+            }
         });
         $('profileForm').addEventListener('submit', async (event) => {
             event.preventDefault();
@@ -2800,7 +2872,7 @@ app.get('/admin/api/overview', requireAdminAuth, async (req, res, next) => {
             select id, name, mime_type, size_bytes, is_active, created_at,
                 'data:' || mime_type || ';base64,' || encode(data, 'base64') as data_url
              from avatar_assets
-             where is_active = true
+             where is_active = true and owner_user_id is null
              order by created_at desc
         `);
         const sounds = await query(`
@@ -2886,7 +2958,7 @@ app.delete('/admin/api/avatar-assets/:id', requireAdminAuth, async (req, res, ne
         if (!avatarId) return res.status(400).json({ error: 'Ungültiges Profilbild' });
 
         const result = await query(
-            'update avatar_assets set is_active = false where id = $1 and is_active = true returning id',
+            'update avatar_assets set is_active = false where id = $1 and owner_user_id is null and is_active = true returning id',
             [avatarId],
         );
         if (!result.rows[0]) return res.status(404).json({ error: 'Profilbild nicht gefunden' });
@@ -3075,6 +3147,13 @@ app.post('/api/auth/register', async (req, res, next) => {
         }
         if (twoFactorEnabled && !getMailer()) {
             return res.status(400).json({ error: '2FA braucht vollständige SMTP-Konfiguration' });
+        }
+        if (avatarAssetId) {
+            const avatar = await query(
+                'select id from avatar_assets where id = $1 and owner_user_id is null and is_active = true',
+                [avatarAssetId],
+            );
+            if (!avatar.rows[0]) return res.status(400).json({ error: 'Profilbild ist nicht verfügbar' });
         }
 
         const result = await query(
@@ -3369,11 +3448,73 @@ app.get('/api/avatars', async (req, res, next) => {
             `select id, name, mime_type, size_bytes,
                 'data:' || mime_type || ';base64,' || encode(data, 'base64') as data_url
              from avatar_assets
-             where is_active = true
+             where is_active = true and owner_user_id is null
              order by created_at desc
              limit 60`,
         );
         return res.json({ avatars: result.rows });
+    } catch (error) {
+        return next(error);
+    }
+});
+
+app.get('/api/me/avatars', requireAuth, async (req, res, next) => {
+    try {
+        const result = await query(
+            `select id, name, mime_type, size_bytes, owner_user_id = $1 as mine,
+                'data:' || mime_type || ';base64,' || encode(data, 'base64') as data_url
+             from avatar_assets
+             where is_active = true and (owner_user_id is null or owner_user_id = $1)
+             order by (owner_user_id is not null) desc, created_at desc
+             limit 80`,
+            [req.user.id],
+        );
+        return res.json({ avatars: result.rows });
+    } catch (error) {
+        return next(error);
+    }
+});
+
+app.post('/api/me/avatar-assets', requireAuth, async (req, res, next) => {
+    try {
+        const attachment = parseImageAttachment(req.body.attachment);
+        if (!attachment) return res.status(400).json({ error: 'Bitte ein Profilbild hochladen' });
+        const count = await query(
+            'select count(*)::int as count from avatar_assets where owner_user_id = $1 and is_active = true',
+            [req.user.id],
+        );
+        if (count.rows[0].count >= 20) {
+            return res.status(400).json({ error: 'Du kannst maximal 20 eigene Profilbilder speichern' });
+        }
+        const result = await query(
+            `insert into avatar_assets (name, mime_type, size_bytes, data, owner_user_id)
+             values ($1, $2, $3, $4, $5)
+             returning id, name, mime_type, size_bytes, created_at`,
+            [attachment.fileName, attachment.mimeType, attachment.sizeBytes, attachment.data, req.user.id],
+        );
+        return res.status(201).json({ avatar: result.rows[0] });
+    } catch (error) {
+        return next(error);
+    }
+});
+
+app.delete('/api/me/avatar-assets/:id', requireAuth, async (req, res, next) => {
+    try {
+        const avatarId = parseId(req.params.id);
+        if (!avatarId) return res.status(400).json({ error: 'Ungültiges Profilbild' });
+        const result = await query(
+            `update avatar_assets
+             set is_active = false
+             where id = $1 and owner_user_id = $2 and is_active = true
+             returning id`,
+            [avatarId, req.user.id],
+        );
+        if (!result.rows[0]) return res.status(404).json({ error: 'Eigenes Profilbild nicht gefunden' });
+        await query(
+            'update users set avatar_asset_id = null where id = $1 and avatar_asset_id = $2',
+            [req.user.id, avatarId],
+        );
+        return res.json({ ok: true });
     } catch (error) {
         return next(error);
     }
@@ -3416,6 +3557,14 @@ app.patch('/api/me', requireAuth, async (req, res, next) => {
         }
         if (twoFactorEnabled && !getMailer()) {
             return res.status(400).json({ error: '2FA braucht vollständige SMTP-Konfiguration' });
+        }
+        if (avatarAssetId) {
+            const avatar = await query(
+                `select id from avatar_assets
+                 where id = $1 and is_active = true and (owner_user_id is null or owner_user_id = $2)`,
+                [avatarAssetId, req.user.id],
+            );
+            if (!avatar.rows[0]) return res.status(400).json({ error: 'Profilbild ist nicht verfügbar' });
         }
         if (notificationSoundAssetId) {
             const sound = await query(
