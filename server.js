@@ -383,6 +383,14 @@ async function initDatabase() {
             check(user_one_id <> user_two_id)
         );
 
+        create table if not exists user_blocks (
+            blocker_id bigint not null references users(id) on delete cascade,
+            blocked_user_id bigint not null references users(id) on delete cascade,
+            created_at timestamptz not null default now(),
+            primary key (blocker_id, blocked_user_id),
+            check(blocker_id <> blocked_user_id)
+        );
+
         create table if not exists messages (
             id bigserial primary key,
             conversation_id bigint not null references conversations(id) on delete cascade,
@@ -435,6 +443,8 @@ async function initDatabase() {
         alter table users add column if not exists two_factor_enabled boolean not null default false;
         alter table users add column if not exists display_name_visibility text not null default 'contacts';
         alter table users add column if not exists notification_sound_asset_id bigint references notification_sound_assets(id);
+        alter table conversations add column if not exists hidden_for_user_one boolean not null default false;
+        alter table conversations add column if not exists hidden_for_user_two boolean not null default false;
 
         create unique index if not exists idx_users_email_unique
             on users(email)
@@ -536,6 +546,16 @@ async function getConversationForUser(conversationId, userId) {
         [conversationId, userId],
     );
     return result.rows[0] || null;
+}
+
+async function getBlockStatus(userId, otherUserId) {
+    const result = await query(
+        `select
+            exists(select 1 from user_blocks where blocker_id = $1 and blocked_user_id = $2) as blocked_by_me,
+            exists(select 1 from user_blocks where blocker_id = $2 and blocked_user_id = $1) as blocked_me`,
+        [userId, otherUserId],
+    );
+    return result.rows[0];
 }
 
 function conversationPair(userA, userB) {
@@ -1076,6 +1096,9 @@ function renderMessengerApp() {
         .unread-badge { flex: none; min-width: 20px; height: 20px; border-radius: 999px; display: inline-grid; place-items: center; padding: 0 6px; background: #22c55e; color: #fff; font-size: 11px; font-weight: 800; }
         .chat { position: relative; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; min-width: 0; min-height: 0; }
         .chat-head { background: var(--panel); border-bottom: 1px solid var(--line); padding: 14px 18px; display: flex; align-items: center; gap: 12px; min-width: 0; }
+        .chat-profile { min-width: 0; display: flex; align-items: center; gap: 12px; background: transparent; padding: 0; text-align: left; }
+        .chat-profile:hover .brand strong { color: var(--accent); }
+        .typing { color: var(--accent); font-weight: 700; }
         .messages { padding: 18px; overflow: auto; display: flex; flex-direction: column; gap: 8px; background: #e9f0f4; }
         .bubble { max-width: min(680px, 82%); border: 1px solid rgba(15, 23, 42, .08); border-radius: 8px; padding: 9px 11px; background: var(--message-other); align-self: flex-start; overflow-wrap: anywhere; }
         .bubble.me { background: var(--message-me); align-self: flex-end; }
@@ -1098,6 +1121,10 @@ function renderMessengerApp() {
         .chat.drop-active .drop-hint { display: grid; }
         .settings-view { grid-row: 1 / -1; overflow: auto; padding: 24px; background: var(--bg); }
         .settings-card { width: min(620px, 100%); margin: 0 auto; background: #fff; border-radius: 8px; border: 1px solid var(--line); padding: 20px; }
+        .contact-avatar { width: 88px; height: 88px; font-size: 30px; margin: 0 auto; }
+        .contact-heading { text-align: center; display: grid; gap: 4px; }
+        .contact-about { border: 1px solid var(--line); border-radius: 8px; padding: 12px; background: #f7fbfa; min-height: 48px; }
+        .danger-button { background: #fff1f0; color: var(--danger); border: 1px solid #f3c6c1; border-radius: 8px; padding: 11px 14px; font-weight: 700; }
         .modal { position: fixed; inset: 0; background: rgba(15, 23, 42, .42); display: grid; place-items: center; padding: 18px; z-index: 20; }
         .modal-card { width: min(560px, 100%); max-height: min(760px, 100%); overflow: auto; background: #fff; border-radius: 8px; border: 1px solid var(--line); padding: 20px; box-shadow: 0 24px 80px rgba(15, 23, 42, .22); }
         .modal-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 16px; }
@@ -1260,11 +1287,14 @@ function renderMessengerApp() {
             <div id="chatPane" class="hidden" style="display: contents;">
                 <div class="chat-head">
                     <button id="back" class="ghost" type="button">Zurück</button>
-                    <div id="chatAvatar" class="avatar">?</div>
-                    <div class="brand">
-                        <strong id="chatName"></strong>
-                        <span id="chatUser"></span>
-                    </div>
+                    <button id="chatProfileButton" class="chat-profile" type="button" aria-label="Profil anzeigen">
+                        <div id="chatAvatar" class="avatar">?</div>
+                        <div class="brand">
+                            <strong id="chatName"></strong>
+                            <span id="chatUser"></span>
+                            <span id="chatTyping" class="typing hidden">schreibt gerade...</span>
+                        </div>
+                    </button>
                 </div>
                 <div id="messages" class="messages"></div>
                 <div class="drop-hint">Datei hier ablegen</div>
@@ -1328,6 +1358,31 @@ function renderMessengerApp() {
                     <button id="logout" class="ghost" type="button">Logout</button>
                 </form>
             </div>
+            <div id="contactPanel" class="settings-view hidden">
+                <div class="settings-card stack">
+                    <div class="modal-head">
+                        <h2>Kontaktprofil</h2>
+                        <button id="closeContact" class="ghost" type="button">Zurück</button>
+                    </div>
+                    <div id="contactAvatar" class="avatar contact-avatar">?</div>
+                    <div class="contact-heading">
+                        <strong id="contactName"></strong>
+                        <span id="contactUsername" class="muted"></span>
+                    </div>
+                    <div class="field">
+                        <label>Info</label>
+                        <div id="contactAbout" class="contact-about"></div>
+                    </div>
+                    <div class="field">
+                        <label>Zuletzt aktiv</label>
+                        <div id="contactLastSeen" class="contact-about"></div>
+                    </div>
+                    <p id="contactBlockInfo" class="muted small"></p>
+                    <div id="contactError" class="error"></div>
+                    <button id="toggleBlock" class="danger-button" type="button">Person blockieren</button>
+                    <button id="deleteChat" class="danger-button" type="button">Chat bei mir löschen</button>
+                </div>
+            </div>
         </section>
     </div>
 
@@ -1360,6 +1415,11 @@ function renderMessengerApp() {
             profileAvatarId: null,
             pendingAttachment: null,
             sounds: [],
+            typingSent: false,
+            typingLastSentAt: 0,
+            typingStopTimer: null,
+            remoteTyping: false,
+            remoteTypingTimer: null,
         };
 
         const $ = (id) => document.getElementById(id);
@@ -1470,6 +1530,101 @@ function renderMessengerApp() {
             new Audio(sound.data_url).play().catch(() => {});
         }
 
+        function canMessageActiveConversation() {
+            return state.activeConversation && !state.activeConversation.blocked_by_me && !state.activeConversation.blocked_me;
+        }
+
+        function updateMessageControls() {
+            const enabled = Boolean(canMessageActiveConversation());
+            $('messageInput').disabled = !enabled;
+            $('attachmentInput').disabled = !enabled;
+            $('composer').querySelector('button[type="submit"]').disabled = !enabled;
+            $('messageInput').placeholder = enabled ? 'Nachricht schreiben' : 'Nachrichten nicht möglich';
+            updateChatTypingLine();
+        }
+
+        function updateChatTypingLine() {
+            const status = $('chatTyping');
+            if (!state.activeConversation) {
+                status.classList.add('hidden');
+                return;
+            }
+            if (state.activeConversation.blocked_by_me) {
+                status.textContent = 'Du hast diese Person blockiert.';
+                status.classList.remove('hidden');
+                return;
+            }
+            if (state.activeConversation.blocked_me) {
+                status.textContent = 'Nachrichten sind nicht möglich.';
+                status.classList.remove('hidden');
+                return;
+            }
+            status.textContent = 'schreibt gerade...';
+            status.classList.toggle('hidden', !state.remoteTyping);
+        }
+
+        function setRemoteTyping(typing) {
+            state.remoteTyping = Boolean(typing);
+            if (state.remoteTypingTimer) clearTimeout(state.remoteTypingTimer);
+            if (typing) {
+                state.remoteTypingTimer = setTimeout(() => {
+                    state.remoteTyping = false;
+                    updateChatTypingLine();
+                }, 2500);
+            }
+            updateChatTypingLine();
+        }
+
+        function sendTyping(typing) {
+            if (!state.activeConversation || !canMessageActiveConversation()) return;
+            if (!typing && !state.typingSent) return;
+            state.typingSent = Boolean(typing);
+            state.typingLastSentAt = Date.now();
+            api('/api/conversations/' + state.activeConversation.id + '/typing', {
+                method: 'POST',
+                body: JSON.stringify({ typing: Boolean(typing) }),
+            }).catch(() => {});
+        }
+
+        function stopTyping() {
+            if (state.typingStopTimer) clearTimeout(state.typingStopTimer);
+            sendTyping(false);
+        }
+
+        function updateTyping() {
+            if (!$('messageInput').value.trim() || !canMessageActiveConversation()) {
+                stopTyping();
+                return;
+            }
+            if (!state.typingSent || Date.now() - state.typingLastSentAt > 1000) sendTyping(true);
+            if (state.typingStopTimer) clearTimeout(state.typingStopTimer);
+            state.typingStopTimer = setTimeout(stopTyping, 1800);
+        }
+
+        function formatLastSeen(value) {
+            if (!value) return 'Keine Aktivität verfügbar';
+            return new Date(value).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+        }
+
+        function renderContactProfile() {
+            const contact = state.activeConversation;
+            if (!contact) return;
+            if (contact.avatar_url) {
+                $('contactAvatar').outerHTML = '<img id="contactAvatar" class="avatar contact-avatar" src="' + contact.avatar_url + '" alt="">';
+            } else {
+                $('contactAvatar').outerHTML = '<div id="contactAvatar" class="avatar contact-avatar" style="background:' + contact.avatar_color + '">' + initials(contact.display_name) + '</div>';
+            }
+            $('contactName').textContent = contact.display_name;
+            $('contactUsername').textContent = '@' + contact.username;
+            $('contactAbout').textContent = contact.about || 'Keine Info angegeben.';
+            $('contactLastSeen').textContent = formatLastSeen(contact.last_seen_at);
+            $('contactBlockInfo').textContent = contact.blocked_me
+                ? 'Diese Person hat Nachrichten von dir blockiert.'
+                : (contact.blocked_by_me ? 'Diese Person ist blockiert und kann dir hier nicht schreiben.' : '');
+            $('toggleBlock').textContent = contact.blocked_by_me ? 'Blockierung aufheben' : 'Person blockieren';
+            $('contactError').textContent = '';
+        }
+
         function renderConversationList() {
             $('conversationList').innerHTML = state.conversations.map((chat) => {
                 const active = state.activeConversation && state.activeConversation.id === chat.id ? ' active' : '';
@@ -1565,9 +1720,8 @@ function renderMessengerApp() {
             $('meAvatar').outerHTML = avatarMarkup(state.me).replace('class="avatar"', 'id="meAvatar" class="avatar"');
         }
 
-        async function openAccount() {
-            await loadAvatars();
-            await loadNotificationSounds();
+        function openAccount() {
+            stopTyping();
             $('profileDisplayName').value = state.me.display_name || '';
             $('profileEmail').value = state.me.email || '';
             $('profileAbout').value = state.me.about || '';
@@ -1583,12 +1737,20 @@ function renderMessengerApp() {
             $('accountPanel').classList.remove('hidden');
             $('sidebar').classList.add('chat-open');
             $('chat').classList.add('chat-open');
+            Promise.all([loadAvatars(), loadNotificationSounds()])
+                .then(() => {
+                    state.profileAvatarId = state.me.avatar_asset_id;
+                    renderProfileAvatarPicker();
+                })
+                .catch((error) => {
+                    $('profileError').textContent = error.message;
+                });
         }
 
-        function closeAccount() {
+        async function closeAccount() {
             $('accountPanel').classList.add('hidden');
             if (state.activeConversation) {
-                $('chatPane').classList.remove('hidden');
+                await openConversation(state.activeConversation.id);
             } else {
                 $('chatEmpty').classList.remove('hidden');
                 $('sidebar').classList.remove('chat-open');
@@ -1603,6 +1765,7 @@ function renderMessengerApp() {
         }
 
         async function openConversation(id) {
+            if (state.activeConversation && Number(state.activeConversation.id) !== Number(id)) stopTyping();
             const data = await api('/api/conversations/' + id + '/messages');
             if (!state.activeConversation || Number(state.activeConversation.id) !== Number(data.conversation.id)) {
                 state.pendingAttachment = null;
@@ -1610,7 +1773,9 @@ function renderMessengerApp() {
                 renderPendingAttachment();
             }
             state.activeConversation = data.conversation;
+            setRemoteTyping(false);
             $('accountPanel').classList.add('hidden');
+            $('contactPanel').classList.add('hidden');
             $('chatEmpty').classList.add('hidden');
             $('chatPane').classList.remove('hidden');
             $('sidebar').classList.add('chat-open');
@@ -1622,6 +1787,7 @@ function renderMessengerApp() {
             } else {
                 $('chatAvatar').outerHTML = '<div id="chatAvatar" class="avatar" style="background:' + data.conversation.avatar_color + '">' + initials(data.conversation.display_name) + '</div>';
             }
+            updateMessageControls();
             renderMessages(data.messages);
             renderConversationList();
             await api('/api/conversations/' + id + '/read', { method: 'POST', body: '{}' });
@@ -1633,12 +1799,46 @@ function renderMessengerApp() {
             state.eventSource = new EventSource('/api/events?token=' + encodeURIComponent(state.token));
             state.eventSource.addEventListener('message:new', async (event) => {
                 const payload = JSON.parse(event.data);
-                if (state.me && Number(payload.message.sender_id) !== Number(state.me.id)) {
+                const isActive = state.activeConversation && Number(state.activeConversation.id) === Number(payload.conversationId);
+                const isOpen = isActive &&
+                    !$('chatPane').classList.contains('hidden');
+                if (state.me && Number(payload.message.sender_id) !== Number(state.me.id) && !isOpen) {
                     playNotificationSound();
                 }
+                if (isOpen) setRemoteTyping(false);
+                await loadConversations();
+                if (isOpen) {
+                    await openConversation(payload.conversationId);
+                }
+            });
+            state.eventSource.addEventListener('typing', (event) => {
+                const payload = JSON.parse(event.data);
+                if (state.activeConversation && Number(state.activeConversation.id) === Number(payload.conversationId)) {
+                    setRemoteTyping(payload.typing);
+                }
+            });
+            state.eventSource.addEventListener('conversation:deleted', async (event) => {
+                const payload = JSON.parse(event.data);
                 await loadConversations();
                 if (state.activeConversation && Number(state.activeConversation.id) === Number(payload.conversationId)) {
-                    await openConversation(payload.conversationId);
+                    state.activeConversation = null;
+                    $('chatPane').classList.add('hidden');
+                    $('contactPanel').classList.add('hidden');
+                    $('chatEmpty').classList.remove('hidden');
+                    $('sidebar').classList.remove('chat-open');
+                    $('chat').classList.remove('chat-open');
+                }
+            });
+            state.eventSource.addEventListener('contact:changed', async (event) => {
+                const payload = JSON.parse(event.data);
+                if (state.activeConversation && Number(state.activeConversation.user_id) === Number(payload.userId)) {
+                    const showingProfile = !$('contactPanel').classList.contains('hidden');
+                    await openConversation(state.activeConversation.id);
+                    if (showingProfile) {
+                        $('chatPane').classList.add('hidden');
+                        renderContactProfile();
+                        $('contactPanel').classList.remove('hidden');
+                    }
                 }
             });
         }
@@ -1695,6 +1895,53 @@ function renderMessengerApp() {
         $('toggleAuth').addEventListener('click', () => setAuthMode(!state.registerMode));
         $('settingsButton').addEventListener('click', openAccount);
         $('closeAccount').addEventListener('click', closeAccount);
+        $('chatProfileButton').addEventListener('click', () => {
+            if (!state.activeConversation) return;
+            stopTyping();
+            renderContactProfile();
+            $('chatPane').classList.add('hidden');
+            $('accountPanel').classList.add('hidden');
+            $('contactPanel').classList.remove('hidden');
+        });
+        $('closeContact').addEventListener('click', async () => {
+            $('contactPanel').classList.add('hidden');
+            if (state.activeConversation) await openConversation(state.activeConversation.id);
+        });
+        $('toggleBlock').addEventListener('click', async () => {
+            if (!state.activeConversation) return;
+            $('contactError').textContent = '';
+            try {
+                const blocked = state.activeConversation.blocked_by_me;
+                if (!blocked) stopTyping();
+                await api('/api/users/' + state.activeConversation.user_id + '/block', {
+                    method: blocked ? 'DELETE' : 'PUT',
+                    body: '{}',
+                });
+                state.activeConversation.blocked_by_me = !blocked;
+                renderContactProfile();
+                updateMessageControls();
+            } catch (error) {
+                $('contactError').textContent = error.message;
+            }
+        });
+        $('deleteChat').addEventListener('click', async () => {
+            if (!state.activeConversation) return;
+            $('contactError').textContent = '';
+            try {
+                const conversationId = state.activeConversation.id;
+                stopTyping();
+                await api('/api/conversations/' + conversationId, { method: 'DELETE', body: '{}' });
+                state.activeConversation = null;
+                $('contactPanel').classList.add('hidden');
+                $('chatPane').classList.add('hidden');
+                $('chatEmpty').classList.remove('hidden');
+                $('sidebar').classList.remove('chat-open');
+                $('chat').classList.remove('chat-open');
+                await loadConversations();
+            } catch (error) {
+                $('contactError').textContent = error.message;
+            }
+        });
         $('addPerson').addEventListener('click', () => $('addModal').classList.remove('hidden'));
         $('closeAdd').addEventListener('click', () => $('addModal').classList.add('hidden'));
         $('avatarPicker').addEventListener('click', (event) => {
@@ -1833,9 +2080,12 @@ function renderMessengerApp() {
             location.reload();
         });
         $('back').addEventListener('click', () => {
+            stopTyping();
             $('sidebar').classList.remove('chat-open');
             $('chat').classList.remove('chat-open');
         });
+        $('messageInput').addEventListener('input', updateTyping);
+        $('messageInput').addEventListener('blur', stopTyping);
         $('attachmentInput').addEventListener('change', (event) => chooseAttachment(event.target.files[0]));
         $('attachmentPreview').addEventListener('click', (event) => {
             if (!event.target.closest('#removeAttachment')) return;
@@ -1907,6 +2157,7 @@ function renderMessengerApp() {
                 $('attachmentInput').value = '';
                 state.pendingAttachment = null;
                 renderPendingAttachment();
+                stopTyping();
                 await api('/api/conversations/' + state.activeConversation.id + '/messages', {
                     method: 'POST',
                     body: JSON.stringify({ body, attachment }),
@@ -2570,6 +2821,46 @@ app.get('/api/users', requireAuth, async (req, res, next) => {
     }
 });
 
+app.put('/api/users/:id/block', requireAuth, async (req, res, next) => {
+    try {
+        const otherUserId = parseId(req.params.id);
+        if (!otherUserId || Number(otherUserId) === Number(req.user.id)) {
+            return res.status(400).json({ error: 'Ungültiger Benutzer' });
+        }
+        const otherUser = await getUserById(otherUserId);
+        if (!otherUser) return res.status(404).json({ error: 'Benutzer nicht gefunden' });
+        await query(
+            `insert into user_blocks (blocker_id, blocked_user_id)
+             values ($1, $2)
+             on conflict (blocker_id, blocked_user_id) do nothing`,
+            [req.user.id, otherUserId],
+        );
+        sendEvent(otherUserId, 'contact:changed', { userId: req.user.id });
+        sendEvent(req.user.id, 'contact:changed', { userId: otherUserId });
+        return res.json({ ok: true });
+    } catch (error) {
+        return next(error);
+    }
+});
+
+app.delete('/api/users/:id/block', requireAuth, async (req, res, next) => {
+    try {
+        const otherUserId = parseId(req.params.id);
+        if (!otherUserId || Number(otherUserId) === Number(req.user.id)) {
+            return res.status(400).json({ error: 'Ungültiger Benutzer' });
+        }
+        await query(
+            'delete from user_blocks where blocker_id = $1 and blocked_user_id = $2',
+            [req.user.id, otherUserId],
+        );
+        sendEvent(otherUserId, 'contact:changed', { userId: req.user.id });
+        sendEvent(req.user.id, 'contact:changed', { userId: otherUserId });
+        return res.json({ ok: true });
+    } catch (error) {
+        return next(error);
+    }
+});
+
 app.get('/api/conversations', requireAuth, async (req, res, next) => {
     try {
         const result = await query(
@@ -2604,6 +2895,7 @@ app.get('/api/conversations', requireAuth, async (req, res, next) => {
                 where conversation_id = c.id and sender_id <> $1 and read_at is null
              ) unread on true
              where $1 in (c.user_one_id, c.user_two_id)
+                and case when c.user_one_id = $1 then not c.hidden_for_user_one else not c.hidden_for_user_two end
              order by latest.created_at desc nulls last, c.created_at desc`,
             [req.user.id],
         );
@@ -2622,14 +2914,20 @@ app.post('/api/conversations', requireAuth, async (req, res, next) => {
 
         const otherUser = await getUserById(otherUserId);
         if (!otherUser) return res.status(404).json({ error: 'Benutzer nicht gefunden' });
+        const blockStatus = await getBlockStatus(req.user.id, otherUserId);
+        if (blockStatus.blocked_by_me || blockStatus.blocked_me) {
+            return res.status(403).json({ error: 'Mit blockierten Personen kann kein neuer Chat gestartet werden' });
+        }
 
         const [userOneId, userTwoId] = conversationPair(req.user.id, otherUserId);
         const result = await query(
             `insert into conversations (user_one_id, user_two_id)
              values ($1, $2)
-             on conflict (user_one_id, user_two_id) do update set user_one_id = excluded.user_one_id
+             on conflict (user_one_id, user_two_id) do update set
+                hidden_for_user_one = case when conversations.user_one_id = $3 then false else conversations.hidden_for_user_one end,
+                hidden_for_user_two = case when conversations.user_two_id = $3 then false else conversations.hidden_for_user_two end
              returning id`,
-            [userOneId, userTwoId],
+            [userOneId, userTwoId, req.user.id],
         );
 
         return res.status(201).json({ conversation: { id: result.rows[0].id } });
@@ -2649,14 +2947,20 @@ app.post('/api/conversations/by-username', requireAuth, async (req, res, next) =
         const result = await query('select id from users where username = $1 and id <> $2', [username, req.user.id]);
         const user = result.rows[0];
         if (!user) return res.status(404).json({ error: 'Nutzer nicht gefunden' });
+        const blockStatus = await getBlockStatus(req.user.id, user.id);
+        if (blockStatus.blocked_by_me || blockStatus.blocked_me) {
+            return res.status(403).json({ error: 'Mit blockierten Personen kann kein neuer Chat gestartet werden' });
+        }
 
         const [userOneId, userTwoId] = conversationPair(req.user.id, user.id);
         const conversation = await query(
             `insert into conversations (user_one_id, user_two_id)
              values ($1, $2)
-             on conflict (user_one_id, user_two_id) do update set user_one_id = excluded.user_one_id
+             on conflict (user_one_id, user_two_id) do update set
+                hidden_for_user_one = case when conversations.user_one_id = $3 then false else conversations.hidden_for_user_one end,
+                hidden_for_user_two = case when conversations.user_two_id = $3 then false else conversations.hidden_for_user_two end
              returning id`,
-            [userOneId, userTwoId],
+            [userOneId, userTwoId, req.user.id],
         );
 
         return res.status(201).json({ conversation: { id: conversation.rows[0].id } });
@@ -2671,6 +2975,7 @@ app.get('/api/conversations/:id/messages', requireAuth, async (req, res, next) =
         if (!conversation) return res.status(404).json({ error: 'Chat nicht gefunden' });
 
         const otherUser = await getUserById(conversation.other_user_id);
+        const blockStatus = await getBlockStatus(req.user.id, conversation.other_user_id);
         const messages = await query(
             `select id, conversation_id, sender_id, body, created_at, read_at
              from messages
@@ -2713,7 +3018,11 @@ app.get('/api/conversations/:id/messages', requireAuth, async (req, res, next) =
                 display_name: otherUser.display_name,
                 avatar_color: otherUser.avatar_color,
                 avatar_url: otherUser.avatar_url,
+                about: otherUser.about,
+                created_at: otherUser.created_at,
                 last_seen_at: otherUser.last_seen_at,
+                blocked_by_me: blockStatus.blocked_by_me,
+                blocked_me: blockStatus.blocked_me,
             },
             messages: messageRows,
         });
@@ -2730,6 +3039,14 @@ app.post('/api/conversations/:id/messages', requireAuth, async (req, res, next) 
 
         const conversation = await getConversationForUser(req.params.id, req.user.id);
         if (!conversation) return res.status(404).json({ error: 'Chat nicht gefunden' });
+        const blockStatus = await getBlockStatus(req.user.id, conversation.other_user_id);
+        if (blockStatus.blocked_by_me || blockStatus.blocked_me) {
+            return res.status(403).json({ error: 'In diesem Chat sind Nachrichten blockiert' });
+        }
+        await query(
+            'update conversations set hidden_for_user_one = false, hidden_for_user_two = false where id = $1',
+            [conversation.id],
+        );
 
         const result = await query(
             `insert into messages (conversation_id, sender_id, body)
@@ -2768,6 +3085,41 @@ app.post('/api/conversations/:id/messages', requireAuth, async (req, res, next) 
         });
 
         return res.status(201).json({ message });
+    } catch (error) {
+        return next(error);
+    }
+});
+
+app.post('/api/conversations/:id/typing', requireAuth, async (req, res, next) => {
+    try {
+        const conversation = await getConversationForUser(req.params.id, req.user.id);
+        if (!conversation) return res.status(404).json({ error: 'Chat nicht gefunden' });
+        const blockStatus = await getBlockStatus(req.user.id, conversation.other_user_id);
+        if (blockStatus.blocked_by_me || blockStatus.blocked_me) return res.json({ ok: true });
+        sendEvent(conversation.other_user_id, 'typing', {
+            conversationId: conversation.id,
+            userId: req.user.id,
+            typing: Boolean(req.body.typing),
+        });
+        return res.json({ ok: true });
+    } catch (error) {
+        return next(error);
+    }
+});
+
+app.delete('/api/conversations/:id', requireAuth, async (req, res, next) => {
+    try {
+        const conversation = await getConversationForUser(req.params.id, req.user.id);
+        if (!conversation) return res.status(404).json({ error: 'Chat nicht gefunden' });
+        await query(
+            `update conversations
+             set hidden_for_user_one = case when user_one_id = $2 then true else hidden_for_user_one end,
+                 hidden_for_user_two = case when user_two_id = $2 then true else hidden_for_user_two end
+             where id = $1`,
+            [conversation.id, req.user.id],
+        );
+        sendEvent(req.user.id, 'conversation:deleted', { conversationId: conversation.id });
+        return res.json({ ok: true });
     } catch (error) {
         return next(error);
     }
