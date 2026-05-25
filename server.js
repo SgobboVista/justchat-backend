@@ -984,14 +984,16 @@ function renderMessengerApp() {
         .bubble img { display: block; max-width: min(420px, 100%); border-radius: 8px; margin-bottom: 8px; }
         .attachment-link { display: flex; align-items: center; gap: 8px; color: var(--accent); font-weight: 700; text-decoration: none; padding: 9px 10px; margin-bottom: 6px; border-radius: 8px; background: rgba(15, 118, 110, .08); }
         .meta { display: block; color: var(--muted); font-size: 11px; margin-top: 5px; text-align: right; }
-        .composer { background: var(--panel); border-top: 1px solid var(--line); padding: 12px; display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: end; }
-        .composer textarea { min-height: 44px; max-height: 120px; resize: vertical; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
-        .file-button { border: 1px solid var(--line); border-radius: 8px; min-width: 44px; min-height: 44px; display: grid; place-items: center; font-weight: 800; color: var(--accent); background: #fff; }
+        .composer { width: 100%; min-width: 0; background: var(--panel); border-top: 1px solid var(--line); padding: 12px; display: grid; grid-template-columns: 48px minmax(0, 1fr) 48px; gap: 10px; align-items: end; }
+        .composer textarea { width: 100%; min-width: 0; min-height: 48px; max-height: 120px; resize: vertical; border: 1px solid var(--line); border-radius: 24px; padding: 12px 18px; outline: none; }
+        .composer textarea:focus { border-color: var(--accent); }
+        .file-button { border: 1px solid var(--line); border-radius: 50%; width: 48px; height: 48px; display: grid; place-items: center; color: var(--accent); background: #fff; cursor: pointer; }
+        .file-button svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
         .file-button input { display: none; }
         .attachment-preview { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; gap: 10px; border-radius: 8px; background: #eef8f6; color: var(--text); padding: 8px 10px; font-size: 13px; }
         .attachment-preview button { background: transparent; color: var(--danger); font-weight: 700; padding: 3px 6px; }
-        .send-button { min-width: 46px; min-height: 44px; display: grid; place-items: center; padding: 0; }
-        .send-button svg { width: 21px; height: 21px; fill: currentColor; }
+        .send-button { width: 48px; height: 48px; border-radius: 50%; display: grid; place-items: center; padding: 0; overflow: hidden; }
+        .send-button svg { width: 23px; height: 23px; fill: none; stroke: currentColor; stroke-width: 2.3; stroke-linecap: round; stroke-linejoin: round; transform: translateX(1px); }
         .composer-error { grid-column: 1 / -1; margin: 0; min-height: 0; }
         .chat.drop-active .messages { outline: 2px dashed var(--accent); outline-offset: -10px; background: #dff1ec; }
         .drop-hint { display: none; position: absolute; inset: 72px 18px 74px; place-items: center; pointer-events: none; z-index: 2; color: var(--accent); font-size: 18px; font-weight: 700; }
@@ -1028,20 +1030,16 @@ function renderMessengerApp() {
                 overscroll-behavior-y: contain;
             }
             .composer {
-                padding: 8px 8px calc(8px + env(safe-area-inset-bottom));
+                grid-template-columns: 48px minmax(0, 1fr) 48px;
+                padding: 10px 10px calc(10px + env(safe-area-inset-bottom));
                 gap: 8px;
                 background: #f0f2f5;
             }
             .composer textarea {
                 border: 0;
-                border-radius: 22px;
+                min-height: 48px;
+                border-radius: 24px;
                 resize: none;
-            }
-            .composer .primary, .file-button {
-                border-radius: 50%;
-                min-width: 44px;
-                width: 44px;
-                min-height: 44px;
             }
             .settings-view { padding: calc(16px + env(safe-area-inset-top)) 12px calc(16px + env(safe-area-inset-bottom)); }
         }
@@ -1170,12 +1168,12 @@ function renderMessengerApp() {
                 <form id="composer" class="composer">
                     <div id="attachmentPreview" class="attachment-preview hidden"></div>
                     <label class="file-button" title="Datei anhängen">
-                        +
+                        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21.4 11.1 12.3 20.2a6 6 0 0 1-8.5-8.5l9.1-9.1a4 4 0 1 1 5.7 5.7l-9.1 9.1a2 2 0 0 1-2.8-2.8l8.5-8.5"></path></svg>
                         <input id="attachmentInput" type="file">
                     </label>
                     <textarea id="messageInput" placeholder="Nachricht schreiben" maxlength="4000"></textarea>
                     <button class="primary send-button" type="submit" aria-label="Senden" title="Senden">
-                        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.1 21.7 23 12 2.1 2.3 2 9.8l15 2.2-15 2.2z"></path></svg>
+                        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M22 2 11 13"></path><path d="m22 2-7 20-4-9-9-4z"></path></svg>
                     </button>
                     <p id="composerError" class="error composer-error"></p>
                 </form>
