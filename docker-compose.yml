@@ -7,6 +7,8 @@ services:
       - justchat-db
     ports:
       - "50070:80"
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
     environment:
       NODE_ENV: production
       PORT: 80
@@ -25,8 +27,22 @@ services:
       GOOGLE_CLIENT_ID: "769973393963-2vosgga0eisngofob5kqmdbqvs0qqv77.apps.googleusercontent.com"
       GOOGLE_CLIENT_SECRET: "${GOOGLE_CLIENT_SECRET}"
       FORBIDDEN_WORDS: "admin,administrator,moderator,system,support,root"
-      IMAGE_UPDATE_WEBHOOK_URL: "${IMAGE_UPDATE_WEBHOOK_URL:-}"
-      IMAGE_UPDATE_WEBHOOK_TOKEN: "${IMAGE_UPDATE_WEBHOOK_TOKEN:-}"
+      IMAGE_UPDATE_WEBHOOK_URL: "http://justchat-image-updater:8080/v1/update"
+      IMAGE_UPDATE_WEBHOOK_METHOD: "GET"
+      IMAGE_UPDATE_WEBHOOK_TOKEN: "${IMAGE_UPDATE_WEBHOOK_TOKEN:-bitte-einen-langen-geheimen-update-token-setzen}"
+
+  justchat-image-updater:
+    image: nickfedor/watchtower:latest
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      WATCHTOWER_HTTP_API_UPDATE: "true"
+      WATCHTOWER_HTTP_API_TOKEN: "${IMAGE_UPDATE_WEBHOOK_TOKEN:-bitte-einen-langen-geheimen-update-token-setzen}"
+      WATCHTOWER_LABEL_ENABLE: "true"
+      WATCHTOWER_CLEANUP: "true"
+    labels:
+      - "com.centurylinklabs.watchtower.enable=false"
 
   justchat-db:
     image: postgres:16-alpine

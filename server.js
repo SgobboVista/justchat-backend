@@ -19,6 +19,7 @@ const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '';
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || '';
 const IMAGE_UPDATE_WEBHOOK_URL = process.env.IMAGE_UPDATE_WEBHOOK_URL || '';
 const IMAGE_UPDATE_WEBHOOK_TOKEN = process.env.IMAGE_UPDATE_WEBHOOK_TOKEN || '';
+const IMAGE_UPDATE_WEBHOOK_METHOD = (process.env.IMAGE_UPDATE_WEBHOOK_METHOD || 'POST').trim().toUpperCase();
 const FORBIDDEN_WORDS = (process.env.FORBIDDEN_WORDS || 'admin,administrator,moderator,system,support,root')
     .split(',')
     .map((word) => word.trim().toLowerCase())
@@ -261,17 +262,21 @@ async function dispatchImageUpdate() {
         if (IMAGE_UPDATE_WEBHOOK_TOKEN) {
             headers.Authorization = `Bearer ${IMAGE_UPDATE_WEBHOOK_TOKEN}`;
         }
-        const response = await fetch(IMAGE_UPDATE_WEBHOOK_URL, {
-            method: 'POST',
+        const updatePayload = {
+            event: 'image_update_requested',
+            app: process.env.APP_NAME || 'JustChat',
+            imageTag: 'latest',
+            requestedAt,
+        };
+        const requestOptions = {
+            method: IMAGE_UPDATE_WEBHOOK_METHOD,
             headers,
-            body: JSON.stringify({
-                event: 'image_update_requested',
-                app: process.env.APP_NAME || 'JustChat',
-                imageTag: 'latest',
-                requestedAt,
-            }),
             signal: AbortSignal.timeout(15000),
-        });
+        };
+        if (!['GET', 'HEAD'].includes(IMAGE_UPDATE_WEBHOOK_METHOD)) {
+            requestOptions.body = JSON.stringify(updatePayload);
+        }
+        const response = await fetch(IMAGE_UPDATE_WEBHOOK_URL, requestOptions);
         if (!response.ok) {
             throw new Error(`Update-Webhook antwortet mit HTTP ${response.status}`);
         }
@@ -1220,6 +1225,10 @@ function renderMessengerApp() {
         .loading-brand { font-size: 34px; font-weight: 800; color: var(--text); }
         .spinner { width: 42px; height: 42px; border-radius: 50%; border: 4px solid #cfe8e5; border-top-color: var(--accent); animation: spin .85s linear infinite; }
         @keyframes spin { to { transform: rotate(360deg); } }
+        .connection-banner { position: fixed; top: 0; left: 0; right: 0; z-index: 50; min-height: 28px; padding: calc(6px + env(safe-area-inset-top)) 12px 6px; text-align: center; font-size: 13px; font-weight: 700; color: #fff; transition: transform .18s ease, opacity .18s ease; }
+        .connection-banner.offline { background: #b42318; }
+        .connection-banner.online { background: #138a45; }
+        .connection-banner.hidden { transform: translateY(-100%); opacity: 0; }
         .auth-shell { min-height: 100vh; display: grid; place-items: center; padding: 24px; background: linear-gradient(135deg, #f7fbff 0%, #edf7f4 100%); }
         .auth-card { width: min(460px, 100%); background: rgba(255,255,255,.96); border: 1px solid var(--line); border-radius: 8px; padding: 26px; box-shadow: 0 18px 50px rgba(15, 23, 42, .12); }
         .auth-card h1 { margin: 0 0 6px; font-size: 36px; letter-spacing: 0; }
@@ -1353,6 +1362,7 @@ function renderMessengerApp() {
     </style>
 </head>
 <body>
+    <div id="connectionBanner" class="connection-banner hidden" role="status" aria-live="polite"></div>
     <div id="loading" class="loading-shell">
         <div class="loading-card" role="status" aria-label="JustChat wird geladen">
             <div class="loading-brand">JustChat</div>
@@ -1627,6 +1637,9 @@ function renderMessengerApp() {
             typingStopTimer: null,
             remoteTyping: false,
             remoteTypingTimer: null,
+            serverOnline: true,
+            connectionNoticeTimer: null,
+            bootRetryTimer: null,
         };
 
         const $ = (id) => document.getElementById(id);
@@ -1636,7 +1649,11 @@ function renderMessengerApp() {
             if (state.token) headers.Authorization = 'Bearer ' + state.token;
             return fetch(path, { ...options, headers }).then(async (res) => {
                 const data = await res.json().catch(() => ({}));
-                if (!res.ok) throw new Error(data.error || 'Anfrage fehlgeschlagen');
+                if (!res.ok) {
+                    const error = new Error(data.error || 'Anfrage fehlgeschlagen');
+                    error.status = res.status;
+                    throw error;
+                }
                 return data;
             });
         }
@@ -1665,6 +1682,16 @@ function renderMessengerApp() {
             $('loading').classList.add('hidden');
             $('auth').classList.add('hidden');
             $('messenger').classList.remove('hidden');
+        }
+
+        function showConnectionStatus(online) {
+            if (online === state.serverOnline) return;
+            state.serverOnline = online;
+            const banner = $('connectionBanner');
+            banner.textContent = online ? 'Wieder online' : 'Offline';
+            banner.className = 'connection-banner ' + (online ? 'online' : 'offline');
+            if (state.connectionNoticeTimer) clearTimeout(state.connectionNoticeTimer);
+            state.connectionNoticeTimer = setTimeout(() => banner.classList.add('hidden'), 5000);
         }
 
         function resetAuthPanels() {
@@ -2076,6 +2103,8 @@ function renderMessengerApp() {
         function connectEvents() {
             if (state.eventSource) state.eventSource.close();
             state.eventSource = new EventSource('/api/events?token=' + encodeURIComponent(state.token));
+            state.eventSource.addEventListener('open', () => showConnectionStatus(true));
+            state.eventSource.addEventListener('error', () => showConnectionStatus(false));
             state.eventSource.addEventListener('message:new', async (event) => {
                 const payload = JSON.parse(event.data);
                 const isActive = state.activeConversation && Number(state.activeConversation.id) === Number(payload.conversationId);
@@ -2131,8 +2160,14 @@ function renderMessengerApp() {
             });
         }
 
+        window.addEventListener('offline', () => showConnectionStatus(false));
+
         async function boot() {
             if (!state.token) return showAuth();
+            if (state.bootRetryTimer) {
+                clearTimeout(state.bootRetryTimer);
+                state.bootRetryTimer = null;
+            }
             try {
                 await loadMe();
                 await loadNotificationSounds();
@@ -2141,7 +2176,12 @@ function renderMessengerApp() {
                 await loadBlockedUsers();
                 showApp();
                 connectEvents();
-            } catch {
+            } catch (error) {
+                if (!error.status || error.status >= 500) {
+                    showConnectionStatus(false);
+                    state.bootRetryTimer = setTimeout(boot, 3000);
+                    return;
+                }
                 localStorage.removeItem('justchat_token');
                 state.token = null;
                 showAuth();
