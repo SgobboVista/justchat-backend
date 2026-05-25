@@ -193,22 +193,22 @@ async function dispatchImageUpdate() {
     }
 }
 
-function parseImageAttachment(attachment) {
+function parseAttachment(attachment) {
     if (!attachment) return null;
 
-    const mimeType = String(attachment.mimeType || '').toLowerCase();
-    const fileName = String(attachment.fileName || 'bild').replace(/[^\w.\- ]/g, '').slice(0, 120) || 'bild';
+    const mimeType = String(attachment.mimeType || 'application/octet-stream').toLowerCase().slice(0, 120);
+    const fileName = String(attachment.fileName || 'datei').replace(/[\u0000-\u001f<>:"/\\|?*]/g, '').slice(0, 120) || 'datei';
     const dataBase64 = String(attachment.dataBase64 || '');
 
-    if (!['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(mimeType)) {
-        const error = new Error('Nur JPEG, PNG, WebP und GIF sind erlaubt');
+    if (!/^[a-z0-9][a-z0-9!#$&^_.+-]*\/[a-z0-9][a-z0-9!#$&^_.+-]*$/.test(mimeType)) {
+        const error = new Error('Ungültiger Dateityp');
         error.statusCode = 400;
         throw error;
     }
 
     const buffer = Buffer.from(dataBase64, 'base64');
     if (!buffer.length || buffer.length > 5 * 1024 * 1024) {
-        const error = new Error('Bild muss kleiner als 5 MB sein');
+        const error = new Error('Datei muss kleiner als 5 MB sein');
         error.statusCode = 400;
         throw error;
     }
@@ -219,6 +219,17 @@ function parseImageAttachment(attachment) {
         sizeBytes: buffer.length,
         data: buffer,
     };
+}
+
+function parseImageAttachment(attachment) {
+    const parsed = parseAttachment(attachment);
+    if (!parsed) return null;
+    if (!['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(parsed.mimeType)) {
+        const error = new Error('Nur JPEG, PNG, WebP und GIF sind erlaubt');
+        error.statusCode = 400;
+        throw error;
+    }
+    return parsed;
 }
 
 function parseId(value) {
@@ -946,6 +957,8 @@ function renderMessengerApp() {
         .primary:hover { background: var(--accent-strong); }
         .ghost { background: transparent; color: var(--accent); font-weight: 700; padding: 8px; }
         .error { color: var(--danger); min-height: 20px; }
+        .success { color: var(--accent); min-height: 20px; }
+        .inline-panel { border: 1px solid var(--line); border-radius: 8px; background: #f7fbfa; padding: 12px; display: grid; gap: 10px; }
         .app { height: 100vh; height: 100dvh; display: grid; grid-template-columns: 360px 1fr; overflow: hidden; }
         .sidebar { background: var(--sidebar); border-right: 1px solid var(--line); display: grid; grid-template-rows: auto auto 1fr; min-width: 0; min-height: 0; }
         .topbar { padding: 16px; border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; gap: 12px; }
@@ -963,17 +976,28 @@ function renderMessengerApp() {
         .row-title { display: flex; justify-content: space-between; gap: 8px; min-width: 0; }
         .row-title strong, .preview { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .preview { color: var(--muted); font-size: 13px; margin-top: 4px; }
-        .chat { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; min-width: 0; min-height: 0; }
+        .chat { position: relative; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; min-width: 0; min-height: 0; }
         .chat-head { background: var(--panel); border-bottom: 1px solid var(--line); padding: 14px 18px; display: flex; align-items: center; gap: 12px; min-width: 0; }
         .messages { padding: 18px; overflow: auto; display: flex; flex-direction: column; gap: 8px; background: #e9f0f4; }
         .bubble { max-width: min(680px, 82%); border: 1px solid rgba(15, 23, 42, .08); border-radius: 8px; padding: 9px 11px; background: var(--message-other); align-self: flex-start; overflow-wrap: anywhere; }
         .bubble.me { background: var(--message-me); align-self: flex-end; }
         .bubble img { display: block; max-width: min(420px, 100%); border-radius: 8px; margin-bottom: 8px; }
+        .attachment-link { display: flex; align-items: center; gap: 8px; color: var(--accent); font-weight: 700; text-decoration: none; padding: 9px 10px; margin-bottom: 6px; border-radius: 8px; background: rgba(15, 118, 110, .08); }
         .meta { display: block; color: var(--muted); font-size: 11px; margin-top: 5px; text-align: right; }
         .composer { background: var(--panel); border-top: 1px solid var(--line); padding: 12px; display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: end; }
         .composer textarea { min-height: 44px; max-height: 120px; resize: vertical; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
         .file-button { border: 1px solid var(--line); border-radius: 8px; min-width: 44px; min-height: 44px; display: grid; place-items: center; font-weight: 800; color: var(--accent); background: #fff; }
         .file-button input { display: none; }
+        .attachment-preview { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; gap: 10px; border-radius: 8px; background: #eef8f6; color: var(--text); padding: 8px 10px; font-size: 13px; }
+        .attachment-preview button { background: transparent; color: var(--danger); font-weight: 700; padding: 3px 6px; }
+        .send-button { min-width: 46px; min-height: 44px; display: grid; place-items: center; padding: 0; }
+        .send-button svg { width: 21px; height: 21px; fill: currentColor; }
+        .composer-error { grid-column: 1 / -1; margin: 0; min-height: 0; }
+        .chat.drop-active .messages { outline: 2px dashed var(--accent); outline-offset: -10px; background: #dff1ec; }
+        .drop-hint { display: none; position: absolute; inset: 72px 18px 74px; place-items: center; pointer-events: none; z-index: 2; color: var(--accent); font-size: 18px; font-weight: 700; }
+        .chat.drop-active .drop-hint { display: grid; }
+        .settings-view { grid-row: 1 / -1; overflow: auto; padding: 24px; background: var(--bg); }
+        .settings-card { width: min(620px, 100%); margin: 0 auto; background: #fff; border-radius: 8px; border: 1px solid var(--line); padding: 20px; }
         .modal { position: fixed; inset: 0; background: rgba(15, 23, 42, .42); display: grid; place-items: center; padding: 18px; z-index: 20; }
         .modal-card { width: min(560px, 100%); max-height: min(760px, 100%); overflow: auto; background: #fff; border-radius: 8px; border: 1px solid var(--line); padding: 20px; box-shadow: 0 24px 80px rgba(15, 23, 42, .22); }
         .modal-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 16px; }
@@ -1019,6 +1043,7 @@ function renderMessengerApp() {
                 width: 44px;
                 min-height: 44px;
             }
+            .settings-view { padding: calc(16px + env(safe-area-inset-top)) 12px calc(16px + env(safe-area-inset-bottom)); }
         }
     </style>
 </head>
@@ -1066,6 +1091,48 @@ function renderMessengerApp() {
                 <button id="forgotUsername" class="ghost" type="button">Benutzername vergessen</button>
                 <button id="forgotPassword" class="ghost" type="button">Passwort vergessen</button>
             </div>
+            <div id="twoFactorPanel" class="inline-panel hidden">
+                <strong>2FA-Bestätigung</strong>
+                <p class="muted small">Gib den Code aus deiner E-Mail ein.</p>
+                <div class="field">
+                    <label for="twoFactorCode">Code</label>
+                    <input id="twoFactorCode" inputmode="numeric" autocomplete="one-time-code" maxlength="6">
+                </div>
+                <button id="verifyTwoFactor" class="primary" type="button">Code bestätigen</button>
+                <button id="cancelTwoFactor" class="ghost" type="button">Zurück zur Anmeldung</button>
+            </div>
+            <div id="forgotUsernamePanel" class="inline-panel hidden">
+                <strong>Benutzername wiederfinden</strong>
+                <div class="field">
+                    <label for="forgotUsernameEmail">E-Mail-Adresse</label>
+                    <input id="forgotUsernameEmail" type="email" autocomplete="email">
+                </div>
+                <button id="sendUsernameReminder" class="primary" type="button">Benutzername senden</button>
+            </div>
+            <div id="forgotPasswordPanel" class="inline-panel hidden">
+                <strong>Passwort zurücksetzen</strong>
+                <div class="field">
+                    <label for="resetIdentifier">Benutzername oder E-Mail</label>
+                    <input id="resetIdentifier" autocomplete="username">
+                </div>
+                <button id="requestResetCode" class="primary" type="button">Code anfordern</button>
+                <div id="resetFields" class="stack hidden">
+                    <div class="field">
+                        <label for="resetCode">Code</label>
+                        <input id="resetCode" inputmode="numeric" autocomplete="one-time-code" maxlength="6">
+                    </div>
+                    <div class="field">
+                        <label for="resetPassword">Neues Passwort</label>
+                        <input id="resetPassword" type="password" autocomplete="new-password" minlength="6">
+                    </div>
+                    <div class="field">
+                        <label for="resetPasswordRepeat">Passwort wiederholen</label>
+                        <input id="resetPasswordRepeat" type="password" autocomplete="new-password" minlength="6">
+                    </div>
+                    <button id="submitPasswordReset" class="primary" type="button">Passwort speichern</button>
+                </div>
+            </div>
+            <div id="authNotice" class="success"></div>
         </form>
     </div>
 
@@ -1099,56 +1166,61 @@ function renderMessengerApp() {
                     </div>
                 </div>
                 <div id="messages" class="messages"></div>
+                <div class="drop-hint">Datei hier ablegen</div>
                 <form id="composer" class="composer">
-                    <label class="file-button" title="Bild anhängen">
+                    <div id="attachmentPreview" class="attachment-preview hidden"></div>
+                    <label class="file-button" title="Datei anhängen">
                         +
-                        <input id="imageInput" type="file" accept="image/png,image/jpeg,image/webp,image/gif">
+                        <input id="attachmentInput" type="file">
                     </label>
                     <textarea id="messageInput" placeholder="Nachricht schreiben" maxlength="4000"></textarea>
-                    <button class="primary" type="submit">Senden</button>
+                    <button class="primary send-button" type="submit" aria-label="Senden" title="Senden">
+                        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.1 21.7 23 12 2.1 2.3 2 9.8l15 2.2-15 2.2z"></path></svg>
+                    </button>
+                    <p id="composerError" class="error composer-error"></p>
+                </form>
+            </div>
+            <div id="accountPanel" class="settings-view hidden">
+                <form id="profileForm" class="settings-card stack">
+                    <div class="modal-head">
+                        <h2>Mein Account</h2>
+                        <button id="closeAccount" class="ghost" type="button">Zurück</button>
+                    </div>
+                    <div class="field">
+                        <label for="profileDisplayName">Anzeigename</label>
+                        <input id="profileDisplayName" maxlength="60">
+                    </div>
+                    <div class="field">
+                        <label for="profileEmail">E-Mail</label>
+                        <input id="profileEmail" type="email" maxlength="160">
+                    </div>
+                    <div class="field">
+                        <label for="profileAbout">Info</label>
+                        <textarea id="profileAbout" maxlength="180"></textarea>
+                    </div>
+                    <div class="field">
+                        <label>Profilbild</label>
+                        <div id="profileAvatarPicker" class="avatar-picker"></div>
+                    </div>
+                    <label class="segmented">
+                        <input id="profile2fa" type="checkbox" style="width:auto;">
+                        <span>2FA per E-Mail-Code aktivieren</span>
+                    </label>
+                    <div class="field">
+                        <label for="displayNameVisibility">Anzeigename anzeigen</label>
+                        <select id="displayNameVisibility">
+                            <option value="contacts">Nur Kontakten</option>
+                            <option value="everyone">Allen</option>
+                        </select>
+                    </div>
+                    <p class="muted small">Bei aktivierter 2FA wird beim Login ein Code an deine E-Mail gesendet.</p>
+                    <div id="profileError" class="error"></div>
+                    <div id="profileNotice" class="success"></div>
+                    <button class="primary" type="submit">Profil speichern</button>
+                    <button id="logout" class="ghost" type="button">Logout</button>
                 </form>
             </div>
         </section>
-    </div>
-
-    <div id="accountModal" class="modal hidden">
-        <form id="profileForm" class="modal-card stack">
-            <div class="modal-head">
-                <h2>Mein Account</h2>
-                <button id="closeAccount" class="ghost" type="button">Schließen</button>
-            </div>
-            <div class="field">
-                <label for="profileDisplayName">Anzeigename</label>
-                <input id="profileDisplayName" maxlength="60">
-            </div>
-            <div class="field">
-                <label for="profileEmail">E-Mail</label>
-                <input id="profileEmail" type="email" maxlength="160">
-            </div>
-            <div class="field">
-                <label for="profileAbout">Info</label>
-                <textarea id="profileAbout" maxlength="180"></textarea>
-            </div>
-            <div class="field">
-                <label>Profilbild</label>
-                <div id="profileAvatarPicker" class="avatar-picker"></div>
-            </div>
-            <label class="segmented">
-                <input id="profile2fa" type="checkbox" style="width:auto;">
-                <span>2FA per E-Mail-Code aktivieren</span>
-            </label>
-            <div class="field">
-                <label for="displayNameVisibility">Anzeigename anzeigen</label>
-                <select id="displayNameVisibility">
-                    <option value="contacts">Nur Kontakten</option>
-                    <option value="everyone">Allen</option>
-                </select>
-            </div>
-            <p class="muted small">Bei aktivierter 2FA wird beim Login ein Code an deine E-Mail gesendet.</p>
-            <div id="profileError" class="error"></div>
-            <button class="primary" type="submit">Profil speichern</button>
-            <button id="logout" class="ghost" type="button">Logout</button>
-        </form>
     </div>
 
     <div id="addModal" class="modal hidden">
@@ -1178,6 +1250,7 @@ function renderMessengerApp() {
             avatars: [],
             selectedAvatarId: null,
             profileAvatarId: null,
+            pendingAttachment: null,
         };
 
         const $ = (id) => document.getElementById(id);
@@ -1216,8 +1289,19 @@ function renderMessengerApp() {
             $('messenger').classList.remove('hidden');
         }
 
+        function resetAuthPanels() {
+            state.pendingTwoFactorUserId = null;
+            $('twoFactorPanel').classList.add('hidden');
+            $('forgotUsernamePanel').classList.add('hidden');
+            $('forgotPasswordPanel').classList.add('hidden');
+            $('resetFields').classList.add('hidden');
+            $('twoFactorCode').value = '';
+            $('authNotice').textContent = '';
+        }
+
         function setAuthMode(registerMode) {
             state.registerMode = registerMode;
+            resetAuthPanels();
             document.querySelectorAll('.register-only').forEach((el) => el.classList.toggle('hidden', !registerMode));
             $('authSubmit').textContent = registerMode ? 'Konto erstellen' : 'Anmelden';
             $('toggleAuth').textContent = registerMode ? 'Schon ein Konto? Anmelden' : 'Neues Konto erstellen';
@@ -1262,7 +1346,7 @@ function renderMessengerApp() {
         function renderConversationList() {
             $('conversationList').innerHTML = state.conversations.map((chat) => {
                 const active = state.activeConversation && state.activeConversation.id === chat.id ? ' active' : '';
-                const preview = chat.last_message || (chat.has_attachment ? 'Bild' : 'Noch keine Nachrichten');
+                const preview = chat.last_message || (chat.has_attachment ? 'Datei' : 'Noch keine Nachrichten');
                 const time = chat.last_message_at ? new Date(chat.last_message_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
                 return '<button class="row' + active + '" data-chat="' + chat.id + '">' +
                     avatarMarkup(chat) +
@@ -1287,7 +1371,9 @@ function renderMessengerApp() {
                 const time = new Date(message.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
                 const read = mine && message.read_at ? ' - gelesen' : '';
                 const attachment = message.attachment
-                    ? '<img src="' + message.attachment.data_url + '" alt="' + escapeText(message.attachment.file_name) + '">'
+                    ? (String(message.attachment.mime_type || '').startsWith('image/')
+                        ? '<img src="' + message.attachment.data_url + '" alt="' + escapeText(message.attachment.file_name) + '">'
+                        : '<a class="attachment-link" href="' + message.attachment.data_url + '" download="' + escapeText(message.attachment.file_name) + '">Datei: ' + escapeText(message.attachment.file_name) + '</a>')
                     : '';
                 const text = message.body ? escapeText(message.body) : '';
                 return '<div class="bubble ' + (mine ? 'me' : '') + '">' +
@@ -1296,14 +1382,33 @@ function renderMessengerApp() {
             $('messages').scrollTop = $('messages').scrollHeight;
         }
 
-        function readSelectedImage() {
-            const file = $('imageInput').files[0];
-            if (!file) return Promise.resolve(null);
-            if (!['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(file.type)) {
-                return Promise.reject(new Error('Nur Bilder sind erlaubt'));
+        function renderPendingAttachment() {
+            const preview = $('attachmentPreview');
+            if (!state.pendingAttachment) {
+                preview.classList.add('hidden');
+                preview.innerHTML = '';
+                return;
             }
+            preview.classList.remove('hidden');
+            preview.innerHTML = '<span>Datei: ' + escapeText(state.pendingAttachment.name) + '</span><button id="removeAttachment" type="button">Entfernen</button>';
+        }
+
+        function chooseAttachment(file) {
+            if (!file) return;
             if (file.size > 5 * 1024 * 1024) {
-                return Promise.reject(new Error('Bild muss kleiner als 5 MB sein'));
+                $('composerError').textContent = 'Datei muss kleiner als 5 MB sein';
+                return;
+            }
+            $('composerError').textContent = '';
+            state.pendingAttachment = file;
+            renderPendingAttachment();
+        }
+
+        function readSelectedAttachment() {
+            const file = state.pendingAttachment || $('attachmentInput').files[0];
+            if (!file) return Promise.resolve(null);
+            if (file.size > 5 * 1024 * 1024) {
+                return Promise.reject(new Error('Datei muss kleiner als 5 MB sein'));
             }
 
             return new Promise((resolve, reject) => {
@@ -1312,11 +1417,11 @@ function renderMessengerApp() {
                     const dataUrl = String(reader.result);
                     resolve({
                         fileName: file.name,
-                        mimeType: file.type,
+                        mimeType: file.type || 'application/octet-stream',
                         dataBase64: dataUrl.slice(dataUrl.indexOf(',') + 1),
                     });
                 };
-                reader.onerror = () => reject(new Error('Bild konnte nicht gelesen werden'));
+                reader.onerror = () => reject(new Error('Datei konnte nicht gelesen werden'));
                 reader.readAsDataURL(file);
             });
         }
@@ -1339,7 +1444,24 @@ function renderMessengerApp() {
             $('displayNameVisibility').value = state.me.display_name_visibility || 'contacts';
             state.profileAvatarId = state.me.avatar_asset_id;
             renderProfileAvatarPicker();
-            $('accountModal').classList.remove('hidden');
+            $('profileError').textContent = '';
+            $('profileNotice').textContent = '';
+            $('chatEmpty').classList.add('hidden');
+            $('chatPane').classList.add('hidden');
+            $('accountPanel').classList.remove('hidden');
+            $('sidebar').classList.add('chat-open');
+            $('chat').classList.add('chat-open');
+        }
+
+        function closeAccount() {
+            $('accountPanel').classList.add('hidden');
+            if (state.activeConversation) {
+                $('chatPane').classList.remove('hidden');
+            } else {
+                $('chatEmpty').classList.remove('hidden');
+                $('sidebar').classList.remove('chat-open');
+                $('chat').classList.remove('chat-open');
+            }
         }
 
         async function loadConversations() {
@@ -1350,7 +1472,13 @@ function renderMessengerApp() {
 
         async function openConversation(id) {
             const data = await api('/api/conversations/' + id + '/messages');
+            if (!state.activeConversation || Number(state.activeConversation.id) !== Number(data.conversation.id)) {
+                state.pendingAttachment = null;
+                $('attachmentInput').value = '';
+                renderPendingAttachment();
+            }
             state.activeConversation = data.conversation;
+            $('accountPanel').classList.add('hidden');
             $('chatEmpty').classList.add('hidden');
             $('chatPane').classList.remove('hidden');
             $('sidebar').classList.add('chat-open');
@@ -1396,6 +1524,10 @@ function renderMessengerApp() {
         $('authForm').addEventListener('submit', async (event) => {
             event.preventDefault();
             $('authError').textContent = '';
+            if (state.pendingTwoFactorUserId) {
+                $('verifyTwoFactor').click();
+                return;
+            }
             const body = {
                 username: $('username').value,
                 password: $('password').value,
@@ -1409,15 +1541,10 @@ function renderMessengerApp() {
                 const endpoint = state.registerMode ? '/api/auth/register' : '/api/auth/login';
                 const data = await api(endpoint, { method: 'POST', body: JSON.stringify(body) });
                 if (data.twoFactorRequired) {
-                    const code = prompt('2FA-Code aus deiner E-Mail eingeben');
-                    if (!code) return;
-                    const verified = await api('/api/auth/verify-2fa', {
-                        method: 'POST',
-                        body: JSON.stringify({ userId: data.userId, code }),
-                    });
-                    state.token = verified.token;
-                    localStorage.setItem('justchat_token', state.token);
-                    await boot();
+                    state.pendingTwoFactorUserId = data.userId;
+                    $('twoFactorPanel').classList.remove('hidden');
+                    $('authNotice').textContent = 'Ein Login-Code wurde an deine E-Mail gesendet.';
+                    $('twoFactorCode').focus();
                     return;
                 }
                 state.token = data.token;
@@ -1430,7 +1557,7 @@ function renderMessengerApp() {
 
         $('toggleAuth').addEventListener('click', () => setAuthMode(!state.registerMode));
         $('accountButton').addEventListener('click', openAccount);
-        $('closeAccount').addEventListener('click', () => $('accountModal').classList.add('hidden'));
+        $('closeAccount').addEventListener('click', closeAccount);
         $('addPerson').addEventListener('click', () => $('addModal').classList.remove('hidden'));
         $('closeAdd').addEventListener('click', () => $('addModal').classList.add('hidden'));
         $('avatarPicker').addEventListener('click', (event) => {
@@ -1448,6 +1575,7 @@ function renderMessengerApp() {
         $('profileForm').addEventListener('submit', async (event) => {
             event.preventDefault();
             $('profileError').textContent = '';
+            $('profileNotice').textContent = '';
             try {
                 await api('/api/me', {
                     method: 'PATCH',
@@ -1461,7 +1589,7 @@ function renderMessengerApp() {
                     }),
                 });
                 await loadMe();
-                $('accountModal').classList.add('hidden');
+                $('profileNotice').textContent = 'Einstellungen wurden gespeichert.';
             } catch (error) {
                 $('profileError').textContent = error.message;
             }
@@ -1483,39 +1611,80 @@ function renderMessengerApp() {
                 $('addError').textContent = error.message;
             }
         });
-        $('forgotUsername').addEventListener('click', async () => {
-            const email = prompt('E-Mail-Adresse eingeben');
-            if (!email) return;
+        $('verifyTwoFactor').addEventListener('click', async () => {
+            $('authError').textContent = '';
+            try {
+                const code = $('twoFactorCode').value.trim();
+                if (!code || !state.pendingTwoFactorUserId) return;
+                const verified = await api('/api/auth/verify-2fa', {
+                    method: 'POST',
+                    body: JSON.stringify({ userId: state.pendingTwoFactorUserId, code }),
+                });
+                state.token = verified.token;
+                localStorage.setItem('justchat_token', state.token);
+                await boot();
+            } catch (error) {
+                $('authError').textContent = error.message;
+            }
+        });
+        $('cancelTwoFactor').addEventListener('click', () => {
+            resetAuthPanels();
+            $('authError').textContent = '';
+        });
+        $('forgotUsername').addEventListener('click', () => {
+            resetAuthPanels();
+            $('forgotUsernamePanel').classList.remove('hidden');
+            $('forgotUsernameEmail').focus();
+        });
+        $('sendUsernameReminder').addEventListener('click', async () => {
+            $('authError').textContent = '';
             try {
                 await api('/api/auth/forgot-username', {
                     method: 'POST',
-                    body: JSON.stringify({ email }),
+                    body: JSON.stringify({ email: $('forgotUsernameEmail').value.trim() }),
                 });
-                alert('Falls die E-Mail existiert, wurde der Benutzername versendet.');
+                $('authNotice').textContent = 'Falls die E-Mail existiert, wurde der Benutzername versendet.';
             } catch (error) {
-                alert(error.message);
+                $('authError').textContent = error.message;
             }
         });
-        $('forgotPassword').addEventListener('click', async () => {
-            const identifier = prompt('Benutzername oder E-Mail eingeben');
-            if (!identifier) return;
+        $('forgotPassword').addEventListener('click', () => {
+            resetAuthPanels();
+            $('forgotPasswordPanel').classList.remove('hidden');
+            $('resetIdentifier').focus();
+        });
+        $('requestResetCode').addEventListener('click', async () => {
+            $('authError').textContent = '';
             try {
+                const identifier = $('resetIdentifier').value.trim();
+                if (!identifier) return;
                 await api('/api/auth/request-password-reset', {
                     method: 'POST',
                     body: JSON.stringify({ identifier }),
                 });
-                const code = prompt('Code aus der E-Mail eingeben');
-                if (!code) return;
-                const password = prompt('Neues Passwort eingeben');
-                if (!password) return;
-                const passwordRepeat = prompt('Neues Passwort wiederholen');
+                $('resetFields').classList.remove('hidden');
+                $('authNotice').textContent = 'Falls das Konto existiert, wurde ein Code versendet.';
+                $('resetCode').focus();
+            } catch (error) {
+                $('authError').textContent = error.message;
+            }
+        });
+        $('submitPasswordReset').addEventListener('click', async () => {
+            $('authError').textContent = '';
+            try {
                 await api('/api/auth/reset-password', {
                     method: 'POST',
-                    body: JSON.stringify({ identifier, code, password, passwordRepeat }),
+                    body: JSON.stringify({
+                        identifier: $('resetIdentifier').value.trim(),
+                        code: $('resetCode').value.trim(),
+                        password: $('resetPassword').value,
+                        passwordRepeat: $('resetPasswordRepeat').value,
+                    }),
                 });
-                alert('Passwort wurde geändert. Du kannst dich jetzt anmelden.');
+                resetAuthPanels();
+                $('authNotice').textContent = 'Passwort wurde geändert. Du kannst dich jetzt anmelden.';
             } catch (error) {
-                alert(error.message);
+                $('authError').textContent = error.message;
             }
         });
         $('logout').addEventListener('click', () => {
@@ -1526,6 +1695,36 @@ function renderMessengerApp() {
         $('back').addEventListener('click', () => {
             $('sidebar').classList.remove('chat-open');
             $('chat').classList.remove('chat-open');
+        });
+        $('attachmentInput').addEventListener('change', (event) => chooseAttachment(event.target.files[0]));
+        $('attachmentPreview').addEventListener('click', (event) => {
+            if (!event.target.closest('#removeAttachment')) return;
+            state.pendingAttachment = null;
+            $('attachmentInput').value = '';
+            renderPendingAttachment();
+        });
+        let dragDepth = 0;
+        $('chat').addEventListener('dragenter', (event) => {
+            if (!state.activeConversation || !event.dataTransfer.types.includes('Files')) return;
+            event.preventDefault();
+            dragDepth += 1;
+            $('chat').classList.add('drop-active');
+        });
+        $('chat').addEventListener('dragover', (event) => {
+            if (!state.activeConversation || !event.dataTransfer.types.includes('Files')) return;
+            event.preventDefault();
+            event.dataTransfer.dropEffect = 'copy';
+        });
+        $('chat').addEventListener('dragleave', () => {
+            dragDepth = Math.max(0, dragDepth - 1);
+            if (dragDepth === 0) $('chat').classList.remove('drop-active');
+        });
+        $('chat').addEventListener('drop', (event) => {
+            event.preventDefault();
+            dragDepth = 0;
+            $('chat').classList.remove('drop-active');
+            if (!state.activeConversation) return;
+            chooseAttachment(event.dataTransfer.files[0]);
         });
         $('conversationList').addEventListener('click', (event) => {
             const row = event.target.closest('[data-chat]');
@@ -1559,17 +1758,24 @@ function renderMessengerApp() {
         });
         $('composer').addEventListener('submit', async (event) => {
             event.preventDefault();
-            const body = $('messageInput').value.trim();
-            const attachment = await readSelectedImage();
-            if ((!body && !attachment) || !state.activeConversation) return;
-            $('messageInput').value = '';
-            $('imageInput').value = '';
-            await api('/api/conversations/' + state.activeConversation.id + '/messages', {
-                method: 'POST',
-                body: JSON.stringify({ body, attachment }),
-            });
-            await openConversation(state.activeConversation.id);
-            await loadConversations();
+            $('composerError').textContent = '';
+            try {
+                const body = $('messageInput').value.trim();
+                const attachment = await readSelectedAttachment();
+                if ((!body && !attachment) || !state.activeConversation) return;
+                $('messageInput').value = '';
+                $('attachmentInput').value = '';
+                state.pendingAttachment = null;
+                renderPendingAttachment();
+                await api('/api/conversations/' + state.activeConversation.id + '/messages', {
+                    method: 'POST',
+                    body: JSON.stringify({ body, attachment }),
+                });
+                await openConversation(state.activeConversation.id);
+                await loadConversations();
+            } catch (error) {
+                $('composerError').textContent = error.message;
+            }
         });
 
         boot();
@@ -2280,7 +2486,7 @@ app.get('/api/conversations/:id/messages', requireAuth, async (req, res, next) =
 app.post('/api/conversations/:id/messages', requireAuth, async (req, res, next) => {
     try {
         const body = cleanMessage(req.body.body);
-        const attachment = parseImageAttachment(req.body.attachment);
+        const attachment = parseAttachment(req.body.attachment);
         if (!body && !attachment) return res.status(400).json({ error: 'Nachricht ist leer' });
 
         const conversation = await getConversationForUser(req.params.id, req.user.id);
