@@ -232,6 +232,17 @@ function parseImageAttachment(attachment) {
     return parsed;
 }
 
+function parseNotificationSoundAttachment(attachment) {
+    const parsed = parseAttachment(attachment);
+    if (!parsed) return null;
+    if (!['audio/mpeg', 'audio/ogg', 'audio/wav', 'audio/webm', 'audio/mp4', 'audio/x-wav', 'audio/aac', 'audio/x-m4a'].includes(parsed.mimeType)) {
+        const error = new Error('Nur MP3, OGG, WAV, WebM, M4A und AAC sind erlaubt');
+        error.statusCode = 400;
+        throw error;
+    }
+    return parsed;
+}
+
 function parseId(value) {
     const id = Number(value);
     return Number.isInteger(id) && id > 0 ? id : null;
@@ -353,6 +364,16 @@ async function initDatabase() {
             created_at timestamptz not null default now()
         );
 
+        create table if not exists notification_sound_assets (
+            id bigserial primary key,
+            name text not null,
+            mime_type text not null,
+            size_bytes integer not null,
+            data bytea not null,
+            is_active boolean not null default true,
+            created_at timestamptz not null default now()
+        );
+
         create table if not exists conversations (
             id bigserial primary key,
             user_one_id bigint not null references users(id) on delete cascade,
@@ -413,6 +434,7 @@ async function initDatabase() {
         alter table users add column if not exists avatar_asset_id bigint references avatar_assets(id);
         alter table users add column if not exists two_factor_enabled boolean not null default false;
         alter table users add column if not exists display_name_visibility text not null default 'contacts';
+        alter table users add column if not exists notification_sound_asset_id bigint references notification_sound_assets(id);
 
         create unique index if not exists idx_users_email_unique
             on users(email)
@@ -451,7 +473,7 @@ async function waitForDatabase() {
 async function getUserById(userId) {
     const result = await query(
         `select u.id, u.username, u.display_name, u.email, u.about, u.avatar_color, u.avatar_asset_id,
-            u.two_factor_enabled, u.display_name_visibility,
+            u.two_factor_enabled, u.display_name_visibility, u.notification_sound_asset_id,
             u.created_at, u.last_seen_at,
             case when aa.id is null then null else 'data:' || aa.mime_type || ';base64,' || encode(aa.data, 'base64') end as avatar_url
          from users u
@@ -672,6 +694,10 @@ function renderAdminLayout(content) {
         .avatar-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 12px; }
         .avatar-card { border: 1px solid var(--line); border-radius: 8px; padding: 10px; background: #fff; display: grid; gap: 8px; justify-items: center; text-align: center; }
         .avatar-card img { width: 58px; height: 58px; border-radius: 50%; object-fit: cover; }
+        .asset-card button { width: 100%; }
+        .sound-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
+        .sound-card { border: 1px solid var(--line); border-radius: 8px; padding: 12px; display: grid; gap: 10px; background: #fff; }
+        .sound-card audio { width: 100%; }
         .notice { border: 1px solid #fedf89; background: #fffaeb; color: #7a4f01; border-radius: 8px; padding: 12px; margin-top: 16px; }
         @media (max-width: 820px) {
             header { align-items: flex-start; flex-direction: column; }
@@ -772,6 +798,17 @@ function renderDashboard(data) {
         </section>
 
         <section class="panel">
+            <h2>Benachrichtigungstöne</h2>
+            <p class="muted">Lade die Töne hoch, die Nutzer in ihren Einstellungen auswählen dürfen.</p>
+            <div class="toolbar" style="margin-top: 12px;">
+                <input id="soundName" placeholder="Name des Tons">
+                <input id="soundFile" type="file" accept="audio/mpeg,audio/ogg,audio/wav,audio/webm,audio/mp4,audio/aac,audio/x-m4a">
+                <button id="uploadSound" type="button">Ton hochladen</button>
+            </div>
+            <div id="soundGrid" class="sound-grid" style="margin-top: 16px;"></div>
+        </section>
+
+        <section class="panel">
             <h2>Audit</h2>
             <div style="overflow:auto;">
                 <table>
@@ -784,7 +821,7 @@ function renderDashboard(data) {
         <div class="notice">Hinweis: Exporte enthalten private Chatdaten und Bildanhänge. Verwende sie nur mit berechtigtem Zweck und bewahre Downloads geschützt auf.</div>
 
         <script>
-            const state = { users: [], avatars: [], audit: [], imageUpdate: null };
+            const state = { users: [], avatars: [], sounds: [], audit: [], imageUpdate: null };
             const el = (id) => document.getElementById(id);
             const escapeText = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({
                 '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
@@ -808,6 +845,20 @@ function renderDashboard(data) {
                         resolve(dataUrl.slice(dataUrl.indexOf(',') + 1));
                     };
                     reader.onerror = () => reject(new Error('Bild konnte nicht gelesen werden'));
+                    reader.readAsDataURL(file);
+                });
+            }
+
+            async function readSoundBase64(file) {
+                if (!file) throw new Error('Bitte eine Sounddatei auswählen');
+            if (!['audio/mpeg', 'audio/ogg', 'audio/wav', 'audio/webm', 'audio/mp4', 'audio/x-wav', 'audio/aac', 'audio/x-m4a'].includes(file.type)) {
+                throw new Error('Nur MP3, OGG, WAV, WebM, M4A und AAC sind erlaubt');
+                }
+                if (file.size > 5 * 1024 * 1024) throw new Error('Sounddatei muss kleiner als 5 MB sein');
+                return new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onload = () => resolve(String(reader.result).slice(String(reader.result).indexOf(',') + 1));
+                    reader.onerror = () => reject(new Error('Sounddatei konnte nicht gelesen werden'));
                     reader.readAsDataURL(file);
                 });
             }
@@ -836,8 +887,11 @@ function renderDashboard(data) {
                     return '<tr><td>' + avatar + '</td><td><strong>' + escapeText(user.display_name) + '</strong><br><span class="muted">@' + escapeText(user.username) + '</span></td><td>' + escapeText(user.email || '-') + '</td><td>' + user.conversation_count + '</td><td>' + user.message_count + '</td></tr>';
                 }).join('');
                 el('avatarGrid').innerHTML = state.avatars.length ? state.avatars.map((avatar) =>
-                    '<div class="avatar-card"><img src="' + avatar.data_url + '" alt=""><strong>' + escapeText(avatar.name) + '</strong><span class="muted">' + Math.round(avatar.size_bytes / 1024) + ' KB</span></div>'
+                    '<div class="avatar-card asset-card"><img src="' + avatar.data_url + '" alt=""><strong>' + escapeText(avatar.name) + '</strong><span class="muted">' + Math.round(avatar.size_bytes / 1024) + ' KB</span><button class="danger" type="button" data-delete-avatar="' + avatar.id + '">Löschen</button></div>'
                 ).join('') : '<p class="muted">Noch keine Profilbilder hochgeladen.</p>';
+                el('soundGrid').innerHTML = state.sounds.length ? state.sounds.map((sound) =>
+                    '<div class="sound-card asset-card"><strong>' + escapeText(sound.name) + '</strong><audio controls preload="none" src="' + sound.data_url + '"></audio><span class="muted">' + Math.round(sound.size_bytes / 1024) + ' KB</span><button class="danger" type="button" data-delete-sound="' + sound.id + '">Löschen</button></div>'
+                ).join('') : '<p class="muted">Noch keine Benachrichtigungstöne hochgeladen.</p>';
                 el('auditRows').innerHTML = state.audit.map((row) =>
                     '<tr><td>' + new Date(row.created_at).toLocaleString() + '</td><td>' + escapeText(row.admin_user) + '</td><td>' + escapeText(row.action) + '</td><td>' + escapeText(row.ip_address || '-') + '</td></tr>'
                 ).join('');
@@ -861,6 +915,7 @@ function renderDashboard(data) {
                 state.summary = data.summary;
                 state.users = data.users;
                 state.avatars = data.avatars;
+                state.sounds = data.sounds;
                 state.audit = data.audit;
                 state.imageUpdate = data.imageUpdate;
                 render();
@@ -900,6 +955,44 @@ function renderDashboard(data) {
                     });
                     el('avatarName').value = '';
                     el('avatarFile').value = '';
+                    await loadAdmin();
+                } catch (error) {
+                    alert(error.message);
+                }
+            });
+            el('avatarGrid').addEventListener('click', async (event) => {
+                const button = event.target.closest('[data-delete-avatar]');
+                if (!button) return;
+                try {
+                    await adminApi('/admin/api/avatar-assets/' + button.dataset.deleteAvatar, { method: 'DELETE' });
+                    await loadAdmin();
+                } catch (error) {
+                    alert(error.message);
+                }
+            });
+            el('uploadSound').addEventListener('click', async () => {
+                try {
+                    const file = el('soundFile').files[0];
+                    const dataBase64 = await readSoundBase64(file);
+                    await adminApi('/admin/api/notification-sounds', {
+                        method: 'POST',
+                        body: JSON.stringify({
+                            name: el('soundName').value || file.name,
+                            attachment: { fileName: file.name, mimeType: file.type, dataBase64 },
+                        }),
+                    });
+                    el('soundName').value = '';
+                    el('soundFile').value = '';
+                    await loadAdmin();
+                } catch (error) {
+                    alert(error.message);
+                }
+            });
+            el('soundGrid').addEventListener('click', async (event) => {
+                const button = event.target.closest('[data-delete-sound]');
+                if (!button) return;
+                try {
+                    await adminApi('/admin/api/notification-sounds/' + button.dataset.deleteSound, { method: 'DELETE' });
                     await loadAdmin();
                 } catch (error) {
                     alert(error.message);
@@ -963,6 +1056,9 @@ function renderMessengerApp() {
         .sidebar { background: var(--sidebar); border-right: 1px solid var(--line); display: grid; grid-template-rows: auto auto 1fr; min-width: 0; min-height: 0; }
         .topbar { padding: 16px; border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; gap: 12px; }
         .me-box { display: grid; grid-template-columns: 44px 1fr; gap: 10px; align-items: center; min-width: 0; }
+        .top-actions { display: flex; align-items: center; gap: 6px; }
+        .icon-button { width: 42px; height: 42px; border-radius: 50%; display: grid; place-items: center; padding: 0; }
+        .icon-button svg { width: 21px; height: 21px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
         .brand { min-width: 0; }
         .brand strong { display: block; font-size: 20px; overflow-wrap: anywhere; }
         .brand span { display: block; color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
@@ -975,7 +1071,9 @@ function renderMessengerApp() {
         .row-main { min-width: 0; }
         .row-title { display: flex; justify-content: space-between; gap: 8px; min-width: 0; }
         .row-title strong, .preview { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .preview-line { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
         .preview { color: var(--muted); font-size: 13px; margin-top: 4px; }
+        .unread-badge { flex: none; min-width: 20px; height: 20px; border-radius: 999px; display: inline-grid; place-items: center; padding: 0 6px; background: #22c55e; color: #fff; font-size: 11px; font-weight: 800; }
         .chat { position: relative; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; min-width: 0; min-height: 0; }
         .chat-head { background: var(--panel); border-bottom: 1px solid var(--line); padding: 14px 18px; display: flex; align-items: center; gap: 12px; min-width: 0; }
         .messages { padding: 18px; overflow: auto; display: flex; flex-direction: column; gap: 8px; background: #e9f0f4; }
@@ -1137,14 +1235,19 @@ function renderMessengerApp() {
     <div id="messenger" class="app hidden">
         <aside id="sidebar" class="sidebar">
             <div class="topbar">
-                <button id="accountButton" class="me-box ghost" type="button">
+                <div class="me-box">
                     <div id="meAvatar" class="avatar">J</div>
                     <div class="brand">
                         <strong id="meName">JustChat</strong>
                         <span id="meUsername"></span>
                     </div>
-                </button>
-                <button id="addPerson" class="primary" type="button">+</button>
+                </div>
+                <div class="top-actions">
+                    <button id="settingsButton" class="ghost icon-button" type="button" aria-label="Einstellungen" title="Einstellungen">
+                        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z"></path><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.3a2 2 0 1 1-4 0V21a1.7 1.7 0 0 0-1.1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1A2 2 0 1 1 4.1 17l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.6-1H2.6a2 2 0 1 1 0-4H3a1.7 1.7 0 0 0 1.6-1.1A1.7 1.7 0 0 0 4.2 7l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.6v-.3a2 2 0 1 1 4 0V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1A2 2 0 1 1 19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9v.1a1.7 1.7 0 0 0 1.6 1h.3a2 2 0 1 1 0 4H21a1.7 1.7 0 0 0-1.6.9z"></path></svg>
+                    </button>
+                    <button id="addPerson" class="primary icon-button" type="button" aria-label="Chat hinzufügen" title="Chat hinzufügen">+</button>
+                </div>
             </div>
             <div class="search">
                 <input id="search" placeholder="Nutzer suchen">
@@ -1211,6 +1314,13 @@ function renderMessengerApp() {
                             <option value="everyone">Allen</option>
                         </select>
                     </div>
+                    <div class="field">
+                        <label for="notificationSound">Benachrichtigungston</label>
+                        <select id="notificationSound">
+                            <option value="">Kein Ton</option>
+                        </select>
+                        <button id="previewSound" class="ghost" type="button">Ton anhören</button>
+                    </div>
                     <p class="muted small">Bei aktivierter 2FA wird beim Login ein Code an deine E-Mail gesendet.</p>
                     <div id="profileError" class="error"></div>
                     <div id="profileNotice" class="success"></div>
@@ -1249,6 +1359,7 @@ function renderMessengerApp() {
             selectedAvatarId: null,
             profileAvatarId: null,
             pendingAttachment: null,
+            sounds: [],
         };
 
         const $ = (id) => document.getElementById(id);
@@ -1341,15 +1452,36 @@ function renderMessengerApp() {
             ).join('');
         }
 
+        async function loadNotificationSounds() {
+            const data = await api('/api/notification-sounds');
+            state.sounds = data.sounds || [];
+            $('notificationSound').innerHTML = '<option value="">Kein Ton</option>' + state.sounds.map((sound) =>
+                '<option value="' + sound.id + '">' + escapeText(sound.name) + '</option>'
+            ).join('');
+            $('notificationSound').value = state.me && state.me.notification_sound_asset_id
+                ? String(state.me.notification_sound_asset_id)
+                : '';
+        }
+
+        function playNotificationSound(soundId = state.me && state.me.notification_sound_asset_id) {
+            if (!soundId) return;
+            const sound = state.sounds.find((entry) => Number(entry.id) === Number(soundId));
+            if (!sound) return;
+            new Audio(sound.data_url).play().catch(() => {});
+        }
+
         function renderConversationList() {
             $('conversationList').innerHTML = state.conversations.map((chat) => {
                 const active = state.activeConversation && state.activeConversation.id === chat.id ? ' active' : '';
                 const preview = chat.last_message || (chat.has_attachment ? 'Datei' : 'Noch keine Nachrichten');
                 const time = chat.last_message_at ? new Date(chat.last_message_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+                const unread = Number(chat.unread_count || 0);
                 return '<button class="row' + active + '" data-chat="' + chat.id + '">' +
                     avatarMarkup(chat) +
                     '<div class="row-main"><div class="row-title"><strong>' + escapeText(chat.display_name) + '</strong><span class="muted">' + time + '</span></div>' +
-                    '<div class="preview">' + escapeText(preview) + '</div></div></button>';
+                    '<div class="preview-line"><div class="preview">' + escapeText(preview) + '</div>' +
+                    (unread ? '<span class="unread-badge">' + (unread > 99 ? '99+' : unread) + '</span>' : '') +
+                    '</div></div></button>';
             }).join('');
         }
 
@@ -1435,11 +1567,13 @@ function renderMessengerApp() {
 
         async function openAccount() {
             await loadAvatars();
+            await loadNotificationSounds();
             $('profileDisplayName').value = state.me.display_name || '';
             $('profileEmail').value = state.me.email || '';
             $('profileAbout').value = state.me.about || '';
             $('profile2fa').checked = Boolean(state.me.two_factor_enabled);
             $('displayNameVisibility').value = state.me.display_name_visibility || 'contacts';
+            $('notificationSound').value = state.me.notification_sound_asset_id ? String(state.me.notification_sound_asset_id) : '';
             state.profileAvatarId = state.me.avatar_asset_id;
             renderProfileAvatarPicker();
             $('profileError').textContent = '';
@@ -1491,6 +1625,7 @@ function renderMessengerApp() {
             renderMessages(data.messages);
             renderConversationList();
             await api('/api/conversations/' + id + '/read', { method: 'POST', body: '{}' });
+            await loadConversations();
         }
 
         function connectEvents() {
@@ -1498,6 +1633,9 @@ function renderMessengerApp() {
             state.eventSource = new EventSource('/api/events?token=' + encodeURIComponent(state.token));
             state.eventSource.addEventListener('message:new', async (event) => {
                 const payload = JSON.parse(event.data);
+                if (state.me && Number(payload.message.sender_id) !== Number(state.me.id)) {
+                    playNotificationSound();
+                }
                 await loadConversations();
                 if (state.activeConversation && Number(state.activeConversation.id) === Number(payload.conversationId)) {
                     await openConversation(payload.conversationId);
@@ -1509,6 +1647,7 @@ function renderMessengerApp() {
             if (!state.token) return showAuth();
             try {
                 await loadMe();
+                await loadNotificationSounds();
                 await loadConversations();
                 showApp();
                 connectEvents();
@@ -1554,7 +1693,7 @@ function renderMessengerApp() {
         });
 
         $('toggleAuth').addEventListener('click', () => setAuthMode(!state.registerMode));
-        $('accountButton').addEventListener('click', openAccount);
+        $('settingsButton').addEventListener('click', openAccount);
         $('closeAccount').addEventListener('click', closeAccount);
         $('addPerson').addEventListener('click', () => $('addModal').classList.remove('hidden'));
         $('closeAdd').addEventListener('click', () => $('addModal').classList.add('hidden'));
@@ -1584,14 +1723,17 @@ function renderMessengerApp() {
                         avatarAssetId: state.profileAvatarId,
                         twoFactorEnabled: $('profile2fa').checked,
                         displayNameVisibility: $('displayNameVisibility').value,
+                        notificationSoundAssetId: $('notificationSound').value || null,
                     }),
                 });
                 await loadMe();
+                await loadNotificationSounds();
                 $('profileNotice').textContent = 'Einstellungen wurden gespeichert.';
             } catch (error) {
                 $('profileError').textContent = error.message;
             }
         });
+        $('previewSound').addEventListener('click', () => playNotificationSound($('notificationSound').value));
         $('addForm').addEventListener('submit', async (event) => {
             event.preventDefault();
             $('addError').textContent = '';
@@ -1847,8 +1989,16 @@ app.get('/admin/api/overview', requireAdminAuth, async (req, res, next) => {
         const avatars = await query(`
             select id, name, mime_type, size_bytes, is_active, created_at,
                 'data:' || mime_type || ';base64,' || encode(data, 'base64') as data_url
-            from avatar_assets
-            order by created_at desc
+             from avatar_assets
+             where is_active = true
+             order by created_at desc
+        `);
+        const sounds = await query(`
+            select id, name, mime_type, size_bytes, is_active, created_at,
+                'data:' || mime_type || ';base64,' || encode(data, 'base64') as data_url
+             from notification_sound_assets
+             where is_active = true
+             order by created_at desc
         `);
         const audit = await query(`
             select admin_user, action, ip_address, created_at
@@ -1861,6 +2011,7 @@ app.get('/admin/api/overview', requireAdminAuth, async (req, res, next) => {
             summary: summary.rows[0],
             users: users.rows,
             avatars: avatars.rows,
+            sounds: sounds.rows,
             audit: audit.rows,
             imageUpdate: imageUpdateState,
         });
@@ -1914,6 +2065,71 @@ app.post('/admin/api/avatar-assets', requireAdminAuth, async (req, res, next) =>
         );
 
         return res.status(201).json({ avatar: result.rows[0] });
+    } catch (error) {
+        return next(error);
+    }
+});
+
+app.delete('/admin/api/avatar-assets/:id', requireAdminAuth, async (req, res, next) => {
+    try {
+        const avatarId = parseId(req.params.id);
+        if (!avatarId) return res.status(400).json({ error: 'Ungültiges Profilbild' });
+
+        const result = await query(
+            'update avatar_assets set is_active = false where id = $1 and is_active = true returning id',
+            [avatarId],
+        );
+        if (!result.rows[0]) return res.status(404).json({ error: 'Profilbild nicht gefunden' });
+        await query('update users set avatar_asset_id = null where avatar_asset_id = $1', [avatarId]);
+        await query(
+            `insert into admin_audit_logs (admin_user, action, ip_address)
+             values ($1, $2, $3)`,
+            [ADMIN_USER, `avatar_delete_${avatarId}`, req.ip],
+        );
+        return res.json({ ok: true });
+    } catch (error) {
+        return next(error);
+    }
+});
+
+app.post('/admin/api/notification-sounds', requireAdminAuth, async (req, res, next) => {
+    try {
+        const attachment = parseNotificationSoundAttachment(req.body.attachment);
+        if (!attachment) return res.status(400).json({ error: 'Bitte eine Sounddatei hochladen' });
+        const name = String(req.body.name || attachment.fileName).trim().slice(0, 80) || attachment.fileName;
+        const result = await query(
+            `insert into notification_sound_assets (name, mime_type, size_bytes, data)
+             values ($1, $2, $3, $4)
+             returning id, name, mime_type, size_bytes, is_active, created_at`,
+            [name, attachment.mimeType, attachment.sizeBytes, attachment.data],
+        );
+        await query(
+            `insert into admin_audit_logs (admin_user, action, ip_address)
+             values ($1, $2, $3)`,
+            [ADMIN_USER, 'notification_sound_upload', req.ip],
+        );
+        return res.status(201).json({ sound: result.rows[0] });
+    } catch (error) {
+        return next(error);
+    }
+});
+
+app.delete('/admin/api/notification-sounds/:id', requireAdminAuth, async (req, res, next) => {
+    try {
+        const soundId = parseId(req.params.id);
+        if (!soundId) return res.status(400).json({ error: 'Ungültiger Sound' });
+        const result = await query(
+            'update notification_sound_assets set is_active = false where id = $1 and is_active = true returning id',
+            [soundId],
+        );
+        if (!result.rows[0]) return res.status(404).json({ error: 'Sound nicht gefunden' });
+        await query('update users set notification_sound_asset_id = null where notification_sound_asset_id = $1', [soundId]);
+        await query(
+            `insert into admin_audit_logs (admin_user, action, ip_address)
+             values ($1, $2, $3)`,
+            [ADMIN_USER, `notification_sound_delete_${soundId}`, req.ip],
+        );
+        return res.json({ ok: true });
     } catch (error) {
         return next(error);
     }
@@ -2267,6 +2483,22 @@ app.get('/api/avatars', async (req, res, next) => {
     }
 });
 
+app.get('/api/notification-sounds', requireAuth, async (req, res, next) => {
+    try {
+        const result = await query(
+            `select id, name, mime_type, size_bytes,
+                'data:' || mime_type || ';base64,' || encode(data, 'base64') as data_url
+             from notification_sound_assets
+             where is_active = true
+             order by created_at desc
+             limit 60`,
+        );
+        return res.json({ sounds: result.rows });
+    } catch (error) {
+        return next(error);
+    }
+});
+
 app.get('/api/me', requireAuth, (req, res) => {
     res.json({ user: req.user });
 });
@@ -2279,6 +2511,7 @@ app.patch('/api/me', requireAuth, async (req, res, next) => {
         const avatarAssetId = parseId(req.body.avatarAssetId);
         const twoFactorEnabled = Boolean(req.body.twoFactorEnabled);
         const displayNameVisibility = req.body.displayNameVisibility === 'everyone' ? 'everyone' : 'contacts';
+        const notificationSoundAssetId = parseId(req.body.notificationSoundAssetId);
 
         validateCleanName(displayName, 'Anzeigename');
         if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
@@ -2287,13 +2520,21 @@ app.patch('/api/me', requireAuth, async (req, res, next) => {
         if (twoFactorEnabled && !getMailer()) {
             return res.status(400).json({ error: '2FA braucht vollständige SMTP-Konfiguration' });
         }
+        if (notificationSoundAssetId) {
+            const sound = await query(
+                'select id from notification_sound_assets where id = $1 and is_active = true',
+                [notificationSoundAssetId],
+            );
+            if (!sound.rows[0]) return res.status(400).json({ error: 'Benachrichtigungston ist nicht verfügbar' });
+        }
 
         const result = await query(
             `update users
-             set display_name = $1, email = $2, about = $3, avatar_asset_id = $4, two_factor_enabled = $5, display_name_visibility = $6
-             where id = $7
+             set display_name = $1, email = $2, about = $3, avatar_asset_id = $4, two_factor_enabled = $5,
+                 display_name_visibility = $6, notification_sound_asset_id = $7
+             where id = $8
              returning id`,
-            [displayName, email, about, avatarAssetId, twoFactorEnabled, displayNameVisibility, req.user.id],
+            [displayName, email, about, avatarAssetId, twoFactorEnabled, displayNameVisibility, notificationSoundAssetId, req.user.id],
         );
         if (!result.rows[0]) return res.status(404).json({ error: 'Benutzer nicht gefunden' });
 
