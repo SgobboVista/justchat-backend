@@ -2,6 +2,7 @@ const crypto = require('crypto');
 const express = require('express');
 const nodemailer = require('nodemailer');
 const { Pool } = require('pg');
+const sharp = require('sharp');
 
 const app = express();
 const PORT = process.env.PORT || 50070;
@@ -31,6 +32,10 @@ let pool;
 let mailer;
 const eventClients = new Map();
 const CHAT_RETENTION_DAYS = 30;
+const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
+const MAX_IMAGE_INPUT_BYTES = 20 * 1024 * 1024;
+const MAX_IMAGE_WIDTH = 1920;
+const MAX_IMAGE_HEIGHT = 1080;
 let imageUpdateState = {
     configured: Boolean(IMAGE_UPDATE_WEBHOOK_URL),
     status: IMAGE_UPDATE_WEBHOOK_URL ? 'idle' : 'not_configured',
@@ -41,7 +46,7 @@ let imageUpdateState = {
         : 'IMAGE_UPDATE_WEBHOOK_URL ist nicht konfiguriert.',
 };
 
-app.use(express.json({ limit: '8mb' }));
+app.use(express.json({ limit: '30mb' }));
 
 function escapeHtml(value) {
     return String(value)
@@ -328,7 +333,7 @@ async function dispatchImageUpdate() {
     }
 }
 
-function parseAttachment(attachment) {
+function parseAttachment(attachment, maxBytes = MAX_ATTACHMENT_BYTES) {
     if (!attachment) return null;
 
     const mimeType = String(attachment.mimeType || 'application/octet-stream').toLowerCase().slice(0, 120);
@@ -342,8 +347,8 @@ function parseAttachment(attachment) {
     }
 
     const buffer = Buffer.from(dataBase64, 'base64');
-    if (!buffer.length || buffer.length > 5 * 1024 * 1024) {
-        const error = new Error('Datei muss kleiner als 5 MB sein');
+    if (!buffer.length || buffer.length > maxBytes) {
+        const error = new Error(`Datei muss kleiner als ${Math.round(maxBytes / 1024 / 1024)} MB sein`);
         error.statusCode = 400;
         throw error;
     }
@@ -356,15 +361,53 @@ function parseAttachment(attachment) {
     };
 }
 
-function parseImageAttachment(attachment) {
-    const parsed = parseAttachment(attachment);
+async function optimizeImageAttachment(attachment) {
+    const parsed = parseAttachment(attachment, MAX_IMAGE_INPUT_BYTES);
     if (!parsed) return null;
     if (!['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(parsed.mimeType)) {
         const error = new Error('Nur JPEG, PNG, WebP und GIF sind erlaubt');
         error.statusCode = 400;
         throw error;
     }
-    return parsed;
+    try {
+        const isGif = parsed.mimeType === 'image/gif';
+        let image = sharp(parsed.data, isGif ? { animated: true } : undefined)
+            .rotate()
+            .resize({
+                width: MAX_IMAGE_WIDTH,
+                height: MAX_IMAGE_HEIGHT,
+                fit: 'inside',
+                withoutEnlargement: true,
+            });
+        let output;
+        let mimeType;
+        let fileName;
+        if (isGif) {
+            output = await image.gif({ effort: 8, colours: 192 }).toBuffer();
+            mimeType = 'image/gif';
+            fileName = parsed.fileName.replace(/\.[^.]+$/, '') + '.gif';
+        } else {
+            output = await image.webp({ quality: 80, effort: 6, smartSubsample: true }).toBuffer();
+            mimeType = 'image/webp';
+            fileName = parsed.fileName.replace(/\.[^.]+$/, '') + '.webp';
+        }
+        if (output.length > MAX_ATTACHMENT_BYTES) {
+            const error = new Error('Komprimiertes Bild ist noch größer als 5 MB');
+            error.statusCode = 400;
+            throw error;
+        }
+        return {
+            fileName,
+            mimeType,
+            sizeBytes: output.length,
+            data: output,
+        };
+    } catch (error) {
+        if (error.statusCode) throw error;
+        const invalidImage = new Error('Bild konnte nicht verarbeitet werden');
+        invalidImage.statusCode = 400;
+        throw invalidImage;
+    }
 }
 
 function parseNotificationSoundAttachment(attachment) {
@@ -1197,7 +1240,7 @@ function renderDashboard(data) {
                 if (!['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(file.type)) {
                     throw new Error('Nur JPEG, PNG, WebP und GIF sind erlaubt');
                 }
-                if (file.size > 5 * 1024 * 1024) throw new Error('Bild muss kleiner als 5 MB sein');
+                if (file.size > 20 * 1024 * 1024) throw new Error('Bild muss kleiner als 20 MB sein');
 
                 return new Promise((resolve, reject) => {
                     const reader = new FileReader();
@@ -1448,6 +1491,13 @@ function renderMessengerApp() {
         .brand span { display: block; color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
         .search { padding: 12px 16px; border-bottom: 1px solid var(--line); display: grid; gap: 8px; }
         .search input { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; width: 100%; }
+        .search-results { display: grid; gap: 4px; max-height: min(46vh, 440px); overflow: auto; }
+        .search-group-title { padding: 8px 4px 4px; color: var(--muted); font-size: 11px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
+        .message-result { width: 100%; display: grid; gap: 4px; padding: 10px; border-radius: 8px; background: #f7fbfa; text-align: left; }
+        .message-result:hover { background: #e5f5f1; }
+        .message-result-head { display: flex; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 12px; }
+        .message-result-head strong { color: var(--text); }
+        .message-result-preview { overflow: hidden; color: var(--text); font-size: 13px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
         .requests { border-bottom: 1px solid var(--line); padding: 10px 12px; display: grid; gap: 8px; max-height: 270px; overflow: auto; }
         .requests h3 { margin: 0; color: var(--muted); font-size: 12px; text-transform: uppercase; }
         .request-card { border: 1px solid var(--line); border-radius: 8px; padding: 9px; background: #fff; display: grid; gap: 7px; }
@@ -1484,6 +1534,8 @@ function renderMessengerApp() {
         .messages { padding: 18px; overflow: auto; display: flex; flex-direction: column; gap: 8px; background: #e9f0f4; }
         .bubble { max-width: min(680px, 82%); border: 1px solid rgba(15, 23, 42, .08); border-radius: 8px; padding: 9px 11px; background: var(--message-other); align-self: flex-start; overflow-wrap: anywhere; }
         .bubble.me { background: var(--message-me); align-self: flex-end; }
+        .bubble.search-highlight { outline: 3px solid rgba(15, 118, 110, .35); box-shadow: 0 0 0 7px rgba(15, 118, 110, .09); animation: searchPulse 1.4s ease-out 1; }
+        @keyframes searchPulse { from { box-shadow: 0 0 0 14px rgba(15, 118, 110, .18); } to { box-shadow: 0 0 0 7px rgba(15, 118, 110, .09); } }
         .bubble img { display: block; max-width: min(420px, 100%); border-radius: 8px; margin-bottom: 8px; }
         .attachment-link { display: flex; align-items: center; gap: 8px; color: var(--accent); font-weight: 700; text-decoration: none; padding: 9px 10px; margin-bottom: 6px; border-radius: 8px; background: rgba(15, 118, 110, .08); }
         .meta { display: block; color: var(--muted); font-size: 11px; margin-top: 5px; text-align: right; }
@@ -1501,6 +1553,12 @@ function renderMessengerApp() {
         .send-button { width: 48px; height: 48px; border-radius: 50%; display: grid; place-items: center; padding: 0; overflow: hidden; }
         .send-button svg { width: 23px; height: 23px; fill: none; stroke: currentColor; stroke-width: 2.3; stroke-linecap: round; stroke-linejoin: round; transform: translateX(1px); }
         .composer-error { grid-column: 1 / -1; margin: 0; min-height: 0; }
+        .sensitive-warning { grid-column: 1 / -1; display: grid; gap: 10px; border: 1px solid #f6cd8b; border-radius: 12px; padding: 12px; background: #fff8eb; color: #7a4c04; }
+        .sensitive-warning strong { display: block; color: #693d00; }
+        .sensitive-warning p { margin: 0; font-size: 13px; line-height: 1.45; }
+        .sensitive-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+        .sensitive-send { background: #946200; color: #fff; border-radius: 8px; padding: 9px 12px; font-weight: 700; }
+        .sensitive-delete { background: #fff; color: var(--danger); border: 1px solid #f3c6c1; border-radius: 8px; padding: 9px 12px; font-weight: 700; }
         .chat-home { position: relative; isolation: isolate; grid-row: 1 / -1; overflow: hidden; background: linear-gradient(145deg, #f7fbff 0%, #eaf5f3 48%, #edf7f4 100%); }
         .chat-home::before, .chat-home::after { content: ''; position: absolute; z-index: -1; border-radius: 50%; filter: blur(2px); animation: homeFloat 14s ease-in-out infinite alternate; }
         .chat-home::before { width: min(50vw, 470px); height: min(50vw, 470px); top: -150px; right: -100px; background: radial-gradient(circle, rgba(15, 118, 110, .16), rgba(15, 118, 110, 0) 68%); }
@@ -1737,8 +1795,8 @@ function renderMessengerApp() {
                 </div>
             </div>
             <div class="search">
-                <input id="search" placeholder="Nutzer suchen">
-                <div id="searchResults"></div>
+                <input id="search" placeholder="Kontakte oder Nachrichten suchen">
+                <div id="searchResults" class="search-results"></div>
             </div>
             <div id="requestsPanel" class="requests hidden">
                 <h3>Kontaktanfragen</h3>
@@ -1773,6 +1831,16 @@ function renderMessengerApp() {
                 <div class="drop-hint">Datei hier ablegen</div>
                 <form id="composer" class="composer">
                     <div id="attachmentPreview" class="attachment-preview hidden"></div>
+                    <div id="sensitiveMessageWarning" class="sensitive-warning hidden" role="alert">
+                        <div>
+                            <strong>Achtung: Bankdaten erkannt</strong>
+                            <p>Diese Nachricht enthält vermutlich eine IBAN. Vertraust du diesem Kontakt und möchtest du die Nachricht wirklich senden?</p>
+                        </div>
+                        <div class="sensitive-actions">
+                            <button id="sendSensitiveMessage" class="sensitive-send" type="button">Trotzdem senden</button>
+                            <button id="discardSensitiveMessage" class="sensitive-delete" type="button">Abbrechen / Nachricht löschen</button>
+                        </div>
+                    </div>
                     <label class="file-button" title="Datei anhängen">
                         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21.4 11.1 12.3 20.2a6 6 0 0 1-8.5-8.5l9.1-9.1a4 4 0 1 1 5.7 5.7l-9.1 9.1a2 2 0 0 1-2.8-2.8l8.5-8.5"></path></svg>
                         <input id="attachmentInput" type="file">
@@ -1864,7 +1932,7 @@ function renderMessengerApp() {
                                     </label>
                                 </div>
                                 <button id="uploadProfileAvatar" class="ghost" type="button">Eigenes Profilbild hochladen</button>
-                                <p id="avatarUploadLimit" class="muted small">JPEG, PNG, WebP oder GIF, maximal 5 MB.</p>
+                                <p id="avatarUploadLimit" class="muted small">JPEG, PNG, WebP oder GIF, maximal 20 MB. Bilder werden automatisch komprimiert.</p>
                                 <p class="muted small">Kontingent: Start 1 Bild, nach 1 Jahr 2, nach 5 Jahren 4, nach 10 Jahren 8 und nach 20 Jahren 16.</p>
                             </div>
                         </div>
@@ -2009,6 +2077,9 @@ function renderMessengerApp() {
             profileAvatarId: null,
             pendingAttachment: null,
             pendingAttachmentPreviewUrl: null,
+            sensitiveMessageApproved: false,
+            searchMessageId: null,
+            searchRequestId: 0,
             sounds: [],
             blockedUsers: [],
             typingSent: false,
@@ -2056,6 +2127,40 @@ function renderMessengerApp() {
 
         function initials(name) {
             return String(name || '?').trim().slice(0, 1).toUpperCase() || '?';
+        }
+
+        const ibanLengths = {
+            AD: 24, AE: 23, AL: 28, AT: 20, AZ: 28, BA: 20, BE: 16, BG: 22, BH: 22, BR: 29,
+            BY: 28, CH: 21, CR: 22, CY: 28, CZ: 24, DE: 22, DK: 18, DO: 28, EE: 20, EG: 29,
+            ES: 24, FI: 18, FO: 18, FR: 27, GB: 22, GE: 22, GI: 23, GL: 18, GR: 27, GT: 28,
+            HR: 21, HU: 28, IE: 22, IL: 23, IQ: 23, IS: 26, IT: 27, JO: 30, KW: 30, KZ: 20,
+            LB: 28, LC: 32, LI: 21, LT: 20, LU: 20, LV: 21, MC: 27, MD: 24, ME: 22, MK: 19,
+            MR: 27, MT: 31, MU: 30, NL: 18, NO: 15, PK: 24, PL: 28, PS: 29, PT: 25, QA: 29,
+            RO: 24, RS: 22, SA: 24, SC: 31, SE: 24, SI: 19, SK: 24, SM: 27, ST: 25, SV: 28,
+            TL: 23, TN: 24, TR: 26, UA: 29, VA: 22, VG: 24, XK: 20,
+        };
+
+        function containsIban(value) {
+            const text = String(value || '').toUpperCase();
+            const compact = text.replace(/[^A-Z0-9]/g, '');
+            const candidates = [
+                ...text.matchAll(/[A-Z]{2}\\d{2}(?:[\\s-]?[A-Z0-9]){10,30}/g),
+                ...compact.matchAll(/[A-Z]{2}\\d{2}[A-Z0-9]{11,30}/g),
+            ];
+            return candidates.some((match) => {
+                const iban = match[0].replace(/[^A-Z0-9]/g, '');
+                if (!ibanLengths[iban.slice(0, 2)] || iban.length !== ibanLengths[iban.slice(0, 2)]) return false;
+                const rotated = iban.slice(4) + iban.slice(0, 4);
+                const numeric = rotated.replace(/[A-Z]/g, (letter) => String(letter.charCodeAt(0) - 55));
+                let remainder = 0;
+                for (const digit of numeric) remainder = (remainder * 10 + Number(digit)) % 97;
+                return remainder === 1;
+            });
+        }
+
+        function hideSensitiveMessageWarning() {
+            $('sensitiveMessageWarning').classList.add('hidden');
+            state.sensitiveMessageApproved = false;
         }
 
         function loyaltyTier(entity) {
@@ -2279,7 +2384,7 @@ function renderMessengerApp() {
             const data = await api('/api/me/avatars');
             state.avatars = data.avatars || [];
             $('avatarUploadLimit').textContent = 'Eigene Bilder: ' + data.ownCount + ' / ' + data.uploadLimit +
-                '. JPEG, PNG, WebP oder GIF, maximal 5 MB.';
+                '. JPEG, PNG, WebP oder GIF, maximal 20 MB. Bilder werden automatisch komprimiert.';
             renderProfileAvatarPicker();
         }
 
@@ -2307,7 +2412,7 @@ function renderMessengerApp() {
             if (!['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(file.type)) {
                 throw new Error('Nur JPEG, PNG, WebP und GIF sind erlaubt.');
             }
-            if (file.size > 5 * 1024 * 1024) throw new Error('Bild muss kleiner als 5 MB sein.');
+            if (file.size > 20 * 1024 * 1024) throw new Error('Bild muss kleiner als 20 MB sein.');
             const dataUrl = await new Promise((resolve, reject) => {
                 const reader = new FileReader();
                 reader.onload = () => resolve(String(reader.result));
@@ -2570,11 +2675,20 @@ function renderMessengerApp() {
                         : '<a class="attachment-link" href="' + message.attachment.data_url + '" download="' + escapeText(message.attachment.file_name) + '">Datei: ' + escapeText(message.attachment.file_name) + '</a>')
                     : '';
                 const text = message.body ? escapeText(message.body) : '';
-                return '<div class="bubble ' + (mine ? 'me' : '') + '">' +
+                return '<div class="bubble ' + (mine ? 'me' : '') + '" data-message-id="' + message.id + '">' +
                     attachment + text + '<span class="meta">' + time + read + '</span></div>';
             }).join('');
             applyGifPreference($('messages'));
-            $('messages').scrollTop = $('messages').scrollHeight;
+            const selectedMessage = state.searchMessageId
+                ? $('messages').querySelector('[data-message-id="' + state.searchMessageId + '"]')
+                : null;
+            if (selectedMessage) {
+                selectedMessage.classList.add('search-highlight');
+                selectedMessage.scrollIntoView({ block: 'center', behavior: 'smooth' });
+                state.searchMessageId = null;
+            } else {
+                $('messages').scrollTop = $('messages').scrollHeight;
+            }
         }
 
         function renderPendingAttachment() {
@@ -2600,8 +2714,12 @@ function renderMessengerApp() {
 
         function chooseAttachment(file) {
             if (!file) return;
-            if (file.size > 5 * 1024 * 1024) {
-                $('composerError').textContent = 'Datei muss kleiner als 5 MB sein';
+            const imageFile = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(file.type);
+            const maximumSize = imageFile ? 20 * 1024 * 1024 : 5 * 1024 * 1024;
+            if (file.size > maximumSize) {
+                $('composerError').textContent = imageFile
+                    ? 'Bild muss kleiner als 20 MB sein'
+                    : 'Datei muss kleiner als 5 MB sein';
                 return;
             }
             $('composerError').textContent = '';
@@ -2612,8 +2730,10 @@ function renderMessengerApp() {
         function readSelectedAttachment() {
             const file = state.pendingAttachment || $('attachmentInput').files[0];
             if (!file) return Promise.resolve(null);
-            if (file.size > 5 * 1024 * 1024) {
-                return Promise.reject(new Error('Datei muss kleiner als 5 MB sein'));
+            const imageFile = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(file.type);
+            const maximumSize = imageFile ? 20 * 1024 * 1024 : 5 * 1024 * 1024;
+            if (file.size > maximumSize) {
+                return Promise.reject(new Error(imageFile ? 'Bild muss kleiner als 20 MB sein' : 'Datei muss kleiner als 5 MB sein'));
             }
 
             return new Promise((resolve, reject) => {
@@ -2681,6 +2801,7 @@ function renderMessengerApp() {
             $('profileNotice').textContent = '';
             $('chatEmpty').classList.add('hidden');
             $('chatPane').classList.add('hidden');
+            $('contactPanel').classList.add('hidden');
             $('accountPanel').classList.remove('hidden');
             $('sidebar').classList.add('chat-open');
             $('chat').classList.add('chat-open');
@@ -2728,6 +2849,7 @@ function renderMessengerApp() {
             setRemoteTyping(false);
             state.activeConversation = null;
             state.pendingAttachment = null;
+            hideSensitiveMessageWarning();
             $('attachmentInput').value = '';
             renderPendingAttachment();
             $('accountPanel').classList.add('hidden');
@@ -2749,11 +2871,13 @@ function renderMessengerApp() {
             }
         }
 
-        async function openConversation(id) {
+        async function openConversation(id, messageId = null) {
             if (state.activeConversation && Number(state.activeConversation.id) !== Number(id)) stopTyping();
-            const data = await api('/api/conversations/' + id + '/messages');
+            const focus = messageId ? '?focusMessageId=' + encodeURIComponent(messageId) : '';
+            const data = await api('/api/conversations/' + id + '/messages' + focus);
             if (!state.activeConversation || Number(state.activeConversation.id) !== Number(data.conversation.id)) {
                 state.pendingAttachment = null;
+                hideSensitiveMessageWarning();
                 $('attachmentInput').value = '';
                 renderPendingAttachment();
             }
@@ -3221,7 +3345,10 @@ function renderMessengerApp() {
             $('sidebar').classList.remove('chat-open');
             $('chat').classList.remove('chat-open');
         });
-        $('messageInput').addEventListener('input', updateTyping);
+        $('messageInput').addEventListener('input', () => {
+            hideSensitiveMessageWarning();
+            updateTyping();
+        });
         $('messageInput').addEventListener('blur', stopTyping);
         $('messageInput').addEventListener('keydown', (event) => {
             if (event.key !== 'Enter' || event.shiftKey || event.isComposing || !state.me || !state.me.send_on_enter) return;
@@ -3234,6 +3361,21 @@ function renderMessengerApp() {
             state.pendingAttachment = null;
             $('attachmentInput').value = '';
             renderPendingAttachment();
+        });
+        $('sendSensitiveMessage').addEventListener('click', () => {
+            state.sensitiveMessageApproved = true;
+            $('sensitiveMessageWarning').classList.add('hidden');
+            $('composer').requestSubmit();
+        });
+        $('discardSensitiveMessage').addEventListener('click', () => {
+            stopTyping();
+            hideSensitiveMessageWarning();
+            $('messageInput').value = '';
+            state.pendingAttachment = null;
+            $('attachmentInput').value = '';
+            renderPendingAttachment();
+            $('composerError').textContent = 'Nachricht wurde nicht gesendet und gelöscht.';
+            $('messageInput').focus();
         });
         let dragDepth = 0;
         $('chat').addEventListener('dragenter', (event) => {
@@ -3296,19 +3438,53 @@ function renderMessengerApp() {
         });
         $('search').addEventListener('input', async (event) => {
             const q = event.target.value.trim();
+            const requestId = ++state.searchRequestId;
             if (q.length < 2) {
                 $('searchResults').innerHTML = '';
                 return;
             }
-            const data = await api('/api/users?search=' + encodeURIComponent(q));
-            $('searchResults').innerHTML = data.users.map((user) =>
-                '<button class="row" data-user="' + user.id + '">' +
-                avatarMarkup(user) +
-                '<div class="row-main"><div class="row-title"><strong>' + escapeText(user.display_name) + '</strong></div>' +
-                '<div class="preview">@' + escapeText(user.username) + '</div></div></button>'
-            ).join('');
+            try {
+                const data = await api('/api/users?search=' + encodeURIComponent(q));
+                if (requestId !== state.searchRequestId) return;
+                const users = data.users.length
+                    ? '<div class="search-group-title">Kontakte</div>' + data.users.map((user) =>
+                        '<button class="row" data-user="' + user.id + '">' +
+                        avatarMarkup(user) +
+                        '<div class="row-main"><div class="row-title"><strong>' + escapeText(user.display_name) + '</strong></div>' +
+                        '<div class="preview">@' + escapeText(user.username) + '</div></div></button>'
+                    ).join('')
+                    : '';
+                const messages = data.messages.length
+                    ? '<div class="search-group-title">Nachrichten</div>' + data.messages.map((message) => {
+                        const sentByMe = Number(message.sender_id) === Number(state.me.id);
+                        const person = sentByMe ? 'Du in ' + message.display_name : message.display_name;
+                        const time = new Date(message.created_at).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' });
+                        return '<button class="message-result" type="button" data-message-chat="' + message.conversation_id + '" data-message-id="' + message.id + '">' +
+                            '<span class="message-result-head"><strong>' + escapeText(person) + '</strong><span>' + escapeText(time) + '</span></span>' +
+                            '<span class="message-result-preview">' + escapeText(message.body) + '</span></button>';
+                    }).join('')
+                    : '';
+                $('searchResults').innerHTML = users + messages ||
+                    '<span class="muted small">Keine Treffer gefunden.</span>';
+            } catch (error) {
+                if (requestId !== state.searchRequestId) return;
+                $('searchResults').innerHTML = '<span class="error small">' + escapeText(error.message) + '</span>';
+            }
         });
         $('searchResults').addEventListener('click', async (event) => {
+            const messageRow = event.target.closest('[data-message-chat]');
+            if (messageRow) {
+                state.searchMessageId = messageRow.dataset.messageId;
+                $('search').value = '';
+                $('searchResults').innerHTML = '';
+                try {
+                    await openConversation(messageRow.dataset.messageChat, messageRow.dataset.messageId);
+                } catch (error) {
+                    state.searchMessageId = null;
+                    $('composerError').textContent = error.message;
+                }
+                return;
+            }
             const row = event.target.closest('[data-user]');
             if (!row) return;
             const data = await api('/api/conversations', {
@@ -3325,8 +3501,14 @@ function renderMessengerApp() {
             $('composerError').textContent = '';
             try {
                 const body = $('messageInput').value.trim();
+                if (body && containsIban(body) && !state.sensitiveMessageApproved) {
+                    stopTyping();
+                    $('sensitiveMessageWarning').classList.remove('hidden');
+                    return;
+                }
                 const attachment = await readSelectedAttachment();
                 if ((!body && !attachment) || !state.activeConversation) return;
+                hideSensitiveMessageWarning();
                 $('messageInput').value = '';
                 $('attachmentInput').value = '';
                 state.pendingAttachment = null;
@@ -3500,7 +3682,7 @@ app.post('/admin/api/image-update', requireAdminAuth, async (req, res, next) => 
 
 app.post('/admin/api/avatar-assets', requireAdminAuth, async (req, res, next) => {
     try {
-        const attachment = parseImageAttachment(req.body.attachment);
+        const attachment = await optimizeImageAttachment(req.body.attachment);
         if (!attachment) return res.status(400).json({ error: 'Bitte ein Profilbild hochladen' });
         const name = String(req.body.name || attachment.fileName).trim().slice(0, 80) || attachment.fileName;
 
@@ -4145,7 +4327,7 @@ app.get('/api/me/avatars', requireAuth, async (req, res, next) => {
 
 app.post('/api/me/avatar-assets', requireAuth, async (req, res, next) => {
     try {
-        const attachment = parseImageAttachment(req.body.attachment);
+        const attachment = await optimizeImageAttachment(req.body.attachment);
         if (!attachment) return res.status(400).json({ error: 'Bitte ein Profilbild hochladen' });
         const count = await query(
             'select count(*)::int as count from avatar_assets where owner_user_id = $1 and is_active = true',
@@ -4330,9 +4512,9 @@ app.patch('/api/me', requireAuth, async (req, res, next) => {
 app.get('/api/users', requireAuth, async (req, res, next) => {
     try {
         const search = String(req.query.search || '').trim().toLowerCase();
-        if (search.length < 2) return res.json({ users: [] });
+        if (search.length < 2) return res.json({ users: [], messages: [] });
 
-        const result = await query(
+        const users = await query(
             `select u.id, u.username, u.display_name, u.about, u.avatar_color, u.last_seen_at, u.created_at as member_since,
                 u.id in (select early_user.id from users early_user where not early_user.email_verification_required or early_user.email_verified_at is not null order by early_user.created_at, early_user.id limit 10) as first_account,
                 case when aa.id is null then null else 'data:' || aa.mime_type || ';base64,' || encode(aa.data, 'base64') end as avatar_url
@@ -4346,7 +4528,22 @@ app.get('/api/users', requireAuth, async (req, res, next) => {
              limit 20`,
             [req.user.id, `%${search}%`],
         );
-        return res.json({ users: result.rows });
+        const messages = await query(
+            `select m.id, m.conversation_id, m.sender_id, m.body, m.created_at,
+                other_user.display_name, other_user.username
+             from messages m
+             join conversations c on c.id = m.conversation_id
+             join users other_user
+                on other_user.id = case when c.user_one_id = $1 then c.user_two_id else c.user_one_id end
+             where $1 in (c.user_one_id, c.user_two_id)
+                and case when c.user_one_id = $1 then not c.hidden_for_user_one else not c.hidden_for_user_two end
+                and m.body <> ''
+                and lower(m.body) like $2
+             order by m.created_at desc
+             limit 30`,
+            [req.user.id, `%${search}%`],
+        );
+        return res.json({ users: users.rows, messages: messages.rows });
     } catch (error) {
         return next(error);
     }
@@ -4639,14 +4836,33 @@ app.get('/api/conversations/:id/messages', requireAuth, async (req, res, next) =
 
         const otherUser = await getUserById(conversation.other_user_id);
         const blockStatus = await getBlockStatus(req.user.id, conversation.other_user_id);
-        const messages = await query(
-            `select id, conversation_id, sender_id, body, created_at, read_at
-             from messages
-             where conversation_id = $1
-             order by created_at asc
-             limit 200`,
-            [conversation.id],
-        );
+        const focusMessageId = parseId(req.query.focusMessageId);
+        const messages = focusMessageId
+            ? await query(
+                `with focused as (
+                    select created_at from messages where id = $2 and conversation_id = $1
+                 ), nearby as (
+                    select id, conversation_id, sender_id, body, created_at, read_at
+                    from messages
+                    where conversation_id = $1
+                       and created_at <= coalesce((select created_at from focused), now())
+                    order by created_at desc
+                    limit 100
+                 )
+                 select * from nearby order by created_at asc`,
+                [conversation.id, focusMessageId],
+            )
+            : await query(
+                `select * from (
+                    select id, conversation_id, sender_id, body, created_at, read_at
+                    from messages
+                    where conversation_id = $1
+                    order by created_at desc
+                    limit 200
+                 ) recent
+                 order by created_at asc`,
+                [conversation.id],
+            );
         const messageRows = messages.rows;
         const messageIds = messageRows.map((message) => message.id);
 
@@ -4698,7 +4914,10 @@ app.get('/api/conversations/:id/messages', requireAuth, async (req, res, next) =
 app.post('/api/conversations/:id/messages', requireAuth, async (req, res, next) => {
     try {
         const body = cleanMessage(req.body.body);
-        const attachment = parseAttachment(req.body.attachment);
+        const attachmentMimeType = String(req.body.attachment && req.body.attachment.mimeType || '').toLowerCase();
+        const attachment = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(attachmentMimeType)
+            ? await optimizeImageAttachment(req.body.attachment)
+            : parseAttachment(req.body.attachment);
         if (!body && !attachment) return res.status(400).json({ error: 'Nachricht ist leer' });
 
         const conversation = await getConversationForUser(req.params.id, req.user.id);
