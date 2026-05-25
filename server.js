@@ -981,7 +981,7 @@ function renderAdminLayout(content) {
 <html lang="de">
 <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
     <title>JustChat Admin</title>
     <style>
         :root {
@@ -1442,7 +1442,7 @@ function renderMessengerApp() {
 <html lang="de">
 <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
     <title>JustChat</title>
     <style>
         :root {
@@ -1565,7 +1565,11 @@ function renderMessengerApp() {
         .bubble.me { background: var(--message-me); align-self: flex-end; }
         .bubble.search-highlight { outline: 3px solid rgba(15, 118, 110, .35); box-shadow: 0 0 0 7px rgba(15, 118, 110, .09); animation: searchPulse 1.4s ease-out 1; }
         @keyframes searchPulse { from { box-shadow: 0 0 0 14px rgba(15, 118, 110, .18); } to { box-shadow: 0 0 0 7px rgba(15, 118, 110, .09); } }
+        .date-divider { width: 100%; display: flex; align-items: center; gap: 12px; margin: 12px 0 6px; color: var(--muted); font-size: 12px; font-weight: 700; }
+        .date-divider::before, .date-divider::after { content: ''; flex: 1; height: 1px; background: rgba(100, 116, 139, .27); }
+        .date-divider span { flex: none; padding: 4px 10px; border-radius: 999px; background: rgba(255, 255, 255, .72); }
         .bubble img { display: block; max-width: min(420px, 100%); border-radius: 8px; margin-bottom: 8px; }
+        .message-image { cursor: zoom-in; }
         .attachment-link { display: flex; align-items: center; gap: 8px; color: var(--accent); font-weight: 700; text-decoration: none; padding: 9px 10px; margin-bottom: 6px; border-radius: 8px; background: rgba(15, 118, 110, .08); }
         .meta { display: block; color: var(--muted); font-size: 11px; margin-top: 5px; text-align: right; }
         .composer { width: 100%; min-width: 0; background: var(--panel); border-top: 1px solid var(--line); padding: 12px; display: grid; grid-template-columns: 48px minmax(0, 1fr) 48px; gap: 10px; align-items: end; }
@@ -1644,6 +1648,9 @@ function renderMessengerApp() {
         .modal { position: fixed; inset: 0; background: rgba(15, 23, 42, .42); display: grid; place-items: center; padding: 18px; z-index: 20; }
         .modal-card { width: min(560px, 100%); max-height: min(760px, 100%); overflow-y: auto; -webkit-overflow-scrolling: touch; background: #fff; border-radius: 8px; border: 1px solid var(--line); padding: 20px; box-shadow: 0 24px 80px rgba(15, 23, 42, .22); }
         .modal-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 16px; }
+        .image-viewer { position: fixed; inset: 0; z-index: 70; display: grid; place-items: center; touch-action: none; padding: max(18px, env(safe-area-inset-top)) max(18px, env(safe-area-inset-right)) max(18px, env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left)); background: rgba(5, 12, 22, .9); }
+        .image-viewer img { display: block; max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 8px; }
+        .image-viewer-close { position: absolute; top: calc(12px + env(safe-area-inset-top)); right: calc(12px + env(safe-area-inset-right)); z-index: 1; width: 46px; height: 46px; border-radius: 50%; padding: 0; display: grid; place-items: center; color: #fff; background: rgba(15, 23, 42, .62); font-size: 32px; line-height: 1; }
         .close-button { width: 38px; height: 38px; display: grid; place-items: center; font-size: 28px; line-height: 1; padding: 0; border-radius: 50%; }
         .segmented { display: flex; gap: 8px; flex-wrap: wrap; }
         .small { font-size: 13px; }
@@ -2107,6 +2114,10 @@ function renderMessengerApp() {
             <div id="addError" class="error"></div>
             <button class="primary" type="submit">Anfrage senden</button>
         </form>
+    </div>
+    <div id="imageViewer" class="image-viewer hidden" role="dialog" aria-modal="true" aria-label="Bildansicht">
+        <button id="closeImageViewer" class="image-viewer-close" type="button" aria-label="Bild schließen" title="Schließen">&times;</button>
+        <img id="imageViewerImage" alt="">
     </div>
 
     <script data-cfasync="false">
@@ -2769,18 +2780,63 @@ function renderMessengerApp() {
             }[char]));
         }
 
+        function openImageViewer(image) {
+            $('imageViewerImage').src = image.currentSrc || image.src;
+            $('imageViewerImage').alt = image.alt || 'Chatbild';
+            $('imageViewer').classList.remove('hidden');
+            $('closeImageViewer').focus();
+        }
+
+        function closeImageViewer() {
+            $('imageViewer').classList.add('hidden');
+            $('imageViewerImage').removeAttribute('src');
+        }
+
+        function messageDateKey(value) {
+            const date = new Date(value);
+            return [date.getFullYear(), date.getMonth(), date.getDate()].join('-');
+        }
+
+        function messageDateLabel(value) {
+            const date = new Date(value);
+            const today = new Date();
+            const yesterday = new Date();
+            yesterday.setDate(today.getDate() - 1);
+            if (messageDateKey(date) === messageDateKey(today)) return 'Heute';
+            if (messageDateKey(date) === messageDateKey(yesterday)) return 'Gestern';
+            try {
+                return date.toLocaleDateString('de-DE', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+            } catch (error) {
+                return date.toLocaleDateString();
+            }
+        }
+
+        function scrollMessagesToEnd() {
+            const container = $('messages');
+            container.scrollTop = container.scrollHeight;
+            window.requestAnimationFrame(() => {
+                container.scrollTop = container.scrollHeight;
+            });
+        }
+
         function renderMessages(messages) {
+            let previousDateKey = '';
             $('messages').innerHTML = messages.map((message) => {
+                const dateKey = messageDateKey(message.created_at);
+                const divider = dateKey !== previousDateKey
+                    ? '<div class="date-divider"><span>' + escapeText(messageDateLabel(message.created_at)) + '</span></div>'
+                    : '';
+                previousDateKey = dateKey;
                 const mine = Number(message.sender_id) === Number(state.me.id);
                 const time = new Date(message.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
                 const read = mine && message.read_at ? ' - gelesen' : '';
                 const attachment = message.attachment
                     ? (String(message.attachment.mime_type || '').startsWith('image/')
-                        ? '<img' + (message.attachment.mime_type === 'image/gif' ? ' data-is-gif="true"' : '') + ' src="' + message.attachment.data_url + '" alt="' + escapeText(message.attachment.file_name) + '">'
+                        ? '<img class="message-image"' + (message.attachment.mime_type === 'image/gif' ? ' data-is-gif="true"' : '') + ' data-chat-image="true" tabindex="0" role="button" src="' + message.attachment.data_url + '" alt="' + escapeText(message.attachment.file_name) + '" title="Bild vergrößern">'
                         : '<a class="attachment-link" href="' + message.attachment.data_url + '" download="' + escapeText(message.attachment.file_name) + '">Datei: ' + escapeText(message.attachment.file_name) + '</a>')
                     : '';
                 const text = message.body ? escapeText(message.body) : '';
-                return '<div class="bubble ' + (mine ? 'me' : '') + '" data-message-id="' + message.id + '">' +
+                return divider + '<div class="bubble ' + (mine ? 'me' : '') + '" data-message-id="' + message.id + '">' +
                     attachment + text + '<span class="meta">' + time + read + '</span></div>';
             }).join('');
             applyGifPreference($('messages'));
@@ -2796,7 +2852,10 @@ function renderMessengerApp() {
                 }
                 state.searchMessageId = null;
             } else {
-                $('messages').scrollTop = $('messages').scrollHeight;
+                scrollMessagesToEnd();
+                $('messages').querySelectorAll('img').forEach((image) => {
+                    if (!image.complete) image.addEventListener('load', scrollMessagesToEnd, { once: true });
+                });
             }
         }
 
@@ -3473,6 +3532,23 @@ function renderMessengerApp() {
             $('composer').requestSubmit();
         });
         $('attachmentInput').addEventListener('change', (event) => chooseAttachment(event.target.files[0]));
+        $('messages').addEventListener('click', (event) => {
+            const image = event.target.closest('[data-chat-image]');
+            if (image) openImageViewer(image);
+        });
+        $('messages').addEventListener('keydown', (event) => {
+            const image = event.target.closest('[data-chat-image]');
+            if (!image || (event.key !== 'Enter' && event.key !== ' ')) return;
+            event.preventDefault();
+            openImageViewer(image);
+        });
+        $('closeImageViewer').addEventListener('click', closeImageViewer);
+        $('imageViewer').addEventListener('click', (event) => {
+            if (event.target === $('imageViewer')) closeImageViewer();
+        });
+        document.addEventListener('keydown', (event) => {
+            if (event.key === 'Escape' && !$('imageViewer').classList.contains('hidden')) closeImageViewer();
+        });
         $('attachmentPreview').addEventListener('click', (event) => {
             if (!event.target.closest('#removeAttachment')) return;
             state.pendingAttachment = null;
