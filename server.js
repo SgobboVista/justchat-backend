@@ -1909,16 +1909,26 @@ function renderMessengerApp() {
         function api(path, options = {}) {
             const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
             if (state.token) headers.Authorization = 'Bearer ' + state.token;
-            return fetch(path, { ...options, headers }).then(async (res) => {
-                const data = await res.json().catch(() => ({}));
-                if (!res.ok) {
-                    const error = new Error(data.error || 'Anfrage fehlgeschlagen');
-                    error.status = res.status;
-                    error.data = data;
+            const controller = new AbortController();
+            const requestTimeout = setTimeout(() => controller.abort(), 12000);
+            return fetch(path, { ...options, headers, signal: controller.signal })
+                .then(async (res) => {
+                    const data = await res.json().catch(() => ({}));
+                    if (!res.ok) {
+                        const error = new Error(data.error || 'Anfrage fehlgeschlagen');
+                        error.status = res.status;
+                        error.data = data;
+                        throw error;
+                    }
+                    return data;
+                })
+                .catch((error) => {
+                    if (error.name === 'AbortError') {
+                        throw new Error('Server antwortet nicht');
+                    }
                     throw error;
-                }
-                return data;
-            });
+                })
+                .finally(() => clearTimeout(requestTimeout));
         }
 
         function initials(name) {
@@ -2658,21 +2668,17 @@ function renderMessengerApp() {
                 clearTimeout(state.bootRetryTimer);
                 state.bootRetryTimer = null;
             }
-            $('loadingStatus').textContent = 'Chats werden geladen...';
+            $('loadingStatus').textContent = 'Anmeldung wird geprüft...';
             try {
                 await loadMe();
                 showApp();
-                await loadNotificationSounds();
-                await loadConversations();
-                await loadContactRequests();
-                await loadBlockedUsers();
                 connectEvents();
                 showConnectionStatus(true);
             } catch (error) {
                 if (!error.status || error.status >= 500) {
                     showConnectionStatus(false);
                     if (!$('loading').classList.contains('hidden')) {
-                        $('loadingStatus').textContent = 'Server nicht erreichbar. Neuer Versuch...';
+                        $('loadingStatus').textContent = error.message + '. Neuer Versuch...';
                     }
                     state.bootRetryTimer = setTimeout(boot, 3000);
                     return;
@@ -2680,7 +2686,14 @@ function renderMessengerApp() {
                 localStorage.removeItem('justchat_token');
                 state.token = null;
                 showAuth();
+                return;
             }
+            Promise.all([
+                loadNotificationSounds(),
+                loadConversations(),
+                loadContactRequests(),
+                loadBlockedUsers(),
+            ]).catch(() => showConnectionStatus(false));
         }
 
         $('authForm').addEventListener('submit', async (event) => {
