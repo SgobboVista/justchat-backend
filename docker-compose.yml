@@ -1,7 +1,7 @@
 services:
   justchat-backend:
     image: ghcr.io/sgobbovista/justchat-backend:latest
-    container_name: justchat-backend
+    pull_policy: always
     restart: unless-stopped
     ports:
       - "50070:80"
