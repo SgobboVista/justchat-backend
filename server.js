@@ -17,11 +17,26 @@ const SMTP_FROM = process.env.SMTP_FROM || SMTP_USER;
 const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || '';
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '';
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || '';
+const IMAGE_UPDATE_WEBHOOK_URL = process.env.IMAGE_UPDATE_WEBHOOK_URL || '';
+const IMAGE_UPDATE_WEBHOOK_TOKEN = process.env.IMAGE_UPDATE_WEBHOOK_TOKEN || '';
+const FORBIDDEN_WORDS = (process.env.FORBIDDEN_WORDS || 'admin,administrator,moderator,system,support,root')
+    .split(',')
+    .map((word) => word.trim().toLowerCase())
+    .filter(Boolean);
 const startedAt = new Date();
 
 let pool;
 let mailer;
 const eventClients = new Map();
+let imageUpdateState = {
+    configured: Boolean(IMAGE_UPDATE_WEBHOOK_URL),
+    status: IMAGE_UPDATE_WEBHOOK_URL ? 'idle' : 'not_configured',
+    requestedAt: null,
+    finishedAt: null,
+    message: IMAGE_UPDATE_WEBHOOK_URL
+        ? 'Bereit, ein neues Container-Image anzufordern.'
+        : 'IMAGE_UPDATE_WEBHOOK_URL ist nicht konfiguriert.',
+};
 
 app.use(express.json({ limit: '8mb' }));
 
@@ -83,6 +98,16 @@ function cleanDisplayName(displayName, username) {
     return String(displayName || username).trim().slice(0, 60);
 }
 
+function validateCleanName(value, fieldName) {
+    const lowered = String(value || '').toLowerCase();
+    const forbidden = FORBIDDEN_WORDS.find((word) => lowered.includes(word));
+    if (forbidden) {
+        const error = new Error(`${fieldName} enthält ein nicht erlaubtes Wort`);
+        error.statusCode = 400;
+        throw error;
+    }
+}
+
 function cleanEmail(email) {
     return String(email || '').trim().toLowerCase();
 }
@@ -118,6 +143,54 @@ async function sendMail({ to, subject, text }) {
         text,
     });
     return true;
+}
+
+async function dispatchImageUpdate() {
+    const requestedAt = new Date().toISOString();
+    imageUpdateState = {
+        configured: true,
+        status: 'running',
+        requestedAt,
+        finishedAt: null,
+        message: 'Update-Anfrage wird im Hintergrund gesendet.',
+    };
+
+    try {
+        const headers = { 'Content-Type': 'application/json' };
+        if (IMAGE_UPDATE_WEBHOOK_TOKEN) {
+            headers.Authorization = `Bearer ${IMAGE_UPDATE_WEBHOOK_TOKEN}`;
+        }
+        const response = await fetch(IMAGE_UPDATE_WEBHOOK_URL, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+                event: 'image_update_requested',
+                app: process.env.APP_NAME || 'JustChat',
+                imageTag: 'latest',
+                requestedAt,
+            }),
+            signal: AbortSignal.timeout(15000),
+        });
+        if (!response.ok) {
+            throw new Error(`Update-Webhook antwortet mit HTTP ${response.status}`);
+        }
+
+        imageUpdateState = {
+            configured: true,
+            status: 'requested',
+            requestedAt,
+            finishedAt: new Date().toISOString(),
+            message: 'Image-Update wurde angefordert. Die App kann beim Neustart kurz offline sein.',
+        };
+    } catch (error) {
+        imageUpdateState = {
+            configured: true,
+            status: 'failed',
+            requestedAt,
+            finishedAt: new Date().toISOString(),
+            message: error.message || 'Image-Update konnte nicht angefordert werden.',
+        };
+    }
 }
 
 function parseImageAttachment(attachment) {
@@ -159,12 +232,12 @@ function createLoginCode() {
 
 async function sendTwoFactorCode(user) {
     if (!user.email) {
-        const error = new Error('Fuer 2FA ist eine E-Mail-Adresse erforderlich');
+        const error = new Error('Für 2FA ist eine E-Mail-Adresse erforderlich');
         error.statusCode = 400;
         throw error;
     }
     if (!getMailer()) {
-        const error = new Error('2FA braucht vollstaendige SMTP-Konfiguration');
+        const error = new Error('2FA braucht vollständige SMTP-Konfiguration');
         error.statusCode = 503;
         throw error;
     }
@@ -178,7 +251,32 @@ async function sendTwoFactorCode(user) {
     await sendMail({
         to: user.email,
         subject: 'Dein JustChat Login-Code',
-        text: `Dein JustChat Login-Code lautet: ${code}\n\nDer Code ist 10 Minuten gueltig.`,
+        text: `Dein JustChat Login-Code lautet: ${code}\n\nDer Code ist 10 Minuten gültig.`,
+    });
+}
+
+async function sendPasswordResetCode(user) {
+    if (!user.email) {
+        const error = new Error('Für Passwort-Reset ist eine E-Mail-Adresse erforderlich');
+        error.statusCode = 400;
+        throw error;
+    }
+    if (!getMailer()) {
+        const error = new Error('Passwort-Reset braucht vollständige SMTP-Konfiguration');
+        error.statusCode = 503;
+        throw error;
+    }
+
+    const code = createLoginCode();
+    await query(
+        `insert into password_reset_codes (user_id, code_hash, expires_at)
+         values ($1, $2, now() + interval '15 minutes')`,
+        [user.id, hashPassword(code)],
+    );
+    await sendMail({
+        to: user.email,
+        subject: 'Dein JustChat Passwort-Code',
+        text: `Dein Code zum Zurücksetzen des Passworts lautet: ${code}\n\nDer Code ist 15 Minuten gültig.`,
     });
 }
 
@@ -227,6 +325,7 @@ async function initDatabase() {
             avatar_asset_id bigint,
             password_hash text not null,
             two_factor_enabled boolean not null default false,
+            display_name_visibility text not null default 'contacts',
             about text not null default '',
             avatar_color text not null default '#2563eb',
             created_at timestamptz not null default now(),
@@ -288,11 +387,21 @@ async function initDatabase() {
             created_at timestamptz not null default now()
         );
 
+        create table if not exists password_reset_codes (
+            id bigserial primary key,
+            user_id bigint not null references users(id) on delete cascade,
+            code_hash text not null,
+            expires_at timestamptz not null,
+            used_at timestamptz,
+            created_at timestamptz not null default now()
+        );
+
         alter table users add column if not exists email text;
         alter table users add column if not exists google_id text;
         alter table users add column if not exists email_verified_at timestamptz;
         alter table users add column if not exists avatar_asset_id bigint references avatar_assets(id);
         alter table users add column if not exists two_factor_enabled boolean not null default false;
+        alter table users add column if not exists display_name_visibility text not null default 'contacts';
 
         create unique index if not exists idx_users_email_unique
             on users(email)
@@ -331,7 +440,7 @@ async function waitForDatabase() {
 async function getUserById(userId) {
     const result = await query(
         `select u.id, u.username, u.display_name, u.email, u.about, u.avatar_color, u.avatar_asset_id,
-            u.two_factor_enabled,
+            u.two_factor_enabled, u.display_name_visibility,
             u.created_at, u.last_seen_at,
             case when aa.id is null then null else 'data:' || aa.mime_type || ';base64,' || encode(aa.data, 'base64') end as avatar_url
          from users u
@@ -416,10 +525,11 @@ async function getDashboardData() {
             configured: Boolean(DATABASE_URL),
             online: null,
             latencyMs: null,
-            message: DATABASE_URL ? 'Noch nicht geprueft' : 'DATABASE_URL ist nicht gesetzt',
+            message: DATABASE_URL ? 'Noch nicht geprüft' : 'DATABASE_URL ist nicht gesetzt',
         },
         authConfigured: Boolean(ADMIN_PASSWORD),
         onlineEventClients: Array.from(eventClients.values()).reduce((sum, clients) => sum + clients.size, 0),
+        imageUpdate: imageUpdateState,
     };
 
     if (dbPool) {
@@ -449,7 +559,7 @@ function requireAdminAuth(req, res, next) {
                 <span class="status warn">Setup erforderlich</span>
             </header>
             <section class="panel">
-                <h2>Naechster Schritt</h2>
+                <h2>Nächster Schritt</h2>
                 <p>Setze <code>ADMIN_PASSWORD</code> als Umgebungsvariable und starte den Server neu.</p>
             </section>
         `));
@@ -535,6 +645,7 @@ function renderAdminLayout(content) {
         button, input, select { font: inherit; }
         button, .button { background: var(--accent); color: #fff; border: 0; border-radius: 8px; padding: 10px 12px; font-weight: 700; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
         button:hover, .button:hover { background: var(--accent-dark); }
+        button:disabled { cursor: not-allowed; opacity: .56; }
         .secondary { background: #eef2ff; color: var(--accent); }
         .secondary:hover { background: #dfe7ff; }
         .danger { background: #fee4e2; color: var(--error); }
@@ -593,7 +704,7 @@ function renderDashboard(data) {
             <section class="panel">
                 <h2>Nutzer</h2>
                 <div class="field">
-                    <label for="userFilter">Nutzer fuer Export auswaehlen</label>
+                    <label for="userFilter">Nutzer für Export auswählen</label>
                     <select id="userFilter">
                         <option value="">Alle Nutzer</option>
                     </select>
@@ -624,10 +735,15 @@ function renderDashboard(data) {
                 </section>
 
                 <section class="panel">
-                    <h2>Update</h2>
-                    <p class="muted">Der Button aktualisiert diese Ansicht. Container-Updates laufen sauber ueber GitHub Actions und TrueNAS App-Update/Neustart.</p>
+                    <h2>Container-Image</h2>
+                    <p class="muted">Fordert im Hintergrund ein neues <code>latest</code>-Image über den eingerichteten Deployment-Webhook an.</p>
+                    <div style="margin-top: 12px;">
+                        <span id="imageUpdateStatus" class="status warn">Status wird geladen</span>
+                        <p id="imageUpdateMessage" class="muted"></p>
+                    </div>
                     <div class="toolbar" style="margin-top: 12px;">
-                        <button id="updateButton" type="button">Status neu laden</button>
+                        <button id="imageUpdateButton" type="button">Image neu laden</button>
+                        <button id="updateButton" class="secondary" type="button">Status neu laden</button>
                     </div>
                 </section>
             </aside>
@@ -635,7 +751,7 @@ function renderDashboard(data) {
 
         <section class="panel">
             <h2>Profilbilder</h2>
-            <p class="muted">Hier laedst du erlaubte Profilbilder hoch. Nutzer koennen nur diese Bilder auswaehlen, keine eigenen Uploads.</p>
+            <p class="muted">Hier lädst du erlaubte Profilbilder hoch. Nutzer können nur diese Bilder auswählen, keine eigenen Uploads.</p>
             <div class="toolbar" style="margin-top: 12px;">
                 <input id="avatarName" placeholder="Name des Profilbilds">
                 <input id="avatarFile" type="file" accept="image/png,image/jpeg,image/webp,image/gif">
@@ -654,10 +770,10 @@ function renderDashboard(data) {
             </div>
         </section>
 
-        <div class="notice">Hinweis: Exporte enthalten private Chatdaten und Bildanhaenge. Verwende sie nur mit berechtigtem Zweck und bewahre Downloads geschuetzt auf.</div>
+        <div class="notice">Hinweis: Exporte enthalten private Chatdaten und Bildanhänge. Verwende sie nur mit berechtigtem Zweck und bewahre Downloads geschützt auf.</div>
 
         <script>
-            const state = { users: [], avatars: [], audit: [] };
+            const state = { users: [], avatars: [], audit: [], imageUpdate: null };
             const el = (id) => document.getElementById(id);
             const escapeText = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({
                 '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
@@ -668,7 +784,7 @@ function renderDashboard(data) {
             }
 
             async function readFileBase64(file) {
-                if (!file) throw new Error('Bitte ein Bild auswaehlen');
+                if (!file) throw new Error('Bitte ein Bild auswählen');
                 if (!['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(file.type)) {
                     throw new Error('Nur JPEG, PNG, WebP und GIF sind erlaubt');
                 }
@@ -714,6 +830,19 @@ function renderDashboard(data) {
                 el('auditRows').innerHTML = state.audit.map((row) =>
                     '<tr><td>' + new Date(row.created_at).toLocaleString() + '</td><td>' + escapeText(row.admin_user) + '</td><td>' + escapeText(row.action) + '</td><td>' + escapeText(row.ip_address || '-') + '</td></tr>'
                 ).join('');
+                const update = state.imageUpdate || { configured: false, status: 'not_configured', message: 'Nicht konfiguriert.' };
+                const statusNames = {
+                    not_configured: 'Nicht konfiguriert',
+                    idle: 'Bereit',
+                    running: 'Wird angefordert',
+                    requested: 'Angefordert',
+                    failed: 'Fehlgeschlagen',
+                };
+                const statusClasses = { idle: 'ok', requested: 'ok', running: 'warn', not_configured: 'warn', failed: 'error' };
+                el('imageUpdateStatus').className = 'status ' + (statusClasses[update.status] || 'warn');
+                el('imageUpdateStatus').textContent = statusNames[update.status] || update.status;
+                el('imageUpdateMessage').textContent = update.message || '';
+                el('imageUpdateButton').disabled = !update.configured || update.status === 'running';
             }
 
             async function loadAdmin() {
@@ -722,11 +851,23 @@ function renderDashboard(data) {
                 state.users = data.users;
                 state.avatars = data.avatars;
                 state.audit = data.audit;
+                state.imageUpdate = data.imageUpdate;
                 render();
             }
 
             el('refreshButton').addEventListener('click', loadAdmin);
             el('updateButton').addEventListener('click', loadAdmin);
+            el('imageUpdateButton').addEventListener('click', async () => {
+                if (!confirm('Neues Container-Image anfordern und einen möglichen Neustart auslösen?')) return;
+                try {
+                    const data = await adminApi('/admin/api/image-update', { method: 'POST', body: '{}' });
+                    state.imageUpdate = data.imageUpdate;
+                    render();
+                    setTimeout(() => loadAdmin().catch(() => {}), 1500);
+                } catch (error) {
+                    alert(error.message);
+                }
+            });
             el('downloadSelected').addEventListener('click', () => {
                 const userId = el('userFilter').value;
                 window.location.href = userId ? '/admin/export?userId=' + encodeURIComponent(userId) : '/admin/export';
@@ -764,7 +905,7 @@ function renderMessengerApp() {
 <html lang="de">
 <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <title>JustChat</title>
     <style>
         :root {
@@ -795,6 +936,7 @@ function renderMessengerApp() {
         .field input, .field textarea {
             width: 100%; border: 1px solid var(--line); border-radius: 8px; padding: 11px 12px; outline: none; background: #fff;
         }
+        .field select { width: 100%; border: 1px solid var(--line); border-radius: 8px; padding: 11px 12px; outline: none; background: #fff; }
         .field input:focus, .field textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(15, 118, 110, .12); }
         .avatar-picker { display: grid; grid-template-columns: repeat(auto-fill, minmax(66px, 1fr)); gap: 8px; }
         .avatar-option { border: 2px solid var(--line); background: #fff; border-radius: 8px; padding: 6px; min-height: 74px; display: grid; place-items: center; }
@@ -804,8 +946,8 @@ function renderMessengerApp() {
         .primary:hover { background: var(--accent-strong); }
         .ghost { background: transparent; color: var(--accent); font-weight: 700; padding: 8px; }
         .error { color: var(--danger); min-height: 20px; }
-        .app { height: 100vh; display: grid; grid-template-columns: 360px 1fr; }
-        .sidebar { background: var(--sidebar); border-right: 1px solid var(--line); display: grid; grid-template-rows: auto auto 1fr; min-width: 0; }
+        .app { height: 100vh; height: 100dvh; display: grid; grid-template-columns: 360px 1fr; overflow: hidden; }
+        .sidebar { background: var(--sidebar); border-right: 1px solid var(--line); display: grid; grid-template-rows: auto auto 1fr; min-width: 0; min-height: 0; }
         .topbar { padding: 16px; border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; gap: 12px; }
         .me-box { display: grid; grid-template-columns: 44px 1fr; gap: 10px; align-items: center; min-width: 0; }
         .brand { min-width: 0; }
@@ -821,7 +963,7 @@ function renderMessengerApp() {
         .row-title { display: flex; justify-content: space-between; gap: 8px; min-width: 0; }
         .row-title strong, .preview { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .preview { color: var(--muted); font-size: 13px; margin-top: 4px; }
-        .chat { display: grid; grid-template-rows: auto 1fr auto; min-width: 0; }
+        .chat { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; min-width: 0; min-height: 0; }
         .chat-head { background: var(--panel); border-bottom: 1px solid var(--line); padding: 14px 18px; display: flex; align-items: center; gap: 12px; min-width: 0; }
         .messages { padding: 18px; overflow: auto; display: flex; flex-direction: column; gap: 8px; background: #e9f0f4; }
         .bubble { max-width: min(680px, 82%); border: 1px solid rgba(15, 23, 42, .08); border-radius: 8px; padding: 9px 11px; background: var(--message-other); align-self: flex-start; overflow-wrap: anywhere; }
@@ -840,11 +982,43 @@ function renderMessengerApp() {
         .empty { height: 100%; display: grid; place-items: center; text-align: center; color: var(--muted); padding: 24px; }
         .hidden { display: none !important; }
         @media (max-width: 780px) {
+            body { overflow: hidden; }
             .app { grid-template-columns: 1fr; }
+            .topbar { padding-top: calc(16px + env(safe-area-inset-top)); }
             .sidebar.chat-open { display: none; }
             .chat:not(.chat-open) { display: none; }
-            .chat-head { padding: 12px; }
-            .messages { padding: 12px; }
+            .chat-head {
+                min-height: 64px;
+                padding: calc(10px + env(safe-area-inset-top)) 12px 10px;
+                background: var(--panel);
+                box-shadow: 0 1px 3px rgba(15,23,42,.08);
+            }
+            .chat {
+                height: 100vh;
+                height: 100dvh;
+            }
+            .messages {
+                min-height: 0;
+                padding: 12px 10px;
+                overflow-y: auto;
+                overscroll-behavior-y: contain;
+            }
+            .composer {
+                padding: 8px 8px calc(8px + env(safe-area-inset-bottom));
+                gap: 8px;
+                background: #f0f2f5;
+            }
+            .composer textarea {
+                border: 0;
+                border-radius: 22px;
+                resize: none;
+            }
+            .composer .primary, .file-button {
+                border-radius: 50%;
+                min-width: 44px;
+                width: 44px;
+                min-height: 44px;
+            }
         }
     </style>
 </head>
@@ -870,16 +1044,28 @@ function renderMessengerApp() {
             </div>
             <div class="field">
                 <label for="username">Benutzername</label>
-                <input id="username" autocomplete="username" required maxlength="40">
+                <input id="username" autocomplete="username" required maxlength="32">
             </div>
             <div class="field">
                 <label for="password">Passwort</label>
                 <input id="password" type="password" autocomplete="current-password" required minlength="6">
             </div>
+            <div class="field register-only hidden">
+                <label for="passwordRepeat">Passwort wiederholen</label>
+                <input id="passwordRepeat" type="password" autocomplete="new-password" minlength="6">
+            </div>
+            <label class="segmented register-only hidden">
+                <input id="register2fa" type="checkbox" style="width:auto;">
+                <span>2FA per E-Mail-Code aktivieren</span>
+            </label>
             <div id="authError" class="error"></div>
             <button id="authSubmit" class="primary" type="submit">Anmelden</button>
             <a id="googleLogin" class="primary hidden" style="text-align:center;text-decoration:none;" href="/auth/google">Mit Google fortfahren</a>
             <button id="toggleAuth" class="ghost" type="button">Neues Konto erstellen</button>
+            <div class="segmented">
+                <button id="forgotUsername" class="ghost" type="button">Benutzername vergessen</button>
+                <button id="forgotPassword" class="ghost" type="button">Passwort vergessen</button>
+            </div>
         </form>
     </div>
 
@@ -902,10 +1088,10 @@ function renderMessengerApp() {
             <div id="conversationList" class="list"></div>
         </aside>
         <section id="chat" class="chat">
-            <div id="chatEmpty" class="empty">Waehle einen Chat aus oder suche einen Nutzer.</div>
+            <div id="chatEmpty" class="empty">Wähle einen Chat aus oder suche einen Nutzer.</div>
             <div id="chatPane" class="hidden" style="display: contents;">
                 <div class="chat-head">
-                    <button id="back" class="ghost" type="button">Zurueck</button>
+                    <button id="back" class="ghost" type="button">Zurück</button>
                     <div id="chatAvatar" class="avatar">?</div>
                     <div class="brand">
                         <strong id="chatName"></strong>
@@ -914,7 +1100,7 @@ function renderMessengerApp() {
                 </div>
                 <div id="messages" class="messages"></div>
                 <form id="composer" class="composer">
-                    <label class="file-button" title="Bild anhaengen">
+                    <label class="file-button" title="Bild anhängen">
                         +
                         <input id="imageInput" type="file" accept="image/png,image/jpeg,image/webp,image/gif">
                     </label>
@@ -929,7 +1115,7 @@ function renderMessengerApp() {
         <form id="profileForm" class="modal-card stack">
             <div class="modal-head">
                 <h2>Mein Account</h2>
-                <button id="closeAccount" class="ghost" type="button">Schliessen</button>
+                <button id="closeAccount" class="ghost" type="button">Schließen</button>
             </div>
             <div class="field">
                 <label for="profileDisplayName">Anzeigename</label>
@@ -951,6 +1137,13 @@ function renderMessengerApp() {
                 <input id="profile2fa" type="checkbox" style="width:auto;">
                 <span>2FA per E-Mail-Code aktivieren</span>
             </label>
+            <div class="field">
+                <label for="displayNameVisibility">Anzeigename anzeigen</label>
+                <select id="displayNameVisibility">
+                    <option value="contacts">Nur Kontakten</option>
+                    <option value="everyone">Allen</option>
+                </select>
+            </div>
             <p class="muted small">Bei aktivierter 2FA wird beim Login ein Code an deine E-Mail gesendet.</p>
             <div id="profileError" class="error"></div>
             <button class="primary" type="submit">Profil speichern</button>
@@ -962,7 +1155,7 @@ function renderMessengerApp() {
         <form id="addForm" class="modal-card stack">
             <div class="modal-head">
                 <h2>Person adden</h2>
-                <button id="closeAdd" class="ghost" type="button">Schliessen</button>
+                <button id="closeAdd" class="ghost" type="button">Schließen</button>
             </div>
             <div class="field">
                 <label for="addUsername">@name</label>
@@ -1040,13 +1233,13 @@ function renderMessengerApp() {
                 if (!state.selectedAvatarId && state.avatars.length) state.selectedAvatarId = state.avatars[0].id;
                 renderAvatarPicker();
             } catch {
-                $('avatarPicker').innerHTML = '<span class="muted">Keine Profilbilder verfuegbar.</span>';
+                $('avatarPicker').innerHTML = '<span class="muted">Keine Profilbilder verfügbar.</span>';
             }
         }
 
         function renderAvatarPicker() {
             if (!state.avatars.length) {
-                $('avatarPicker').innerHTML = '<span class="muted">Noch keine Profilbilder verfuegbar.</span>';
+                $('avatarPicker').innerHTML = '<span class="muted">Noch keine Profilbilder verfügbar.</span>';
                 return;
             }
             $('avatarPicker').innerHTML = state.avatars.map((avatar) =>
@@ -1057,7 +1250,7 @@ function renderMessengerApp() {
 
         function renderProfileAvatarPicker() {
             if (!state.avatars.length) {
-                $('profileAvatarPicker').innerHTML = '<span class="muted">Noch keine Profilbilder verfuegbar.</span>';
+                $('profileAvatarPicker').innerHTML = '<span class="muted">Noch keine Profilbilder verfügbar.</span>';
                 return;
             }
             $('profileAvatarPicker').innerHTML = state.avatars.map((avatar) =>
@@ -1143,6 +1336,7 @@ function renderMessengerApp() {
             $('profileEmail').value = state.me.email || '';
             $('profileAbout').value = state.me.about || '';
             $('profile2fa').checked = Boolean(state.me.two_factor_enabled);
+            $('displayNameVisibility').value = state.me.display_name_visibility || 'contacts';
             state.profileAvatarId = state.me.avatar_asset_id;
             renderProfileAvatarPicker();
             $('accountModal').classList.remove('hidden');
@@ -1205,9 +1399,11 @@ function renderMessengerApp() {
             const body = {
                 username: $('username').value,
                 password: $('password').value,
+                passwordRepeat: $('passwordRepeat').value,
                 displayName: $('displayName').value,
                 email: $('email').value,
                 avatarAssetId: state.selectedAvatarId,
+                twoFactorEnabled: $('register2fa').checked,
             };
             try {
                 const endpoint = state.registerMode ? '/api/auth/register' : '/api/auth/login';
@@ -1261,6 +1457,7 @@ function renderMessengerApp() {
                         about: $('profileAbout').value,
                         avatarAssetId: state.profileAvatarId,
                         twoFactorEnabled: $('profile2fa').checked,
+                        displayNameVisibility: $('displayNameVisibility').value,
                     }),
                 });
                 await loadMe();
@@ -1284,6 +1481,41 @@ function renderMessengerApp() {
                 await openConversation(data.conversation.id);
             } catch (error) {
                 $('addError').textContent = error.message;
+            }
+        });
+        $('forgotUsername').addEventListener('click', async () => {
+            const email = prompt('E-Mail-Adresse eingeben');
+            if (!email) return;
+            try {
+                await api('/api/auth/forgot-username', {
+                    method: 'POST',
+                    body: JSON.stringify({ email }),
+                });
+                alert('Falls die E-Mail existiert, wurde der Benutzername versendet.');
+            } catch (error) {
+                alert(error.message);
+            }
+        });
+        $('forgotPassword').addEventListener('click', async () => {
+            const identifier = prompt('Benutzername oder E-Mail eingeben');
+            if (!identifier) return;
+            try {
+                await api('/api/auth/request-password-reset', {
+                    method: 'POST',
+                    body: JSON.stringify({ identifier }),
+                });
+                const code = prompt('Code aus der E-Mail eingeben');
+                if (!code) return;
+                const password = prompt('Neues Passwort eingeben');
+                if (!password) return;
+                const passwordRepeat = prompt('Neues Passwort wiederholen');
+                await api('/api/auth/reset-password', {
+                    method: 'POST',
+                    body: JSON.stringify({ identifier, code, password, passwordRepeat }),
+                });
+                alert('Passwort wurde geändert. Du kannst dich jetzt anmelden.');
+            } catch (error) {
+                alert(error.message);
             }
         });
         $('logout').addEventListener('click', () => {
@@ -1358,7 +1590,7 @@ app.get('/', (req, res) => {
             </header>
             <section class="panel">
                 <h2>Setup</h2>
-                <p>Setze <code>DATABASE_URL</code>, damit Benutzer, Chats und Nachrichten gespeichert werden koennen.</p>
+                <p>Setze <code>DATABASE_URL</code>, damit Benutzer, Chats und Nachrichten gespeichert werden können.</p>
             </section>
         `));
     }
@@ -1426,6 +1658,33 @@ app.get('/admin/api/overview', requireAdminAuth, async (req, res, next) => {
             users: users.rows,
             avatars: avatars.rows,
             audit: audit.rows,
+            imageUpdate: imageUpdateState,
+        });
+    } catch (error) {
+        return next(error);
+    }
+});
+
+app.post('/admin/api/image-update', requireAdminAuth, async (req, res, next) => {
+    try {
+        if (!IMAGE_UPDATE_WEBHOOK_URL) {
+            return res.status(503).json({ error: 'IMAGE_UPDATE_WEBHOOK_URL ist nicht konfiguriert' });
+        }
+        if (imageUpdateState.status === 'running') {
+            return res.status(409).json({ error: 'Eine Image-Update-Anfrage läuft bereits' });
+        }
+
+        await query(
+            `insert into admin_audit_logs (admin_user, action, ip_address)
+             values ($1, $2, $3)`,
+            [ADMIN_USER, 'image_update_requested', req.ip],
+        );
+        const request = dispatchImageUpdate();
+        request.catch((error) => console.error('Image-Update fehlgeschlagen:', error));
+
+        return res.status(202).json({
+            ok: true,
+            imageUpdate: imageUpdateState,
         });
     } catch (error) {
         return next(error);
@@ -1505,7 +1764,7 @@ app.get('/admin/export', requireAdminAuth, async (req, res, next) => {
         res.setHeader('Content-Disposition', `attachment; filename="justchat-export-${exportedAt.slice(0, 10)}.json"`);
         return res.json({
             exported_at: exportedAt,
-            purpose: 'Sicherheits- und Moderationspruefung durch berechtigte Administratoren',
+            purpose: 'Sicherheits- und Moderationsprüfung durch berechtigte Administratoren',
             users: users.rows,
             conversations: conversations.rows,
             messages: messages.rows,
@@ -1520,33 +1779,43 @@ app.post('/api/auth/register', async (req, res, next) => {
         const username = normalizeUsername(req.body.username);
         const email = cleanEmail(req.body.email);
         const password = String(req.body.password || '');
+        const passwordRepeat = String(req.body.passwordRepeat || '');
         const displayName = cleanDisplayName(req.body.displayName, username);
         const avatarAssetId = parseId(req.body.avatarAssetId);
+        const twoFactorEnabled = Boolean(req.body.twoFactorEnabled);
         const colors = ['#0f766e', '#2563eb', '#7c3aed', '#c2410c', '#be123c', '#047857'];
         const avatarColor = colors[Math.floor(Math.random() * colors.length)];
 
-        if (!/^[a-z0-9_]{3,40}$/.test(username)) {
-            return res.status(400).json({ error: 'Benutzername: 3-40 Zeichen, nur a-z, 0-9 und _' });
+        if (!/^[a-z0-9_]{3,32}$/.test(username)) {
+            return res.status(400).json({ error: 'Benutzername: 3-32 Zeichen, nur a-z, 0-9 und _' });
         }
+        validateCleanName(username, 'Benutzername');
+        validateCleanName(displayName, 'Anzeigename');
         if (password.length < 6) {
             return res.status(400).json({ error: 'Passwort muss mindestens 6 Zeichen haben' });
         }
+        if (password !== passwordRepeat) {
+            return res.status(400).json({ error: 'Passwörter stimmen nicht überein' });
+        }
         if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-            return res.status(400).json({ error: 'Bitte gib eine gueltige E-Mail-Adresse ein' });
+            return res.status(400).json({ error: 'Bitte gib eine gültige E-Mail-Adresse ein' });
+        }
+        if (twoFactorEnabled && !getMailer()) {
+            return res.status(400).json({ error: '2FA braucht vollständige SMTP-Konfiguration' });
         }
 
         const result = await query(
-            `insert into users (username, display_name, email, avatar_asset_id, password_hash, avatar_color)
-             values ($1, $2, $3, $4, $5, $6)
-             returning id, username, display_name, email, avatar_asset_id, about, avatar_color, created_at, last_seen_at`,
-            [username, displayName, email, avatarAssetId, hashPassword(password), avatarColor],
+            `insert into users (username, display_name, email, avatar_asset_id, password_hash, avatar_color, two_factor_enabled)
+             values ($1, $2, $3, $4, $5, $6, $7)
+             returning id, username, display_name, email, avatar_asset_id, about, avatar_color, two_factor_enabled, display_name_visibility, created_at, last_seen_at`,
+            [username, displayName, email, avatarAssetId, hashPassword(password), avatarColor, twoFactorEnabled],
         );
         const user = result.rows[0];
 
         sendMail({
             to: email,
             subject: 'Willkommen bei JustChat',
-            text: `Hallo ${displayName},\n\n dein JustChat-Konto wurde erstellt.\n\nBenutzername: ${username}\n\nViele Gruesse\nJustChat`,
+            text: `Hallo ${displayName},\n\n dein JustChat-Konto wurde erstellt.\n\nBenutzername: ${username}\n\nViele Grüße\nJustChat`,
         }).catch((error) => console.error('E-Mail konnte nicht gesendet werden:', error.message));
 
         return res.status(201).json({ token: createToken(user), user });
@@ -1596,7 +1865,7 @@ app.post('/api/auth/verify-2fa', async (req, res, next) => {
         const userId = parseId(req.body.userId);
         const code = String(req.body.code || '').trim();
         if (!userId || !/^\d{6}$/.test(code)) {
-            return res.status(400).json({ error: 'Ungueltiger 2FA-Code' });
+            return res.status(400).json({ error: 'Ungültiger 2FA-Code' });
         }
 
         const result = await query(
@@ -1628,6 +1897,74 @@ app.post('/api/auth/verify-2fa', async (req, res, next) => {
             last_seen_at: row.last_seen_at,
         };
         return res.json({ token: createToken(user), user });
+    } catch (error) {
+        return next(error);
+    }
+});
+
+app.post('/api/auth/forgot-username', async (req, res, next) => {
+    try {
+        const email = cleanEmail(req.body.email);
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+            return res.status(400).json({ error: 'Bitte gib eine gültige E-Mail-Adresse ein' });
+        }
+
+        const result = await query('select username, display_name, email from users where email = $1 order by created_at asc', [email]);
+        if (result.rows.length && getMailer()) {
+            const names = result.rows.map((user) => `@${user.username} (${user.display_name})`).join('\n');
+            await sendMail({
+                to: email,
+                subject: 'Dein JustChat Benutzername',
+                text: `Zu dieser E-Mail gehören folgende JustChat-Konten:\n\n${names}`,
+            });
+        }
+        return res.json({ ok: true });
+    } catch (error) {
+        return next(error);
+    }
+});
+
+app.post('/api/auth/request-password-reset', async (req, res, next) => {
+    try {
+        const identifier = String(req.body.identifier || '').trim().toLowerCase();
+        const result = await query('select * from users where username = $1 or email = $1 limit 1', [identifier]);
+        const user = result.rows[0];
+        if (user) await sendPasswordResetCode(user);
+        return res.json({ ok: true });
+    } catch (error) {
+        return next(error);
+    }
+});
+
+app.post('/api/auth/reset-password', async (req, res, next) => {
+    try {
+        const identifier = String(req.body.identifier || '').trim().toLowerCase();
+        const code = String(req.body.code || '').trim();
+        const password = String(req.body.password || '');
+        const passwordRepeat = String(req.body.passwordRepeat || '');
+
+        if (password.length < 6) return res.status(400).json({ error: 'Passwort muss mindestens 6 Zeichen haben' });
+        if (password !== passwordRepeat) return res.status(400).json({ error: 'Passwörter stimmen nicht überein' });
+
+        const result = await query(
+            `select prc.*, u.id as user_id
+             from password_reset_codes prc
+             join users u on u.id = prc.user_id
+             where (u.username = $1 or u.email = $1)
+                and prc.used_at is null
+                and prc.expires_at > now()
+             order by prc.created_at desc
+             limit 1`,
+            [identifier],
+        );
+        const reset = result.rows[0];
+        if (!reset || !verifyPassword(code, reset.code_hash)) {
+            return res.status(401).json({ error: 'Code ist falsch oder abgelaufen' });
+        }
+
+        await query('update users set password_hash = $1 where id = $2', [hashPassword(password), reset.user_id]);
+        await query('update password_reset_codes set used_at = now() where id = $1', [reset.id]);
+        return res.json({ ok: true });
     } catch (error) {
         return next(error);
     }
@@ -1737,20 +2074,22 @@ app.patch('/api/me', requireAuth, async (req, res, next) => {
         const about = String(req.body.about || '').trim().slice(0, 180);
         const avatarAssetId = parseId(req.body.avatarAssetId);
         const twoFactorEnabled = Boolean(req.body.twoFactorEnabled);
+        const displayNameVisibility = req.body.displayNameVisibility === 'everyone' ? 'everyone' : 'contacts';
 
+        validateCleanName(displayName, 'Anzeigename');
         if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-            return res.status(400).json({ error: 'Bitte gib eine gueltige E-Mail-Adresse ein' });
+            return res.status(400).json({ error: 'Bitte gib eine gültige E-Mail-Adresse ein' });
         }
         if (twoFactorEnabled && !getMailer()) {
-            return res.status(400).json({ error: '2FA braucht vollstaendige SMTP-Konfiguration' });
+            return res.status(400).json({ error: '2FA braucht vollständige SMTP-Konfiguration' });
         }
 
         const result = await query(
             `update users
-             set display_name = $1, email = $2, about = $3, avatar_asset_id = $4, two_factor_enabled = $5
-             where id = $6
+             set display_name = $1, email = $2, about = $3, avatar_asset_id = $4, two_factor_enabled = $5, display_name_visibility = $6
+             where id = $7
              returning id`,
-            [displayName, email, about, avatarAssetId, twoFactorEnabled, req.user.id],
+            [displayName, email, about, avatarAssetId, twoFactorEnabled, displayNameVisibility, req.user.id],
         );
         if (!result.rows[0]) return res.status(404).json({ error: 'Benutzer nicht gefunden' });
 
@@ -1771,6 +2110,9 @@ app.get('/api/users', requireAuth, async (req, res, next) => {
             `select u.id, u.username, u.display_name, u.about, u.avatar_color, u.last_seen_at,
                 case when aa.id is null then null else 'data:' || aa.mime_type || ';base64,' || encode(aa.data, 'base64') end as avatar_url
              from users u
+             join conversations c
+                on $1 in (c.user_one_id, c.user_two_id)
+                and u.id in (c.user_one_id, c.user_two_id)
              left join avatar_assets aa on aa.id = u.avatar_asset_id and aa.is_active = true
              where u.id <> $1 and (u.username like $2 or lower(u.display_name) like $2)
              order by u.username
@@ -1830,7 +2172,7 @@ app.post('/api/conversations', requireAuth, async (req, res, next) => {
     try {
         const otherUserId = Number(req.body.userId);
         if (!otherUserId || otherUserId === Number(req.user.id)) {
-            return res.status(400).json({ error: 'Ungueltiger Benutzer' });
+            return res.status(400).json({ error: 'Ungültiger Benutzer' });
         }
 
         const otherUser = await getUserById(otherUserId);
@@ -1855,6 +2197,9 @@ app.post('/api/conversations/by-username', requireAuth, async (req, res, next) =
     try {
         const username = normalizeUsername(req.body.username);
         if (!username) return res.status(400).json({ error: 'Bitte @name eingeben' });
+        if (!/^[a-z0-9_]{3,32}$/.test(username)) {
+            return res.status(400).json({ error: 'Bitte vollständigen @name eingeben' });
+        }
 
         const result = await query('select id from users where username = $1 and id <> $2', [username, req.user.id]);
         const user = result.rows[0];
@@ -2020,7 +2365,7 @@ app.use((error, req, res, next) => {
 waitForDatabase()
     .then(() => {
         app.listen(PORT, '0.0.0.0', () => {
-            console.log(`JustChat laeuft auf Port ${PORT}`);
+            console.log(`JustChat läuft auf Port ${PORT}`);
         });
     })
     .catch((error) => {
