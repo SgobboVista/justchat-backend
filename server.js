@@ -998,6 +998,7 @@ function renderAdminLayout(content) {
             --error: #c62828;
         }
         * { box-sizing: border-box; }
+        html { height: 100%; }
         body { margin: 0; min-height: 100vh; font-family: Arial, sans-serif; background: var(--bg); color: var(--text); }
         main { width: min(1280px, calc(100% - 32px)); margin: 0 auto; padding: 28px 0; }
         header { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin-bottom: 24px; }
@@ -1032,6 +1033,13 @@ function renderAdminLayout(content) {
         .field { display: grid; gap: 6px; margin-bottom: 12px; }
         .field label { font-size: 13px; color: var(--muted); font-weight: 700; }
         input, select { width: 100%; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; background: #fff; color: var(--text); }
+        .password-input { position: relative; }
+        .password-input input { padding-right: 48px; }
+        .password-toggle { position: absolute; top: 50%; right: 5px; transform: translateY(-50%); width: 40px; height: 40px; padding: 0; border-radius: 8px; background: transparent; color: var(--muted); }
+        .password-toggle:hover { background: #f4f7fb; color: var(--accent); }
+        .password-toggle svg { width: 21px; height: 21px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+        .password-toggle .eye-slash { display: none; }
+        .password-toggle.visible .eye-slash { display: block; }
         table { width: 100%; border-collapse: collapse; }
         th, td { padding: 10px 8px; border-bottom: 1px solid #edf1f6; text-align: left; vertical-align: middle; }
         th { color: var(--muted); font-size: 12px; text-transform: uppercase; }
@@ -1081,7 +1089,12 @@ function renderAdminLogin() {
                     </div>
                     <div class="field">
                         <label for="adminPassword">Passwort</label>
-                        <input id="adminPassword" name="password" type="password" autocomplete="current-password" required>
+                        <div class="password-input">
+                            <input id="adminPassword" name="password" type="password" autocomplete="current-password" required>
+                            <button class="password-toggle" type="button" data-password-toggle="adminPassword" aria-label="Passwort anzeigen" title="Passwort anzeigen">
+                                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12s3.4-6 9.5-6 9.5 6 9.5 6-3.4 6-9.5 6-9.5-6-9.5-6z"></path><circle cx="12" cy="12" r="2.8"></circle><path class="eye-slash" d="M3 3l18 18"></path></svg>
+                            </button>
+                        </div>
                     </div>
                     <p id="adminLoginError" class="login-error hidden" role="alert"></p>
                     <button id="adminLoginButton" type="submit">Anmelden</button>
@@ -1089,10 +1102,19 @@ function renderAdminLogin() {
                 <p class="muted" style="margin-top: 18px;"><a href="/">Zur Web-App</a></p>
             </section>
         </div>
-        <script>
+        <script data-cfasync="false">
             const form = document.getElementById('adminLoginForm');
             const error = document.getElementById('adminLoginError');
             const button = document.getElementById('adminLoginButton');
+            const passwordToggle = document.querySelector('[data-password-toggle]');
+            passwordToggle.addEventListener('click', () => {
+                const password = document.getElementById(passwordToggle.dataset.passwordToggle);
+                const visible = password.type === 'password';
+                password.type = visible ? 'text' : 'password';
+                passwordToggle.classList.toggle('visible', visible);
+                passwordToggle.setAttribute('aria-label', visible ? 'Passwort verbergen' : 'Passwort anzeigen');
+                passwordToggle.title = visible ? 'Passwort verbergen' : 'Passwort anzeigen';
+            });
             form.addEventListener('submit', async (event) => {
                 event.preventDefault();
                 error.classList.add('hidden');
@@ -1224,10 +1246,10 @@ function renderDashboard(data) {
 
         <div class="notice">Hinweis: Von Nutzern entfernte Chats werden mindestens 30 Tage serverseitig aufbewahrt. ZIP-Archive enthalten private Chatdaten und Originaldateien; sie dürfen nur für einen berechtigten Zweck und mit passender rechtlicher Grundlage herausgegeben werden.</div>
 
-        <script>
+        <script data-cfasync="false">
             const state = { users: [], avatars: [], sounds: [], audit: [], imageUpdate: null };
             const el = (id) => document.getElementById(id);
-            const escapeText = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({
+            const escapeText = (value) => String(value == null ? '' : value).replace(/[&<>"']/g, (char) => ({
                 '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
             }[char]));
 
@@ -1268,10 +1290,9 @@ function renderDashboard(data) {
             }
 
             async function adminApi(path, options = {}) {
-                const response = await fetch(path, {
-                    ...options,
-                    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
-                });
+                const response = await fetch(path, Object.assign({}, options, {
+                    headers: Object.assign({ 'Content-Type': 'application/json' }, options.headers || {}),
+                }));
                 const data = await response.json().catch(() => ({}));
                 if (response.status === 401) {
                     window.location.replace('/admin');
@@ -1439,6 +1460,7 @@ function renderMessengerApp() {
             --danger: #b42318;
         }
         * { box-sizing: border-box; }
+        html { height: 100%; }
         body { margin: 0; min-height: 100vh; font-family: Arial, sans-serif; background: var(--bg); color: var(--text); }
         button, input, textarea { font: inherit; }
         button { cursor: pointer; border: 0; }
@@ -1451,7 +1473,7 @@ function renderMessengerApp() {
         .connection-banner.offline { background: #b42318; }
         .connection-banner.online { background: #138a45; }
         .connection-banner.hidden { transform: translateY(-100%); opacity: 0; }
-        .auth-shell { min-height: 100vh; display: grid; place-items: center; padding: 24px; background: linear-gradient(135deg, #f7fbff 0%, #edf7f4 100%); }
+        .auth-shell { min-height: 100vh; min-height: 100dvh; display: grid; justify-items: center; align-content: center; padding: 24px; overflow-y: auto; -webkit-overflow-scrolling: touch; background: linear-gradient(135deg, #f7fbff 0%, #edf7f4 100%); }
         .auth-card { width: min(460px, 100%); background: rgba(255,255,255,.96); border: 1px solid var(--line); border-radius: 8px; padding: 26px; box-shadow: 0 18px 50px rgba(15, 23, 42, .12); }
         .auth-card h1 { margin: 0 0 6px; font-size: 36px; letter-spacing: 0; }
         .muted { color: var(--muted); }
@@ -1463,6 +1485,13 @@ function renderMessengerApp() {
         }
         .field select { width: 100%; border: 1px solid var(--line); border-radius: 8px; padding: 11px 12px; outline: none; background: #fff; }
         .field input:focus, .field textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(15, 118, 110, .12); }
+        .password-input { position: relative; }
+        .password-input input { padding-right: 50px; }
+        .password-toggle { position: absolute; top: 50%; right: 5px; transform: translateY(-50%); width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; padding: 0; background: transparent; color: var(--muted); }
+        .password-toggle:hover { color: var(--accent); background: #eef8f6; }
+        .password-toggle svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+        .password-toggle .eye-slash { display: none; }
+        .password-toggle.visible .eye-slash { display: block; }
         .avatar-picker { display: grid; grid-template-columns: repeat(auto-fill, minmax(66px, 1fr)); gap: 8px; }
         .avatar-option { border: 2px solid var(--line); background: #fff; border-radius: 8px; padding: 6px; min-height: 74px; display: grid; place-items: center; }
         .avatar-option.selected { border-color: var(--accent); background: #eef8f6; }
@@ -1480,7 +1509,7 @@ function renderMessengerApp() {
         .success { color: var(--accent); min-height: 20px; }
         .inline-panel { border: 1px solid var(--line); border-radius: 8px; background: #f7fbfa; padding: 12px; display: grid; gap: 10px; }
         .app { height: 100vh; height: 100dvh; display: grid; grid-template-columns: 360px 1fr; overflow: hidden; }
-        .sidebar { background: var(--sidebar); border-right: 1px solid var(--line); display: grid; grid-template-rows: auto auto auto 1fr; min-width: 0; min-height: 0; }
+        .sidebar { background: var(--sidebar); border-right: 1px solid var(--line); display: grid; grid-template-rows: auto auto auto minmax(0, 1fr); min-width: 0; min-height: 0; overflow: hidden; }
         .topbar { padding: 16px; border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; gap: 12px; }
         .me-box { display: grid; grid-template-columns: 50px 1fr; gap: 10px; align-items: center; min-width: 0; }
         .top-actions { display: flex; align-items: center; gap: 6px; }
@@ -1491,21 +1520,21 @@ function renderMessengerApp() {
         .brand span { display: block; color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
         .search { padding: 12px 16px; border-bottom: 1px solid var(--line); display: grid; gap: 8px; }
         .search input { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; width: 100%; }
-        .search-results { display: grid; gap: 4px; max-height: min(46vh, 440px); overflow: auto; }
+        .search-results { display: grid; gap: 4px; max-height: min(46vh, 440px); overflow: auto; -webkit-overflow-scrolling: touch; }
         .search-group-title { padding: 8px 4px 4px; color: var(--muted); font-size: 11px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
         .message-result { width: 100%; display: grid; gap: 4px; padding: 10px; border-radius: 8px; background: #f7fbfa; text-align: left; }
         .message-result:hover { background: #e5f5f1; }
         .message-result-head { display: flex; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 12px; }
         .message-result-head strong { color: var(--text); }
         .message-result-preview { overflow: hidden; color: var(--text); font-size: 13px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
-        .requests { border-bottom: 1px solid var(--line); padding: 10px 12px; display: grid; gap: 8px; max-height: 270px; overflow: auto; }
+        .requests { border-bottom: 1px solid var(--line); padding: 10px 12px; display: grid; gap: 8px; max-height: 270px; overflow: auto; -webkit-overflow-scrolling: touch; }
         .requests h3 { margin: 0; color: var(--muted); font-size: 12px; text-transform: uppercase; }
         .request-card { border: 1px solid var(--line); border-radius: 8px; padding: 9px; background: #fff; display: grid; gap: 7px; }
         .request-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 13px; }
         .request-actions { display: flex; flex-wrap: wrap; gap: 6px; }
         .request-actions button { padding: 6px 8px; border-radius: 6px; font-size: 12px; }
         .request-status { color: var(--muted); font-size: 12px; }
-        .list { overflow: auto; }
+        .list { min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; }
         .row { width: 100%; background: transparent; display: grid; grid-template-columns: 50px 1fr; gap: 12px; padding: 12px 16px; text-align: left; border-bottom: 1px solid #edf1f6; }
         .row:hover, .row.active { background: #eef8f6; }
         .avatar { width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; color: #fff; font-weight: 800; object-fit: cover; }
@@ -1531,7 +1560,7 @@ function renderMessengerApp() {
         .chat-profile { min-width: 0; display: flex; align-items: center; gap: 12px; background: transparent; padding: 0; text-align: left; }
         .chat-profile:hover .brand strong { color: var(--accent); }
         .typing { color: var(--accent); font-weight: 700; }
-        .messages { padding: 18px; overflow: auto; display: flex; flex-direction: column; gap: 8px; background: #e9f0f4; }
+        .messages { min-height: 0; padding: 18px; overflow-y: auto; -webkit-overflow-scrolling: touch; display: flex; flex-direction: column; gap: 8px; background: #e9f0f4; }
         .bubble { max-width: min(680px, 82%); border: 1px solid rgba(15, 23, 42, .08); border-radius: 8px; padding: 9px 11px; background: var(--message-other); align-self: flex-start; overflow-wrap: anywhere; }
         .bubble.me { background: var(--message-me); align-self: flex-end; }
         .bubble.search-highlight { outline: 3px solid rgba(15, 118, 110, .35); box-shadow: 0 0 0 7px rgba(15, 118, 110, .09); animation: searchPulse 1.4s ease-out 1; }
@@ -1573,7 +1602,7 @@ function renderMessengerApp() {
         .chat.drop-active .messages { outline: 2px dashed var(--accent); outline-offset: -10px; background: #dff1ec; }
         .drop-hint { display: none; position: absolute; inset: 72px 18px 74px; place-items: center; pointer-events: none; z-index: 2; color: var(--accent); font-size: 18px; font-weight: 700; }
         .chat.drop-active .drop-hint { display: grid; }
-        .settings-view { grid-row: 1 / -1; overflow: auto; padding: 24px; background: var(--bg); }
+        .settings-view { grid-row: 1 / -1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 24px; background: var(--bg); }
         .settings-card { width: min(700px, 100%); margin: 0 auto; background: #fff; border-radius: 8px; border: 1px solid var(--line); padding: 20px; }
         .settings-header { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 4px; }
         .settings-breadcrumb { display: flex; align-items: center; gap: 8px; min-width: 0; color: var(--muted); font-size: 14px; }
@@ -1613,7 +1642,7 @@ function renderMessengerApp() {
         .blocked-person .avatar { width: 38px; height: 38px; }
         .blocked-person strong, .blocked-person span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .modal { position: fixed; inset: 0; background: rgba(15, 23, 42, .42); display: grid; place-items: center; padding: 18px; z-index: 20; }
-        .modal-card { width: min(560px, 100%); max-height: min(760px, 100%); overflow: auto; background: #fff; border-radius: 8px; border: 1px solid var(--line); padding: 20px; box-shadow: 0 24px 80px rgba(15, 23, 42, .22); }
+        .modal-card { width: min(560px, 100%); max-height: min(760px, 100%); overflow-y: auto; -webkit-overflow-scrolling: touch; background: #fff; border-radius: 8px; border: 1px solid var(--line); padding: 20px; box-shadow: 0 24px 80px rgba(15, 23, 42, .22); }
         .modal-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 16px; }
         .close-button { width: 38px; height: 38px; display: grid; place-items: center; font-size: 28px; line-height: 1; padding: 0; border-radius: 50%; }
         .segmented { display: flex; gap: 8px; flex-wrap: wrap; }
@@ -1624,8 +1653,9 @@ function renderMessengerApp() {
             .chat-home::before, .chat-home::after { animation: none; }
         }
         @media (max-width: 780px) {
-            body { overflow: hidden; }
-            .app { grid-template-columns: 1fr; }
+            body.app-active { height: var(--app-height, 100vh); min-height: 0; overflow: hidden; }
+            .auth-shell { min-height: var(--app-height, 100vh); align-content: start; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+            .app { height: var(--app-height, 100vh); grid-template-columns: 1fr; }
             .topbar { padding-top: calc(16px + env(safe-area-inset-top)); }
             .sidebar.chat-open { display: none; }
             .chat:not(.chat-open) { display: none; }
@@ -1635,14 +1665,12 @@ function renderMessengerApp() {
                 background: var(--panel);
                 box-shadow: 0 1px 3px rgba(15,23,42,.08);
             }
-            .chat {
-                height: 100vh;
-                height: 100dvh;
-            }
+            .sidebar, .chat { height: var(--app-height, 100vh); }
             .messages {
                 min-height: 0;
                 padding: 12px 10px;
                 overflow-y: auto;
+                -webkit-overflow-scrolling: touch;
                 overscroll-behavior-y: contain;
             }
             .composer {
@@ -1701,11 +1729,21 @@ function renderMessengerApp() {
                 </div>
                 <div class="field">
                     <label for="password">Passwort</label>
-                    <input id="password" type="password" autocomplete="current-password" required minlength="6">
+                    <div class="password-input">
+                        <input id="password" type="password" autocomplete="current-password" required minlength="6">
+                        <button class="password-toggle" type="button" data-password-toggle="password" aria-label="Passwort anzeigen" title="Passwort anzeigen">
+                            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12s3.4-6 9.5-6 9.5 6 9.5 6-3.4 6-9.5 6-9.5-6-9.5-6z"></path><circle cx="12" cy="12" r="2.8"></circle><path class="eye-slash" d="M3 3l18 18"></path></svg>
+                        </button>
+                    </div>
                 </div>
                 <div class="field register-only hidden">
                     <label for="passwordRepeat">Passwort wiederholen</label>
-                    <input id="passwordRepeat" type="password" autocomplete="new-password" minlength="6">
+                    <div class="password-input">
+                        <input id="passwordRepeat" type="password" autocomplete="new-password" minlength="6">
+                        <button class="password-toggle" type="button" data-password-toggle="passwordRepeat" aria-label="Passwort anzeigen" title="Passwort anzeigen">
+                            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12s3.4-6 9.5-6 9.5 6 9.5 6-3.4 6-9.5 6-9.5-6-9.5-6z"></path><circle cx="12" cy="12" r="2.8"></circle><path class="eye-slash" d="M3 3l18 18"></path></svg>
+                        </button>
+                    </div>
                 </div>
                 <label class="segmented register-only hidden">
                     <input id="register2fa" type="checkbox" style="width:auto;">
@@ -1764,11 +1802,21 @@ function renderMessengerApp() {
                     </div>
                     <div class="field">
                         <label for="resetPassword">Neues Passwort</label>
-                        <input id="resetPassword" type="password" autocomplete="new-password" minlength="6">
+                        <div class="password-input">
+                            <input id="resetPassword" type="password" autocomplete="new-password" minlength="6">
+                            <button class="password-toggle" type="button" data-password-toggle="resetPassword" aria-label="Passwort anzeigen" title="Passwort anzeigen">
+                                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12s3.4-6 9.5-6 9.5 6 9.5 6-3.4 6-9.5 6-9.5-6-9.5-6z"></path><circle cx="12" cy="12" r="2.8"></circle><path class="eye-slash" d="M3 3l18 18"></path></svg>
+                            </button>
+                        </div>
                     </div>
                     <div class="field">
                         <label for="resetPasswordRepeat">Passwort wiederholen</label>
-                        <input id="resetPasswordRepeat" type="password" autocomplete="new-password" minlength="6">
+                        <div class="password-input">
+                            <input id="resetPasswordRepeat" type="password" autocomplete="new-password" minlength="6">
+                            <button class="password-toggle" type="button" data-password-toggle="resetPasswordRepeat" aria-label="Passwort anzeigen" title="Passwort anzeigen">
+                                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12s3.4-6 9.5-6 9.5 6 9.5 6-3.4 6-9.5 6-9.5-6-9.5-6z"></path><circle cx="12" cy="12" r="2.8"></circle><path class="eye-slash" d="M3 3l18 18"></path></svg>
+                            </button>
+                        </div>
                     </div>
                     <button id="submitPasswordReset" class="primary" type="button">Passwort speichern</button>
                 </div>
@@ -2061,7 +2109,7 @@ function renderMessengerApp() {
         </form>
     </div>
 
-    <script>
+    <script data-cfasync="false">
         const state = {
             token: localStorage.getItem('justchat_token'),
             me: null,
@@ -2100,12 +2148,40 @@ function renderMessengerApp() {
 
         const $ = (id) => document.getElementById(id);
 
+        function updateViewportHeight() {
+            document.documentElement.style.setProperty('--app-height', window.innerHeight + 'px');
+        }
+
+        updateViewportHeight();
+        window.addEventListener('resize', updateViewportHeight);
+        window.addEventListener('orientationchange', updateViewportHeight);
+
+        document.querySelectorAll('[data-password-toggle]').forEach((toggle) => {
+            toggle.addEventListener('click', () => {
+                const password = $(toggle.dataset.passwordToggle);
+                if (!password) return;
+                const visible = password.type === 'password';
+                password.type = visible ? 'text' : 'password';
+                toggle.classList.toggle('visible', visible);
+                toggle.setAttribute('aria-label', visible ? 'Passwort verbergen' : 'Passwort anzeigen');
+                toggle.title = visible ? 'Passwort verbergen' : 'Passwort anzeigen';
+            });
+        });
+
         function api(path, options = {}) {
-            const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
+            const headers = Object.assign({ 'Content-Type': 'application/json' }, options.headers || {});
             if (state.token) headers.Authorization = 'Bearer ' + state.token;
-            const controller = new AbortController();
-            const requestTimeout = setTimeout(() => controller.abort(), 12000);
-            return fetch(path, { ...options, headers, signal: controller.signal })
+            const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+            const requestOptions = Object.assign({}, options, { headers });
+            if (controller) requestOptions.signal = controller.signal;
+            let requestTimeout;
+            const timeout = new Promise((resolve, reject) => {
+                requestTimeout = setTimeout(() => {
+                    if (controller) controller.abort();
+                    reject(new Error('Server antwortet nicht'));
+                }, 12000);
+            });
+            const request = fetch(path, requestOptions)
                 .then(async (res) => {
                     const data = await res.json().catch(() => ({}));
                     if (!res.ok) {
@@ -2121,8 +2197,17 @@ function renderMessengerApp() {
                         throw new Error('Server antwortet nicht');
                     }
                     throw error;
-                })
-                .finally(() => clearTimeout(requestTimeout));
+                });
+            return Promise.race([request, timeout]).then(
+                (data) => {
+                    clearTimeout(requestTimeout);
+                    return data;
+                },
+                (error) => {
+                    clearTimeout(requestTimeout);
+                    throw error;
+                }
+            );
         }
 
         function initials(name) {
@@ -2140,22 +2225,31 @@ function renderMessengerApp() {
             TL: 23, TN: 24, TR: 26, UA: 29, VA: 22, VG: 24, XK: 20,
         };
 
+        function isValidIbanCandidate(candidate) {
+            const iban = candidate.replace(/[^A-Z0-9]/g, '');
+            if (!ibanLengths[iban.slice(0, 2)] || iban.length !== ibanLengths[iban.slice(0, 2)]) return false;
+            const rotated = iban.slice(4) + iban.slice(0, 4);
+            const numeric = rotated.replace(/[A-Z]/g, (letter) => String(letter.charCodeAt(0) - 55));
+            let remainder = 0;
+            for (let index = 0; index < numeric.length; index += 1) {
+                remainder = (remainder * 10 + Number(numeric.charAt(index))) % 97;
+            }
+            return remainder === 1;
+        }
+
         function containsIban(value) {
             const text = String(value || '').toUpperCase();
             const compact = text.replace(/[^A-Z0-9]/g, '');
-            const candidates = [
-                ...text.matchAll(/[A-Z]{2}\\d{2}(?:[\\s-]?[A-Z0-9]){10,30}/g),
-                ...compact.matchAll(/[A-Z]{2}\\d{2}[A-Z0-9]{11,30}/g),
-            ];
-            return candidates.some((match) => {
-                const iban = match[0].replace(/[^A-Z0-9]/g, '');
-                if (!ibanLengths[iban.slice(0, 2)] || iban.length !== ibanLengths[iban.slice(0, 2)]) return false;
-                const rotated = iban.slice(4) + iban.slice(0, 4);
-                const numeric = rotated.replace(/[A-Z]/g, (letter) => String(letter.charCodeAt(0) - 55));
-                let remainder = 0;
-                for (const digit of numeric) remainder = (remainder * 10 + Number(digit)) % 97;
-                return remainder === 1;
-            });
+            const readablePattern = /[A-Z]{2}\\d{2}(?:[\\s-]?[A-Z0-9]){10,30}/g;
+            const compactPattern = /[A-Z]{2}\\d{2}[A-Z0-9]{11,30}/g;
+            let match;
+            while ((match = readablePattern.exec(text))) {
+                if (isValidIbanCandidate(match[0])) return true;
+            }
+            while ((match = compactPattern.exec(compact))) {
+                if (isValidIbanCandidate(match[0])) return true;
+            }
+            return false;
         }
 
         function hideSensitiveMessageWarning() {
@@ -2188,7 +2282,11 @@ function renderMessengerApp() {
 
         function membershipText(value) {
             if (!value) return 'Nicht verfügbar';
-            return new Date(value).toLocaleDateString([], { dateStyle: 'long' });
+            try {
+                return new Date(value).toLocaleDateString([], { dateStyle: 'long' });
+            } catch (error) {
+                return new Date(value).toLocaleDateString();
+            }
         }
 
         function gifAnimationEnabled() {
@@ -2228,6 +2326,7 @@ function renderMessengerApp() {
         }
 
         function showAuth() {
+            document.body.classList.remove('app-active');
             $('loading').classList.add('hidden');
             $('auth').classList.remove('hidden');
             $('messenger').classList.add('hidden');
@@ -2237,6 +2336,8 @@ function renderMessengerApp() {
         }
 
         function showApp() {
+            updateViewportHeight();
+            document.body.classList.add('app-active');
             $('loading').classList.add('hidden');
             $('auth').classList.add('hidden');
             $('messenger').classList.remove('hidden');
@@ -2361,8 +2462,8 @@ function renderMessengerApp() {
                 return;
             }
             $('avatarPicker').innerHTML = state.avatars.map((avatar) =>
-                '<button type="button" class="avatar-option ' + (Number(state.selectedAvatarId) === Number(avatar.id) ? 'selected' : '') + '" data-avatar="' + avatar.id + '">' +
-                '<img src="' + avatar.data_url + '" alt="' + escapeText(avatar.name) + '"></button>'
+                '<button type="button" class="avatar-option ' + (Number(state.selectedAvatarId) === Number(avatar.id) ? 'selected' : '') + '" data-avatar="' + avatar.id + '" aria-pressed="' + (Number(state.selectedAvatarId) === Number(avatar.id) ? 'true' : 'false') + '">' +
+                '<img src="' + avatar.data_url + '" alt="' + escapeText(avatar.name) + '" decoding="async" draggable="false"></button>'
             ).join('');
         }
 
@@ -2563,7 +2664,11 @@ function renderMessengerApp() {
 
         function formatLastSeen(value) {
             if (!value) return 'Keine Aktivität verfügbar';
-            return new Date(value).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+            try {
+                return new Date(value).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+            } catch (error) {
+                return new Date(value).toLocaleString();
+            }
         }
 
         function renderContactProfile() {
@@ -2655,7 +2760,7 @@ function renderMessengerApp() {
         }
 
         function escapeText(value) {
-            return String(value ?? '').replace(/[&<>"']/g, (char) => ({
+            return String(value == null ? '' : value).replace(/[&<>"']/g, (char) => ({
                 '&': '&amp;',
                 '<': '&lt;',
                 '>': '&gt;',
@@ -2684,7 +2789,11 @@ function renderMessengerApp() {
                 : null;
             if (selectedMessage) {
                 selectedMessage.classList.add('search-highlight');
-                selectedMessage.scrollIntoView({ block: 'center', behavior: 'smooth' });
+                try {
+                    selectedMessage.scrollIntoView({ block: 'center', behavior: 'smooth' });
+                } catch (error) {
+                    selectedMessage.scrollIntoView();
+                }
                 state.searchMessageId = null;
             } else {
                 $('messages').scrollTop = $('messages').scrollHeight;
@@ -3124,7 +3233,11 @@ function renderMessengerApp() {
             const button = event.target.closest('[data-avatar]');
             if (!button) return;
             state.selectedAvatarId = button.dataset.avatar;
-            renderAvatarPicker();
+            $('avatarPicker').querySelectorAll('[data-avatar]').forEach((option) => {
+                const selected = option === button;
+                option.classList.toggle('selected', selected);
+                option.setAttribute('aria-pressed', selected ? 'true' : 'false');
+            });
         });
         $('profileAvatarPicker').addEventListener('click', (event) => {
             const deleteButton = event.target.closest('[data-delete-profile-avatar]');
@@ -3340,6 +3453,10 @@ function renderMessengerApp() {
         });
         $('back').addEventListener('click', () => {
             showChatHome();
+            if (window.matchMedia && window.matchMedia('(max-width: 780px)').matches) {
+                $('sidebar').classList.remove('chat-open');
+                $('chat').classList.remove('chat-open');
+            }
         });
         $('homeChatsButton').addEventListener('click', () => {
             $('sidebar').classList.remove('chat-open');
@@ -3458,7 +3575,12 @@ function renderMessengerApp() {
                     ? '<div class="search-group-title">Nachrichten</div>' + data.messages.map((message) => {
                         const sentByMe = Number(message.sender_id) === Number(state.me.id);
                         const person = sentByMe ? 'Du in ' + message.display_name : message.display_name;
-                        const time = new Date(message.created_at).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' });
+                        let time;
+                        try {
+                            time = new Date(message.created_at).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' });
+                        } catch (error) {
+                            time = new Date(message.created_at).toLocaleString();
+                        }
                         return '<button class="message-result" type="button" data-message-chat="' + message.conversation_id + '" data-message-id="' + message.id + '">' +
                             '<span class="message-result-head"><strong>' + escapeText(person) + '</strong><span>' + escapeText(time) + '</span></span>' +
                             '<span class="message-result-preview">' + escapeText(message.body) + '</span></button>';
@@ -4278,7 +4400,7 @@ app.get('/auth/google/callback', async (req, res, next) => {
         }
 
         const token = createToken(user);
-        return res.send(`<!doctype html><html><body><script>
+        return res.send(`<!doctype html><html><body><script data-cfasync="false">
             localStorage.setItem('justchat_token', ${JSON.stringify(token)});
             location.href = '/';
         </script></body></html>`);
