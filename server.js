@@ -1969,7 +1969,7 @@ function renderMessengerApp() {
             if (!root) return;
             root.querySelectorAll('img').forEach((image) => {
                 const source = image.dataset.gifSource || image.getAttribute('src') || '';
-                const isGif = image.dataset.isGif === 'true' || /^data:image\/gif/i.test(source);
+                const isGif = image.dataset.isGif === 'true' || /^data:image\\/gif/i.test(source);
                 if (!isGif) return;
                 if (!image.dataset.gifSource) image.dataset.gifSource = source;
                 if (gifAnimationEnabled()) {
