@@ -145,6 +145,11 @@ function parseImageAttachment(attachment) {
     };
 }
 
+function parseId(value) {
+    const id = Number(value);
+    return Number.isInteger(id) && id > 0 ? id : null;
+}
+
 function formatDuration(totalSeconds) {
     const days = Math.floor(totalSeconds / 86400);
     const hours = Math.floor((totalSeconds % 86400) / 3600);
@@ -186,11 +191,22 @@ async function initDatabase() {
             username text not null unique,
             display_name text not null,
             email text,
+            avatar_asset_id bigint,
             password_hash text not null,
             about text not null default '',
             avatar_color text not null default '#2563eb',
             created_at timestamptz not null default now(),
             last_seen_at timestamptz
+        );
+
+        create table if not exists avatar_assets (
+            id bigserial primary key,
+            name text not null,
+            mime_type text not null,
+            size_bytes integer not null,
+            data bytea not null,
+            is_active boolean not null default true,
+            created_at timestamptz not null default now()
         );
 
         create table if not exists conversations (
@@ -231,6 +247,7 @@ async function initDatabase() {
 
         alter table users add column if not exists email text;
         alter table users add column if not exists email_verified_at timestamptz;
+        alter table users add column if not exists avatar_asset_id bigint references avatar_assets(id);
 
         create unique index if not exists idx_users_email_unique
             on users(email)
@@ -265,7 +282,12 @@ async function waitForDatabase() {
 
 async function getUserById(userId) {
     const result = await query(
-        'select id, username, display_name, email, about, avatar_color, created_at, last_seen_at from users where id = $1',
+        `select u.id, u.username, u.display_name, u.email, u.about, u.avatar_color, u.avatar_asset_id,
+            u.created_at, u.last_seen_at,
+            case when aa.id is null then null else 'data:' || aa.mime_type || ';base64,' || encode(aa.data, 'base64') end as avatar_url
+         from users u
+         left join avatar_assets aa on aa.id = u.avatar_asset_id and aa.is_active = true
+         where u.id = $1`,
         [userId],
     );
     return result.rows[0] || null;
@@ -427,25 +449,27 @@ function renderAdminLayout(content) {
     <style>
         :root {
             color-scheme: light;
-            --bg: #eef2f7;
+            --bg: #f4f7fb;
             --panel: #ffffff;
             --text: #172033;
             --muted: #667085;
             --line: #d9e1ec;
             --accent: #2563eb;
+            --accent-dark: #1d4ed8;
             --ok: #138a45;
             --warn: #9a6700;
             --error: #c62828;
         }
         * { box-sizing: border-box; }
         body { margin: 0; min-height: 100vh; font-family: Arial, sans-serif; background: var(--bg); color: var(--text); }
-        main { width: min(1120px, calc(100% - 32px)); margin: 0 auto; padding: 32px 0; }
+        main { width: min(1280px, calc(100% - 32px)); margin: 0 auto; padding: 28px 0; }
         header { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin-bottom: 24px; }
         h1, h2, p { margin: 0; }
         h1 { font-size: clamp(28px, 4vw, 44px); letter-spacing: 0; }
         h2 { font-size: 18px; margin-bottom: 16px; }
         .muted { color: var(--muted); margin-top: 8px; }
         .grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
+        .two { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(320px, .85fr); gap: 16px; align-items: start; }
         .panel, .metric { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 20px; }
         .panel { margin-top: 16px; }
         .metric span { display: block; color: var(--muted); font-size: 13px; margin-bottom: 10px; }
@@ -459,9 +483,29 @@ function renderAdminLayout(content) {
         dd { margin: 0; overflow-wrap: anywhere; }
         code { background: #f5f7fb; border: 1px solid var(--line); border-radius: 6px; padding: 2px 6px; }
         a { color: var(--accent); font-weight: 700; text-decoration: none; }
+        button, input, select { font: inherit; }
+        button, .button { background: var(--accent); color: #fff; border: 0; border-radius: 8px; padding: 10px 12px; font-weight: 700; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
+        button:hover, .button:hover { background: var(--accent-dark); }
+        .secondary { background: #eef2ff; color: var(--accent); }
+        .secondary:hover { background: #dfe7ff; }
+        .danger { background: #fee4e2; color: var(--error); }
+        .danger:hover { background: #fecdca; }
+        .toolbar { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+        .field { display: grid; gap: 6px; margin-bottom: 12px; }
+        .field label { font-size: 13px; color: var(--muted); font-weight: 700; }
+        input, select { width: 100%; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; background: #fff; color: var(--text); }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { padding: 10px 8px; border-bottom: 1px solid #edf1f6; text-align: left; vertical-align: middle; }
+        th { color: var(--muted); font-size: 12px; text-transform: uppercase; }
+        .avatar-preview { width: 42px; height: 42px; border-radius: 50%; object-fit: cover; background: #eef2f7; border: 1px solid var(--line); }
+        .avatar-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 12px; }
+        .avatar-card { border: 1px solid var(--line); border-radius: 8px; padding: 10px; background: #fff; display: grid; gap: 8px; justify-items: center; text-align: center; }
+        .avatar-card img { width: 58px; height: 58px; border-radius: 50%; object-fit: cover; }
+        .notice { border: 1px solid #fedf89; background: #fffaeb; color: #7a4f01; border-radius: 8px; padding: 12px; margin-top: 16px; }
         @media (max-width: 820px) {
             header { align-items: flex-start; flex-direction: column; }
             .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+            .two { grid-template-columns: 1fr; }
             dl { grid-template-columns: 1fr; }
         }
         @media (max-width: 520px) {
@@ -482,39 +526,187 @@ function renderDashboard(data) {
         <header>
             <div>
                 <h1>${escapeHtml(data.appName)} Admin</h1>
-                <p class="muted">Betrieb, Datenbank und Messenger-Status.</p>
+                <p class="muted">Betrieb, Nutzerverwaltung, Avatar-Bibliothek und Sicherheits-Export.</p>
             </div>
-            <span class="status ${dbStatus}">Datenbank: ${statusText(data.database.online)}</span>
+            <div class="toolbar">
+                <button id="refreshButton" type="button">Aktualisieren</button>
+                <a class="button secondary" href="/">Web-App</a>
+                <span class="status ${dbStatus}">Datenbank: ${statusText(data.database.online)}</span>
+            </div>
         </header>
         <section class="grid" aria-label="Server Kennzahlen">
-            <div class="metric"><span>Umgebung</span><strong>${escapeHtml(data.environment)}</strong></div>
-            <div class="metric"><span>Uptime</span><strong>${escapeHtml(data.uptime)}</strong></div>
-            <div class="metric"><span>Speicher</span><strong>${escapeHtml(data.memoryMb)} MB</strong></div>
+            <div class="metric"><span>Nutzer</span><strong id="statUsers">-</strong></div>
+            <div class="metric"><span>Chats</span><strong id="statConversations">-</strong></div>
+            <div class="metric"><span>Nachrichten</span><strong id="statMessages">-</strong></div>
             <div class="metric"><span>Live-Verbindungen</span><strong>${escapeHtml(data.onlineEventClients)}</strong></div>
         </section>
+        <div class="two">
+            <section class="panel">
+                <h2>Nutzer</h2>
+                <div class="field">
+                    <label for="userFilter">Nutzer fuer Export auswaehlen</label>
+                    <select id="userFilter">
+                        <option value="">Alle Nutzer</option>
+                    </select>
+                </div>
+                <div class="toolbar">
+                    <a id="downloadExport" class="button" href="/admin/export">Export herunterladen</a>
+                    <button id="downloadSelected" class="secondary" type="button">Auswahl exportieren</button>
+                </div>
+                <div style="overflow:auto; margin-top: 16px;">
+                    <table>
+                        <thead><tr><th>Avatar</th><th>Nutzer</th><th>E-Mail</th><th>Chats</th><th>Nachrichten</th></tr></thead>
+                        <tbody id="userRows"></tbody>
+                    </table>
+                </div>
+            </section>
+
+            <aside>
+                <section class="panel">
+                    <h2>System</h2>
+                    <dl>
+                        <dt>Umgebung</dt><dd>${escapeHtml(data.environment)}</dd>
+                        <dt>Uptime</dt><dd>${escapeHtml(data.uptime)}</dd>
+                        <dt>Speicher</dt><dd>${escapeHtml(data.memoryMb)} MB</dd>
+                        <dt>Node.js</dt><dd>${escapeHtml(data.nodeVersion)}</dd>
+                        <dt>Port</dt><dd>${escapeHtml(data.port)}</dd>
+                        <dt>Datenbank</dt><dd>${escapeHtml(data.database.message)}</dd>
+                    </dl>
+                </section>
+
+                <section class="panel">
+                    <h2>Update</h2>
+                    <p class="muted">Der Button aktualisiert diese Ansicht. Container-Updates laufen sauber ueber GitHub Actions und TrueNAS App-Update/Neustart.</p>
+                    <div class="toolbar" style="margin-top: 12px;">
+                        <button id="updateButton" type="button">Status neu laden</button>
+                    </div>
+                </section>
+            </aside>
+        </div>
+
         <section class="panel">
-            <h2>System</h2>
-            <dl>
-                <dt>Gestartet</dt><dd>${escapeHtml(data.startedAt)}</dd>
-                <dt>Node.js</dt><dd>${escapeHtml(data.nodeVersion)}</dd>
-                <dt>Port</dt><dd>${escapeHtml(data.port)}</dd>
-                <dt>Admin Login</dt><dd>${data.authConfigured ? 'Konfiguriert' : 'Nicht konfiguriert'}</dd>
-            </dl>
+            <h2>Profilbilder</h2>
+            <p class="muted">Hier laedst du erlaubte Profilbilder hoch. Nutzer koennen nur diese Bilder auswaehlen, keine eigenen Uploads.</p>
+            <div class="toolbar" style="margin-top: 12px;">
+                <input id="avatarName" placeholder="Name des Profilbilds">
+                <input id="avatarFile" type="file" accept="image/png,image/jpeg,image/webp,image/gif">
+                <button id="uploadAvatar" type="button">Profilbild hochladen</button>
+            </div>
+            <div id="avatarGrid" class="avatar-grid" style="margin-top: 16px;"></div>
         </section>
+
         <section class="panel">
-            <h2>Datenbank</h2>
-            <dl>
-                <dt>Status</dt><dd><span class="status ${dbStatus}">${statusText(data.database.online)}</span></dd>
-                <dt>Konfiguriert</dt><dd>${data.database.configured ? 'Ja' : 'Nein'}</dd>
-                <dt>Latenz</dt><dd>${data.database.latencyMs === null ? '-' : `${data.database.latencyMs} ms`}</dd>
-                <dt>Meldung</dt><dd>${escapeHtml(data.database.message)}</dd>
-            </dl>
+            <h2>Audit</h2>
+            <div style="overflow:auto;">
+                <table>
+                    <thead><tr><th>Zeit</th><th>Admin</th><th>Aktion</th><th>IP</th></tr></thead>
+                    <tbody id="auditRows"></tbody>
+                </table>
+            </div>
         </section>
-        <section class="panel">
-            <h2>Sicherheits-Export</h2>
-            <p>Exportiert Benutzer, 1:1-Chats, Nachrichten und Bildanhaenge als JSON-Datei fuer berechtigte Pruefungen.</p>
-            <p class="muted"><a href="/admin/export">Chatverlauf herunterladen</a></p>
-        </section>
+
+        <div class="notice">Hinweis: Exporte enthalten private Chatdaten und Bildanhaenge. Verwende sie nur mit berechtigtem Zweck und bewahre Downloads geschuetzt auf.</div>
+
+        <script>
+            const state = { users: [], avatars: [], audit: [] };
+            const el = (id) => document.getElementById(id);
+            const escapeText = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({
+                '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+            }[char]));
+
+            function initials(name) {
+                return String(name || '?').slice(0, 1).toUpperCase() || '?';
+            }
+
+            async function readFileBase64(file) {
+                if (!file) throw new Error('Bitte ein Bild auswaehlen');
+                if (!['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(file.type)) {
+                    throw new Error('Nur JPEG, PNG, WebP und GIF sind erlaubt');
+                }
+                if (file.size > 5 * 1024 * 1024) throw new Error('Bild muss kleiner als 5 MB sein');
+
+                return new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onload = () => {
+                        const dataUrl = String(reader.result);
+                        resolve(dataUrl.slice(dataUrl.indexOf(',') + 1));
+                    };
+                    reader.onerror = () => reject(new Error('Bild konnte nicht gelesen werden'));
+                    reader.readAsDataURL(file);
+                });
+            }
+
+            async function adminApi(path, options = {}) {
+                const response = await fetch(path, {
+                    ...options,
+                    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+                });
+                const data = await response.json().catch(() => ({}));
+                if (!response.ok) throw new Error(data.error || 'Admin-Anfrage fehlgeschlagen');
+                return data;
+            }
+
+            function render() {
+                el('statUsers').textContent = state.summary.users;
+                el('statConversations').textContent = state.summary.conversations;
+                el('statMessages').textContent = state.summary.messages;
+                el('userFilter').innerHTML = '<option value="">Alle Nutzer</option>' + state.users.map((user) =>
+                    '<option value="' + user.id + '">' + escapeText(user.display_name) + ' (@' + escapeText(user.username) + ')</option>'
+                ).join('');
+                el('userRows').innerHTML = state.users.map((user) => {
+                    const avatar = user.avatar_url
+                        ? '<img class="avatar-preview" src="' + user.avatar_url + '" alt="">'
+                        : '<div class="avatar-preview" style="display:grid;place-items:center;background:' + user.avatar_color + ';color:#fff;font-weight:800;">' + initials(user.display_name) + '</div>';
+                    return '<tr><td>' + avatar + '</td><td><strong>' + escapeText(user.display_name) + '</strong><br><span class="muted">@' + escapeText(user.username) + '</span></td><td>' + escapeText(user.email || '-') + '</td><td>' + user.conversation_count + '</td><td>' + user.message_count + '</td></tr>';
+                }).join('');
+                el('avatarGrid').innerHTML = state.avatars.length ? state.avatars.map((avatar) =>
+                    '<div class="avatar-card"><img src="' + avatar.data_url + '" alt=""><strong>' + escapeText(avatar.name) + '</strong><span class="muted">' + Math.round(avatar.size_bytes / 1024) + ' KB</span></div>'
+                ).join('') : '<p class="muted">Noch keine Profilbilder hochgeladen.</p>';
+                el('auditRows').innerHTML = state.audit.map((row) =>
+                    '<tr><td>' + new Date(row.created_at).toLocaleString() + '</td><td>' + escapeText(row.admin_user) + '</td><td>' + escapeText(row.action) + '</td><td>' + escapeText(row.ip_address || '-') + '</td></tr>'
+                ).join('');
+            }
+
+            async function loadAdmin() {
+                const data = await adminApi('/admin/api/overview');
+                state.summary = data.summary;
+                state.users = data.users;
+                state.avatars = data.avatars;
+                state.audit = data.audit;
+                render();
+            }
+
+            el('refreshButton').addEventListener('click', loadAdmin);
+            el('updateButton').addEventListener('click', loadAdmin);
+            el('downloadSelected').addEventListener('click', () => {
+                const userId = el('userFilter').value;
+                window.location.href = userId ? '/admin/export?userId=' + encodeURIComponent(userId) : '/admin/export';
+            });
+            el('userFilter').addEventListener('change', () => {
+                const userId = el('userFilter').value;
+                el('downloadExport').href = userId ? '/admin/export?userId=' + encodeURIComponent(userId) : '/admin/export';
+            });
+            el('uploadAvatar').addEventListener('click', async () => {
+                try {
+                    const file = el('avatarFile').files[0];
+                    const dataBase64 = await readFileBase64(file);
+                    await adminApi('/admin/api/avatar-assets', {
+                        method: 'POST',
+                        body: JSON.stringify({
+                            name: el('avatarName').value || file.name,
+                            attachment: { fileName: file.name, mimeType: file.type, dataBase64 },
+                        }),
+                    });
+                    el('avatarName').value = '';
+                    el('avatarFile').value = '';
+                    await loadAdmin();
+                } catch (error) {
+                    alert(error.message);
+                }
+            });
+
+            loadAdmin();
+        </script>
     `);
 }
 
@@ -544,9 +736,9 @@ function renderMessengerApp() {
         body { margin: 0; min-height: 100vh; font-family: Arial, sans-serif; background: var(--bg); color: var(--text); }
         button, input, textarea { font: inherit; }
         button { cursor: pointer; border: 0; }
-        .auth-shell { min-height: 100vh; display: grid; place-items: center; padding: 24px; }
-        .auth-card { width: min(420px, 100%); background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 24px; }
-        .auth-card h1 { margin: 0 0 6px; font-size: 32px; letter-spacing: 0; }
+        .auth-shell { min-height: 100vh; display: grid; place-items: center; padding: 24px; background: linear-gradient(135deg, #f7fbff 0%, #edf7f4 100%); }
+        .auth-card { width: min(460px, 100%); background: rgba(255,255,255,.96); border: 1px solid var(--line); border-radius: 8px; padding: 26px; box-shadow: 0 18px 50px rgba(15, 23, 42, .12); }
+        .auth-card h1 { margin: 0 0 6px; font-size: 36px; letter-spacing: 0; }
         .muted { color: var(--muted); }
         .stack { display: grid; gap: 12px; }
         .field { display: grid; gap: 6px; }
@@ -555,6 +747,10 @@ function renderMessengerApp() {
             width: 100%; border: 1px solid var(--line); border-radius: 8px; padding: 11px 12px; outline: none; background: #fff;
         }
         .field input:focus, .field textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(15, 118, 110, .12); }
+        .avatar-picker { display: grid; grid-template-columns: repeat(auto-fill, minmax(66px, 1fr)); gap: 8px; }
+        .avatar-option { border: 2px solid var(--line); background: #fff; border-radius: 8px; padding: 6px; min-height: 74px; display: grid; place-items: center; }
+        .avatar-option.selected { border-color: var(--accent); background: #eef8f6; }
+        .avatar-option img { width: 48px; height: 48px; border-radius: 50%; object-fit: cover; }
         .primary { background: var(--accent); color: #fff; border-radius: 8px; padding: 11px 14px; font-weight: 700; }
         .primary:hover { background: var(--accent-strong); }
         .ghost { background: transparent; color: var(--accent); font-weight: 700; padding: 8px; }
@@ -570,7 +766,7 @@ function renderMessengerApp() {
         .list { overflow: auto; }
         .row { width: 100%; background: transparent; display: grid; grid-template-columns: 44px 1fr; gap: 12px; padding: 12px 16px; text-align: left; border-bottom: 1px solid #edf1f6; }
         .row:hover, .row.active { background: #eef8f6; }
-        .avatar { width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; color: #fff; font-weight: 800; }
+        .avatar { width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; color: #fff; font-weight: 800; object-fit: cover; }
         .row-main { min-width: 0; }
         .row-title { display: flex; justify-content: space-between; gap: 8px; min-width: 0; }
         .row-title strong, .preview { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -611,6 +807,11 @@ function renderMessengerApp() {
             <div class="field register-only hidden">
                 <label for="email">E-Mail</label>
                 <input id="email" type="email" autocomplete="email" maxlength="160">
+            </div>
+            <div class="field register-only hidden">
+                <label>Profilbild</label>
+                <div id="avatarPicker" class="avatar-picker"></div>
+                <p class="muted">Profilbilder werden vom Admin freigegeben.</p>
             </div>
             <div class="field">
                 <label for="username">Benutzername</label>
@@ -673,6 +874,8 @@ function renderMessengerApp() {
             activeConversation: null,
             eventSource: null,
             registerMode: false,
+            avatars: [],
+            selectedAvatarId: null,
         };
 
         const $ = (id) => document.getElementById(id);
@@ -689,6 +892,13 @@ function renderMessengerApp() {
 
         function initials(name) {
             return String(name || '?').trim().slice(0, 1).toUpperCase() || '?';
+        }
+
+        function avatarMarkup(entity) {
+            if (entity.avatar_url) {
+                return '<img class="avatar" src="' + entity.avatar_url + '" alt="">';
+            }
+            return '<div class="avatar" style="background:' + entity.avatar_color + '">' + initials(entity.display_name) + '</div>';
         }
 
         function showAuth() {
@@ -708,6 +918,29 @@ function renderMessengerApp() {
             $('toggleAuth').textContent = registerMode ? 'Schon ein Konto? Anmelden' : 'Neues Konto erstellen';
             $('authHint').textContent = registerMode ? 'Erstelle dein JustChat-Konto.' : 'Melde dich an, um deine Chats zu sehen.';
             $('authError').textContent = '';
+            if (registerMode) loadAvatars();
+        }
+
+        async function loadAvatars() {
+            try {
+                const data = await api('/api/avatars');
+                state.avatars = data.avatars || [];
+                if (!state.selectedAvatarId && state.avatars.length) state.selectedAvatarId = state.avatars[0].id;
+                renderAvatarPicker();
+            } catch {
+                $('avatarPicker').innerHTML = '<span class="muted">Keine Profilbilder verfuegbar.</span>';
+            }
+        }
+
+        function renderAvatarPicker() {
+            if (!state.avatars.length) {
+                $('avatarPicker').innerHTML = '<span class="muted">Noch keine Profilbilder verfuegbar.</span>';
+                return;
+            }
+            $('avatarPicker').innerHTML = state.avatars.map((avatar) =>
+                '<button type="button" class="avatar-option ' + (Number(state.selectedAvatarId) === Number(avatar.id) ? 'selected' : '') + '" data-avatar="' + avatar.id + '">' +
+                '<img src="' + avatar.data_url + '" alt="' + escapeText(avatar.name) + '"></button>'
+            ).join('');
         }
 
         function renderConversationList() {
@@ -716,7 +949,7 @@ function renderMessengerApp() {
                 const preview = chat.last_message || (chat.has_attachment ? 'Bild' : 'Noch keine Nachrichten');
                 const time = chat.last_message_at ? new Date(chat.last_message_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
                 return '<button class="row' + active + '" data-chat="' + chat.id + '">' +
-                    '<div class="avatar" style="background:' + chat.avatar_color + '">' + initials(chat.display_name) + '</div>' +
+                    avatarMarkup(chat) +
                     '<div class="row-main"><div class="row-title"><strong>' + escapeText(chat.display_name) + '</strong><span class="muted">' + time + '</span></div>' +
                     '<div class="preview">' + escapeText(preview) + '</div></div></button>';
             }).join('');
@@ -794,8 +1027,11 @@ function renderMessengerApp() {
             $('chat').classList.add('chat-open');
             $('chatName').textContent = data.conversation.display_name;
             $('chatUser').textContent = '@' + data.conversation.username;
-            $('chatAvatar').textContent = initials(data.conversation.display_name);
-            $('chatAvatar').style.background = data.conversation.avatar_color;
+            if (data.conversation.avatar_url) {
+                $('chatAvatar').outerHTML = '<img id="chatAvatar" class="avatar" src="' + data.conversation.avatar_url + '" alt="">';
+            } else {
+                $('chatAvatar').outerHTML = '<div id="chatAvatar" class="avatar" style="background:' + data.conversation.avatar_color + '">' + initials(data.conversation.display_name) + '</div>';
+            }
             renderMessages(data.messages);
             renderConversationList();
             await api('/api/conversations/' + id + '/read', { method: 'POST', body: '{}' });
@@ -835,6 +1071,7 @@ function renderMessengerApp() {
                 password: $('password').value,
                 displayName: $('displayName').value,
                 email: $('email').value,
+                avatarAssetId: state.selectedAvatarId,
             };
             try {
                 const endpoint = state.registerMode ? '/api/auth/register' : '/api/auth/login';
@@ -848,6 +1085,12 @@ function renderMessengerApp() {
         });
 
         $('toggleAuth').addEventListener('click', () => setAuthMode(!state.registerMode));
+        $('avatarPicker').addEventListener('click', (event) => {
+            const button = event.target.closest('[data-avatar]');
+            if (!button) return;
+            state.selectedAvatarId = button.dataset.avatar;
+            renderAvatarPicker();
+        });
         $('logout').addEventListener('click', () => {
             localStorage.removeItem('justchat_token');
             if (state.eventSource) state.eventSource.close();
@@ -870,7 +1113,7 @@ function renderMessengerApp() {
             const data = await api('/api/users?search=' + encodeURIComponent(q));
             $('searchResults').innerHTML = data.users.map((user) =>
                 '<button class="row" data-user="' + user.id + '">' +
-                '<div class="avatar" style="background:' + user.avatar_color + '">' + initials(user.display_name) + '</div>' +
+                avatarMarkup(user) +
                 '<div class="row-main"><div class="row-title"><strong>' + escapeText(user.display_name) + '</strong></div>' +
                 '<div class="preview">@' + escapeText(user.username) + '</div></div></button>'
             ).join('');
@@ -942,23 +1185,98 @@ app.get('/admin', requireAdminAuth, async (req, res) => {
     res.send(renderDashboard(data));
 });
 
-app.get('/admin/export', requireAdminAuth, async (req, res, next) => {
+app.get('/admin/api/overview', requireAdminAuth, async (req, res, next) => {
     try {
+        const summary = await query(`
+            select
+                (select count(*)::int from users) as users,
+                (select count(*)::int from conversations) as conversations,
+                (select count(*)::int from messages) as messages,
+                (select count(*)::int from message_attachments) as attachments
+        `);
+        const users = await query(`
+            select u.id, u.username, u.display_name, u.email, u.avatar_color, u.avatar_asset_id,
+                case when aa.id is null then null else 'data:' || aa.mime_type || ';base64,' || encode(aa.data, 'base64') end as avatar_url,
+                count(distinct c.id)::int as conversation_count,
+                count(distinct m.id)::int as message_count
+            from users u
+            left join avatar_assets aa on aa.id = u.avatar_asset_id and aa.is_active = true
+            left join conversations c on u.id in (c.user_one_id, c.user_two_id)
+            left join messages m on m.sender_id = u.id
+            group by u.id, aa.id
+            order by u.created_at desc
+            limit 200
+        `);
+        const avatars = await query(`
+            select id, name, mime_type, size_bytes, is_active, created_at,
+                'data:' || mime_type || ';base64,' || encode(data, 'base64') as data_url
+            from avatar_assets
+            order by created_at desc
+        `);
+        const audit = await query(`
+            select admin_user, action, ip_address, created_at
+            from admin_audit_logs
+            order by created_at desc
+            limit 50
+        `);
+
+        return res.json({
+            summary: summary.rows[0],
+            users: users.rows,
+            avatars: avatars.rows,
+            audit: audit.rows,
+        });
+    } catch (error) {
+        return next(error);
+    }
+});
+
+app.post('/admin/api/avatar-assets', requireAdminAuth, async (req, res, next) => {
+    try {
+        const attachment = parseImageAttachment(req.body.attachment);
+        if (!attachment) return res.status(400).json({ error: 'Bitte ein Profilbild hochladen' });
+        const name = String(req.body.name || attachment.fileName).trim().slice(0, 80) || attachment.fileName;
+
+        const result = await query(
+            `insert into avatar_assets (name, mime_type, size_bytes, data)
+             values ($1, $2, $3, $4)
+             returning id, name, mime_type, size_bytes, is_active, created_at`,
+            [name, attachment.mimeType, attachment.sizeBytes, attachment.data],
+        );
         await query(
             `insert into admin_audit_logs (admin_user, action, ip_address)
              values ($1, $2, $3)`,
-            [ADMIN_USER, 'chat_export', req.ip],
+            [ADMIN_USER, 'avatar_upload', req.ip],
+        );
+
+        return res.status(201).json({ avatar: result.rows[0] });
+    } catch (error) {
+        return next(error);
+    }
+});
+
+app.get('/admin/export', requireAdminAuth, async (req, res, next) => {
+    try {
+        const userId = parseId(req.query.userId);
+        await query(
+            `insert into admin_audit_logs (admin_user, action, ip_address)
+             values ($1, $2, $3)`,
+            [ADMIN_USER, userId ? `chat_export_user_${userId}` : 'chat_export_all', req.ip],
         );
 
         const users = await query(
             `select id, username, display_name, email, about, avatar_color, created_at, last_seen_at
              from users
+             where ($1::bigint is null or id = $1)
              order by id`,
+            [userId],
         );
         const conversations = await query(
             `select id, user_one_id, user_two_id, created_at
              from conversations
+             where ($1::bigint is null or $1 in (user_one_id, user_two_id))
              order by id`,
+            [userId],
         );
         const messages = await query(
             `select m.id, m.conversation_id, m.sender_id, m.body, m.created_at, m.read_at,
@@ -974,8 +1292,11 @@ app.get('/admin/export', requireAdminAuth, async (req, res, next) => {
                 ) filter (where a.id is not null) as attachments
              from messages m
              left join message_attachments a on a.message_id = m.id
+             join conversations c on c.id = m.conversation_id
+             where ($1::bigint is null or $1 in (c.user_one_id, c.user_two_id))
              group by m.id
              order by m.conversation_id, m.created_at`,
+            [userId],
         );
         const exportedAt = new Date().toISOString();
 
@@ -999,6 +1320,7 @@ app.post('/api/auth/register', async (req, res, next) => {
         const email = cleanEmail(req.body.email);
         const password = String(req.body.password || '');
         const displayName = cleanDisplayName(req.body.displayName, username);
+        const avatarAssetId = parseId(req.body.avatarAssetId);
         const colors = ['#0f766e', '#2563eb', '#7c3aed', '#c2410c', '#be123c', '#047857'];
         const avatarColor = colors[Math.floor(Math.random() * colors.length)];
 
@@ -1013,10 +1335,10 @@ app.post('/api/auth/register', async (req, res, next) => {
         }
 
         const result = await query(
-            `insert into users (username, display_name, email, password_hash, avatar_color)
-             values ($1, $2, $3, $4, $5)
-             returning id, username, display_name, email, about, avatar_color, created_at, last_seen_at`,
-            [username, displayName, email, hashPassword(password), avatarColor],
+            `insert into users (username, display_name, email, avatar_asset_id, password_hash, avatar_color)
+             values ($1, $2, $3, $4, $5, $6)
+             returning id, username, display_name, email, avatar_asset_id, about, avatar_color, created_at, last_seen_at`,
+            [username, displayName, email, avatarAssetId, hashPassword(password), avatarColor],
         );
         const user = result.rows[0];
 
@@ -1063,6 +1385,22 @@ app.post('/api/auth/login', async (req, res, next) => {
     }
 });
 
+app.get('/api/avatars', async (req, res, next) => {
+    try {
+        const result = await query(
+            `select id, name, mime_type, size_bytes,
+                'data:' || mime_type || ';base64,' || encode(data, 'base64') as data_url
+             from avatar_assets
+             where is_active = true
+             order by created_at desc
+             limit 60`,
+        );
+        return res.json({ avatars: result.rows });
+    } catch (error) {
+        return next(error);
+    }
+});
+
 app.get('/api/me', requireAuth, (req, res) => {
     res.json({ user: req.user });
 });
@@ -1073,10 +1411,12 @@ app.get('/api/users', requireAuth, async (req, res, next) => {
         if (search.length < 2) return res.json({ users: [] });
 
         const result = await query(
-            `select id, username, display_name, about, avatar_color, last_seen_at
-             from users
-             where id <> $1 and (username like $2 or lower(display_name) like $2)
-             order by username
+            `select u.id, u.username, u.display_name, u.about, u.avatar_color, u.last_seen_at,
+                case when aa.id is null then null else 'data:' || aa.mime_type || ';base64,' || encode(aa.data, 'base64') end as avatar_url
+             from users u
+             left join avatar_assets aa on aa.id = u.avatar_asset_id and aa.is_active = true
+             where u.id <> $1 and (u.username like $2 or lower(u.display_name) like $2)
+             order by u.username
              limit 20`,
             [req.user.id, `%${search}%`],
         );
@@ -1095,6 +1435,7 @@ app.get('/api/conversations', requireAuth, async (req, res, next) => {
                 other_user.display_name,
                 other_user.avatar_color,
                 other_user.last_seen_at,
+                case when aa.id is null then null else 'data:' || aa.mime_type || ';base64,' || encode(aa.data, 'base64') end as avatar_url,
                 latest.body as last_message,
                 latest.has_attachment as has_attachment,
                 latest.created_at as last_message_at,
@@ -1103,6 +1444,7 @@ app.get('/api/conversations', requireAuth, async (req, res, next) => {
              from conversations c
              join users other_user
                 on other_user.id = case when c.user_one_id = $1 then c.user_two_id else c.user_one_id end
+             left join avatar_assets aa on aa.id = other_user.avatar_asset_id and aa.is_active = true
              left join lateral (
                 select m.body, m.created_at, m.sender_id, exists(
                     select 1 from message_attachments a where a.message_id = m.id
@@ -1199,6 +1541,7 @@ app.get('/api/conversations/:id/messages', requireAuth, async (req, res, next) =
                 username: otherUser.username,
                 display_name: otherUser.display_name,
                 avatar_color: otherUser.avatar_color,
+                avatar_url: otherUser.avatar_url,
                 last_seen_at: otherUser.last_seen_at,
             },
             messages: messageRows,
