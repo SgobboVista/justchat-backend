@@ -1,4 +1,4 @@
-function renderMessengerApp() {
+function renderMessengerApp({ appVersion = '' } = {}) {
     return `<!doctype html>
 <html lang="de">
 <head>
@@ -195,6 +195,10 @@ function renderMessengerApp() {
         .more-copy { color: var(--text); line-height: 1.6; display: grid; gap: 10px; }
         .more-copy p { margin: 0; }
         .more-copy ul { margin: 0; padding-left: 20px; display: grid; gap: 6px; }
+        .feature-list { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
+        .feature-list li { border: 1px solid var(--line); border-radius: 10px; padding: 12px; background: #f8fcfb; display: grid; gap: 4px; }
+        .feature-list strong { color: var(--text); }
+        .app-version { margin: 0; padding: 12px 14px; border-radius: 10px; color: var(--muted); background: #f7fbfa; font-size: 13px; font-weight: 700; text-align: center; }
         .anniversary-card { border-radius: 12px; padding: 16px; background: #eef8f6; border: 1px solid #c7e6df; display: grid; gap: 6px; }
         .anniversary-card strong { color: var(--accent-strong); font-size: 19px; }
         .news-feed { display: grid; gap: 12px; }
@@ -644,6 +648,13 @@ function renderMessengerApp() {
                             <strong>Weiteres</strong>
                         </nav>
                         <div id="moreOverview" class="settings-overview">
+                            <button class="settings-category" type="button" data-more-category="features">
+                                <span>
+                                    <span class="settings-category-title">Funktionen</span>
+                                    <span class="settings-category-description">Alle aktuell verfügbaren Möglichkeiten</span>
+                                </span>
+                                <span class="settings-category-arrow" aria-hidden="true">&rsaquo;</span>
+                            </button>
                             <button class="settings-category" type="button" data-more-category="privacy">
                                 <span>
                                     <span class="settings-category-title">Datenschutzbestimmungen</span>
@@ -680,6 +691,21 @@ function renderMessengerApp() {
                                 <span class="settings-category-arrow" aria-hidden="true">&rsaquo;</span>
                             </button>
                         </div>
+                        <p id="moreVersion" class="app-version">Aktuelle WebApp-Version: v${appVersion}</p>
+                        <section class="settings-section more-copy hidden" data-more-panel="features">
+                            <h3>Funktionen</h3>
+                            <ul class="feature-list">
+                                <li><strong>Private Chats</strong><span>Nachrichten, Dateianhänge, Bilder und Lesestatus mit deinen Kontakten.</span></li>
+                                <li><strong>Kontakte und Privatsphäre</strong><span>Kontaktanfragen, Profilansicht, Blockieren sowie Sichtbarkeitseinstellungen.</span></li>
+                                <li><strong>Gruppen</strong><span>Gruppen erstellen, Kontakte einladen, Einladungen annehmen oder ablehnen und Gruppenchats führen.</span></li>
+                                <li><strong>News von SgobboVista</strong><span>Updates an @alle mit Bildern oder Videos und optionalen Push-Benachrichtigungen.</span></li>
+                                <li><strong>Suche</strong><span>Kontakte und Nachrichten schnell innerhalb der App finden.</span></li>
+                                <li><strong>Profilanpassung</strong><span>Anzeigename, Info, Profilbild, Benachrichtigungston und GIF-Wiedergabe verwalten.</span></li>
+                                <li><strong>Sicherheit</strong><span>E-Mail-Bestätigung, Passwort-Wiederherstellung und optionale Zwei-Faktor-Anmeldung.</span></li>
+                                <li><strong>Installierbare WebApp</strong><span>JustChat als App-Verknüpfung auf dem Startbildschirm verwenden.</span></li>
+                                <li><strong>Weiteres</strong><span>Datenschutz, Nutzervereinbarung, AGB, Urheberrechte, App-Version und jährliche Jubiläumsanzeige.</span></li>
+                            </ul>
+                        </section>
                         <section class="settings-section more-copy hidden" data-more-panel="privacy">
                             <h3>Datenschutzbestimmungen</h3>
                             <p>JustChat verarbeitet Kontodaten, Profilinformationen, Kontakte, Nachrichten, Gruppendaten und von dir hochgeladene Dateien, damit die Chat-Funktionen bereitgestellt werden können.</p>
@@ -2050,6 +2076,7 @@ function renderMessengerApp() {
             security: 'Sicherheit',
         };
         const moreCategoryNames = {
+            features: 'Funktionen',
             privacy: 'Datenschutzbestimmungen',
             terms: 'Nutzervereinbarung',
             agb: 'AGB',
@@ -2073,6 +2100,7 @@ function renderMessengerApp() {
         function showMoreCategory(category) {
             const categoryName = moreCategoryNames[category] || '';
             $('moreOverview').classList.toggle('hidden', Boolean(categoryName));
+            $('moreVersion').classList.toggle('hidden', Boolean(categoryName));
             document.querySelectorAll('[data-more-panel]').forEach((panel) => {
                 panel.classList.toggle('hidden', panel.dataset.morePanel !== category);
             });
