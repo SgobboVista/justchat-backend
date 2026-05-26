@@ -3,6 +3,7 @@ const express = require('express');
 const nodemailer = require('nodemailer');
 const { Pool } = require('pg');
 const sharp = require('sharp');
+const webPush = require('web-push');
 const { createAdminViews } = require('./src/views/admin');
 const { renderMessengerApp } = require('./src/views/messenger');
 const { registerPwaRoutes } = require('./src/routes/pwa');
@@ -30,6 +31,10 @@ const IMAGE_UPDATE_WEBHOOK_URL = process.env.IMAGE_UPDATE_WEBHOOK_URL || '';
 const IMAGE_UPDATE_WEBHOOK_TOKEN = process.env.IMAGE_UPDATE_WEBHOOK_TOKEN || '';
 const IMAGE_UPDATE_WEBHOOK_METHOD = (process.env.IMAGE_UPDATE_WEBHOOK_METHOD || 'POST').trim().toUpperCase();
 const APP_VERSION = process.env.APP_VERSION || require('./package.json').version;
+const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY || '';
+const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY || '';
+const VAPID_SUBJECT = process.env.VAPID_SUBJECT || 'mailto:kontakt@sgobbovista.de';
+const PUSH_ENABLED = Boolean(VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY);
 const FORBIDDEN_WORDS = (process.env.FORBIDDEN_WORDS || 'admin,administrator,moderator,system,support,root')
     .split(',')
     .map((word) => word.trim().toLowerCase())
@@ -44,6 +49,7 @@ const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
 const MAX_IMAGE_INPUT_BYTES = 20 * 1024 * 1024;
 const MAX_IMAGE_WIDTH = 1920;
 const MAX_IMAGE_HEIGHT = 1080;
+const MAX_NEWS_VIDEO_BYTES = 25 * 1024 * 1024;
 let imageUpdateState = {
     configured: Boolean(IMAGE_UPDATE_WEBHOOK_URL),
     status: IMAGE_UPDATE_WEBHOOK_URL ? 'idle' : 'not_configured',
@@ -54,7 +60,11 @@ let imageUpdateState = {
         : 'IMAGE_UPDATE_WEBHOOK_URL ist nicht konfiguriert.',
 };
 
-app.use(express.json({ limit: '30mb' }));
+app.use(express.json({ limit: '40mb' }));
+
+if (PUSH_ENABLED) {
+    webPush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
+}
 
 function escapeHtml(value) {
     return String(value)
@@ -433,6 +443,18 @@ function parseNotificationSoundAttachment(attachment) {
     return parsed;
 }
 
+function parseNewsVideoAttachment(attachment) {
+    const parsed = parseAttachment(attachment, MAX_NEWS_VIDEO_BYTES);
+    if (!parsed) return null;
+    const allowedTypes = ['video/mp4', 'video/webm', 'video/quicktime'];
+    if (!allowedTypes.includes(parsed.mimeType)) {
+        const error = new Error('Nur MP4, WebM und MOV sind als News-Video erlaubt');
+        error.statusCode = 400;
+        throw error;
+    }
+    return parsed;
+}
+
 function parseId(value) {
     const id = Number(value);
     return Number.isInteger(id) && id > 0 ? id : null;
@@ -738,6 +760,27 @@ async function initDatabase() {
             changed_at timestamptz not null default now()
         );
 
+        create table if not exists news_posts (
+            id bigserial primary key,
+            author_name text not null default 'SgobboVista',
+            audience text not null default '@alle',
+            body text not null,
+            video_file_name text,
+            video_mime_type text,
+            video_size_bytes integer,
+            video_data bytea,
+            created_at timestamptz not null default now()
+        );
+
+        create table if not exists push_subscriptions (
+            id bigserial primary key,
+            user_id bigint not null references users(id) on delete cascade,
+            endpoint text not null unique,
+            subscription jsonb not null,
+            created_at timestamptz not null default now(),
+            updated_at timestamptz not null default now()
+        );
+
         alter table users add column if not exists email text;
         alter table users add column if not exists google_id text;
         alter table users add column if not exists email_verified_at timestamptz;
@@ -775,6 +818,8 @@ async function initDatabase() {
             on username_history(user_id, changed_at desc);
         create unique index if not exists idx_contact_requests_pair_unique
             on contact_requests(least(sender_id, recipient_id), greatest(sender_id, recipient_id));
+        create index if not exists idx_news_posts_created on news_posts(created_at desc);
+        create index if not exists idx_push_subscriptions_user on push_subscriptions(user_id);
     `);
 }
 
@@ -870,6 +915,34 @@ function sendEvent(userId, event, payload) {
         client.write(`event: ${event}\n`);
         client.write(`data: ${JSON.stringify(payload)}\n\n`);
     }
+}
+
+function broadcastEvent(event, payload) {
+    for (const userId of eventClients.keys()) {
+        sendEvent(userId, event, payload);
+    }
+}
+
+async function sendNewsPushNotification(news) {
+    if (!PUSH_ENABLED) return;
+    const subscriptions = await query('select id, subscription from push_subscriptions');
+    const payload = JSON.stringify({
+        title: 'SgobboVista an @alle',
+        body: news.body.slice(0, 140),
+        url: '/?tab=news',
+        newsId: news.id,
+    });
+    await Promise.all(subscriptions.rows.map(async (entry) => {
+        try {
+            await webPush.sendNotification(entry.subscription, payload);
+        } catch (error) {
+            if (error.statusCode === 404 || error.statusCode === 410) {
+                await query('delete from push_subscriptions where id = $1', [entry.id]);
+                return;
+            }
+            console.error('Push-Benachrichtigung fehlgeschlagen:', error.message);
+        }
+    }));
 }
 
 async function getConversationForUser(conversationId, userId) {
@@ -983,7 +1056,8 @@ registerPwaRoutes(app, { sharp });
 
 const routeDependencies = {
     ADMIN_PASSWORD, ADMIN_USER, ADMIN_SESSION_COOKIE, DATABASE_URL,
-    PUBLIC_BASE_URL, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET,
+    PUBLIC_BASE_URL, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, IMAGE_UPDATE_WEBHOOK_URL,
+    VAPID_PUBLIC_KEY, PUSH_ENABLED,
     CHAT_RETENTION_DAYS,
     APP_VERSION,
     crypto, getDashboardData, renderAdminLayout, renderAdminLogin, renderDashboard, renderMessengerApp,
@@ -994,6 +1068,7 @@ const routeDependencies = {
     sendEmailVerificationCode, sendTwoFactorCode, sendPasswordResetCode, getUserById,
     addEventClient, sendEvent, getConversationForUser, getBlockStatus, getExistingConversation,
     personalAvatarLimit, conversationPair, getImageUpdateState, escapeHtml, sendMail, renderEmailTemplate,
+    parseNewsVideoAttachment, broadcastEvent, sendNewsPushNotification,
 };
 
 registerPageRoutes(app, routeDependencies);

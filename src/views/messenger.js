@@ -176,6 +176,27 @@ function renderMessengerApp() {
         .home-card h2 { margin: 6px 0 0; color: var(--text); font-size: 27px; }
         .home-card p { max-width: 330px; margin: 0; color: var(--muted); font-size: 15px; line-height: 1.5; }
         .home-list-button { display: none; margin-top: 8px; }
+        .feature-view { grid-row: 1 / -1; min-height: 0; overflow-y: auto; padding: 24px; background: var(--bg); }
+        .feature-card { width: min(480px, 100%); margin: min(12vh, 100px) auto 0; display: grid; justify-items: center; gap: 14px; padding: 32px 24px; border: 1px solid var(--line); border-radius: 20px; background: #fff; text-align: center; }
+        .feature-mark { width: 62px; height: 62px; border-radius: 20px; display: grid; place-items: center; background: #eef8f6; color: var(--accent); }
+        .feature-mark svg { width: 31px; height: 31px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+        .feature-card h2 { margin: 4px 0 0; font-size: 26px; }
+        .feature-card p { margin: 0; color: var(--muted); line-height: 1.5; }
+        .soon-badge { padding: 6px 11px; border-radius: 999px; background: #eef8f6; color: var(--accent); font-size: 12px; font-weight: 800; text-transform: uppercase; }
+        .news-view { width: min(720px, 100%); margin: 0 auto; display: grid; gap: 15px; }
+        .news-view-head { display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap; }
+        .news-view-head h2 { margin: 0; font-size: 28px; }
+        .news-view-head p { margin: 5px 0 0; color: var(--muted); }
+        .news-feed { display: grid; gap: 12px; }
+        .news-post { display: grid; gap: 10px; padding: 16px; border: 1px solid var(--line); border-radius: 13px; background: #fff; }
+        .news-post-head { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
+        .news-post-author { color: var(--accent); font-weight: 800; }
+        .news-post time { color: var(--muted); font-size: 12px; }
+        .news-post p { margin: 0; line-height: 1.5; white-space: pre-wrap; }
+        .news-post video { display: block; width: 100%; max-height: 410px; border-radius: 9px; background: #000; }
+        .news-empty { border: 1px dashed var(--line); border-radius: 12px; padding: 28px; color: var(--muted); text-align: center; background: #fff; }
+        .tab-notice { width: 8px; height: 8px; border-radius: 50%; background: #22c55e; position: absolute; top: 8px; right: calc(50% - 25px); }
+        .bottom-tabs { display: none; }
         @keyframes homeFloat { to { transform: translate3d(22px, -18px, 0) scale(1.08); } }
         .chat.drop-active .messages { outline: 2px dashed var(--accent); outline-offset: -10px; background: #dff1ec; }
         .drop-hint { display: none; position: absolute; inset: 72px 18px 74px; place-items: center; pointer-events: none; z-index: 2; color: var(--accent); font-size: 18px; font-weight: 700; }
@@ -242,6 +263,7 @@ function renderMessengerApp() {
             .topbar { padding-top: calc(16px + env(safe-area-inset-top)); }
             .sidebar.chat-open { display: none; }
             .chat:not(.chat-open) { display: none; }
+            .sidebar, .chat { padding-bottom: calc(68px + env(safe-area-inset-bottom)); }
             .chat-head {
                 min-height: 64px;
                 padding: calc(10px + env(safe-area-inset-top)) 12px 10px;
@@ -273,6 +295,37 @@ function renderMessengerApp() {
             .contact-action-buttons { grid-template-columns: 1fr; }
             .home-card { padding: 28px 22px; border-radius: 20px; }
             .home-list-button { display: block; }
+            .feature-view { padding: calc(24px + env(safe-area-inset-top)) 18px 20px; }
+            .feature-card { margin: clamp(28px, 12vh, 90px) auto 0; padding: 30px 22px; }
+            .bottom-tabs {
+                position: fixed;
+                z-index: 18;
+                right: 0;
+                bottom: 0;
+                left: 0;
+                height: calc(68px + env(safe-area-inset-bottom));
+                padding: 6px 8px env(safe-area-inset-bottom);
+                display: grid;
+                grid-template-columns: repeat(3, 1fr);
+                gap: 4px;
+                border-top: 1px solid var(--line);
+                background: rgba(255, 255, 255, .98);
+            }
+            .bottom-tab {
+                position: relative;
+                min-width: 0;
+                display: grid;
+                justify-items: center;
+                align-content: center;
+                gap: 3px;
+                border-radius: 10px;
+                background: transparent;
+                color: var(--muted);
+                font-size: 12px;
+                font-weight: 700;
+            }
+            .bottom-tab svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+            .bottom-tab.active { background: #eef8f6; color: var(--accent); }
         }
     </style>
 </head>
@@ -450,6 +503,25 @@ function renderMessengerApp() {
                     <h2>JustChat</h2>
                     <p>Wähle einen Chat aus und bleibe mit deinen Kontakten verbunden.</p>
                     <button id="homeChatsButton" class="primary home-list-button" type="button">Chats anzeigen</button>
+                </div>
+            </div>
+            <div id="featureView" class="feature-view hidden">
+                <div id="comingSoonView" class="feature-card">
+                    <div id="featureMark" class="feature-mark"></div>
+                    <span class="soon-badge">Demnächst</span>
+                    <h2 id="featureTitle"></h2>
+                    <p id="featureDescription"></p>
+                </div>
+                <div id="newsView" class="news-view hidden">
+                    <div class="news-view-head">
+                        <div>
+                            <h2>News</h2>
+                            <p>Updates von SgobboVista an @alle</p>
+                        </div>
+                        <button id="enableNewsPush" class="primary" type="button">Push aktivieren</button>
+                    </div>
+                    <p id="newsPushStatus" class="muted small"></p>
+                    <div id="newsFeed" class="news-feed"></div>
                 </div>
             </div>
             <div id="chatPane" class="hidden" style="display: contents;">
@@ -681,6 +753,21 @@ function renderMessengerApp() {
                 </div>
             </div>
         </section>
+        <nav id="bottomTabs" class="bottom-tabs" aria-label="Hauptnavigation">
+            <button class="bottom-tab active" type="button" data-main-tab="chats" aria-current="page">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11.5a7.8 7.8 0 0 1-8 7.5 8.8 8.8 0 0 1-3.2-.6L4 20l1.5-4a7.2 7.2 0 0 1-1.5-4.5A7.8 7.8 0 0 1 12 4a7.8 7.8 0 0 1 8 7.5z"></path></svg>
+                <span>Chats</span>
+            </button>
+            <button class="bottom-tab" type="button" data-main-tab="groups">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 20v-2a4 4 0 0 0-8 0v2"></path><circle cx="12" cy="10" r="3.5"></circle><path d="M20 20v-2a3.4 3.4 0 0 0-2.5-3.3M16.5 7a3.2 3.2 0 0 1 0 6"></path><path d="M4 20v-2a3.4 3.4 0 0 1 2.5-3.3M7.5 7a3.2 3.2 0 0 0 0 6"></path></svg>
+                <span>Gruppen</span>
+            </button>
+            <button class="bottom-tab" type="button" data-main-tab="news">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h13v15H6a2 2 0 0 1-2-2V5z"></path><path d="M17 9h3v9a2 2 0 0 1-2 2"></path><path d="M7 9h7M7 13h7M7 17h4"></path></svg>
+                <span>News</span>
+                <span id="newsNotice" class="tab-notice hidden" aria-hidden="true"></span>
+            </button>
+        </nav>
     </div>
 
     <div id="addModal" class="modal hidden">
@@ -738,6 +825,9 @@ function renderMessengerApp() {
             profileAvatarImage: null,
             profileAvatarFile: null,
             installPrompt: null,
+            mainTab: 'chats',
+            news: [],
+            pushConfig: null,
         };
 
         const $ = (id) => document.getElementById(id);
@@ -996,6 +1086,92 @@ function renderMessengerApp() {
             banner.className = 'connection-banner ' + (online ? 'online' : 'offline');
             if (state.connectionNoticeTimer) clearTimeout(state.connectionNoticeTimer);
             state.connectionNoticeTimer = setTimeout(() => banner.classList.add('hidden'), 5000);
+        }
+
+        function selectMainTab(tab) {
+            state.mainTab = tab;
+            document.querySelectorAll('[data-main-tab]').forEach((button) => {
+                const active = button.dataset.mainTab === tab;
+                button.classList.toggle('active', active);
+                if (active) button.setAttribute('aria-current', 'page');
+                else button.removeAttribute('aria-current');
+            });
+        }
+
+        function openFeatureView(tab) {
+            stopTyping();
+            setRemoteTyping(false);
+            state.activeConversation = null;
+            selectMainTab(tab);
+            $('chatEmpty').classList.add('hidden');
+            $('chatPane').classList.add('hidden');
+            $('accountPanel').classList.add('hidden');
+            $('contactPanel').classList.add('hidden');
+            if (tab === 'news') {
+                $('comingSoonView').classList.add('hidden');
+                $('newsView').classList.remove('hidden');
+                $('newsNotice').classList.add('hidden');
+                loadNews().catch((error) => {
+                    $('newsFeed').innerHTML = '<div class="news-empty">' + escapeText(error.message) + '</div>';
+                });
+            } else {
+                $('newsView').classList.add('hidden');
+                $('comingSoonView').classList.remove('hidden');
+                $('featureTitle').textContent = 'Gruppen';
+                $('featureDescription').textContent = 'Gruppenchats werden bald verfügbar sein. Dann kannst du mit mehreren Kontakten gleichzeitig schreiben.';
+                $('featureMark').innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 20v-2a4 4 0 0 0-8 0v2"></path><circle cx="12" cy="10" r="3.5"></circle><path d="M20 20v-2a3.4 3.4 0 0 0-2.5-3.3M16.5 7a3.2 3.2 0 0 1 0 6"></path><path d="M4 20v-2a3.4 3.4 0 0 1 2.5-3.3M7.5 7a3.2 3.2 0 0 0 0 6"></path></svg>';
+            }
+            $('featureView').classList.remove('hidden');
+            $('sidebar').classList.add('chat-open');
+            $('chat').classList.add('chat-open');
+        }
+
+        function renderNews() {
+            $('newsFeed').innerHTML = state.news.length ? state.news.map((news) =>
+                '<article class="news-post"><div class="news-post-head"><span class="news-post-author">' +
+                escapeText(news.author_name) + ' <span class="muted">' + escapeText(news.audience) + '</span></span><time>' +
+                new Date(news.created_at).toLocaleString() + '</time></div><p>' + escapeText(news.body) + '</p>' +
+                (news.video_url ? '<video controls preload="metadata" playsinline src="' + news.video_url + '?token=' + encodeURIComponent(state.token) + '"></video>' : '') + '</article>'
+            ).join('') : '<div class="news-empty">Noch keine News veröffentlicht.</div>';
+        }
+
+        async function loadNews() {
+            const data = await api('/api/news');
+            state.news = data.news || [];
+            renderNews();
+            if (!data.pushEnabled) {
+                $('enableNewsPush').classList.add('hidden');
+                $('newsPushStatus').textContent = 'Push-Benachrichtigungen werden demnächst aktiviert.';
+            }
+        }
+
+        function urlBase64ToBytes(value) {
+            const padding = '='.repeat((4 - value.length % 4) % 4);
+            const base64 = (value + padding).replace(/-/g, '+').replace(/_/g, '/');
+            return Uint8Array.from(atob(base64), (character) => character.charCodeAt(0));
+        }
+
+        async function enableNewsPush() {
+            if (!('Notification' in window) || !('serviceWorker' in navigator) || !('PushManager' in window)) {
+                throw new Error('Dieser Browser unterstützt keine Push-Benachrichtigungen.');
+            }
+            const config = state.pushConfig || await fetch('/api/config').then((response) => response.json());
+            state.pushConfig = config;
+            if (!config.pushEnabled || !config.vapidPublicKey) throw new Error('Push-Benachrichtigungen sind serverseitig noch nicht konfiguriert.');
+            const permission = await Notification.requestPermission();
+            if (permission !== 'granted') throw new Error('Benachrichtigungen wurden nicht erlaubt.');
+            const registration = await navigator.serviceWorker.ready;
+            const subscription = await registration.pushManager.getSubscription() || await registration.pushManager.subscribe({
+                userVisibleOnly: true,
+                applicationServerKey: urlBase64ToBytes(config.vapidPublicKey),
+            });
+            await api('/api/push-subscriptions', {
+                method: 'POST',
+                body: JSON.stringify({ subscription }),
+            });
+            $('newsPushStatus').textContent = 'Push-Benachrichtigungen für News sind aktiviert.';
+            $('enableNewsPush').textContent = 'Push aktiviert';
+            $('enableNewsPush').disabled = true;
         }
 
         function resetAuthPanels() {
@@ -1601,6 +1777,7 @@ function renderMessengerApp() {
             renderProfileAvatarPicker();
             $('profileError').textContent = '';
             $('profileNotice').textContent = '';
+            $('featureView').classList.add('hidden');
             $('chatEmpty').classList.add('hidden');
             $('chatPane').classList.add('hidden');
             $('contactPanel').classList.add('hidden');
@@ -1649,13 +1826,14 @@ function renderMessengerApp() {
         function showChatHome() {
             stopTyping();
             setRemoteTyping(false);
-            state.activeConversation = null;
+            selectMainTab('chats');
             state.pendingAttachment = null;
             hideSensitiveMessageWarning();
             $('attachmentInput').value = '';
             renderPendingAttachment();
             $('accountPanel').classList.add('hidden');
             $('contactPanel').classList.add('hidden');
+            $('featureView').classList.add('hidden');
             $('chatPane').classList.add('hidden');
             $('chatEmpty').classList.remove('hidden');
             $('chat').classList.add('chat-open');
@@ -1685,8 +1863,10 @@ function renderMessengerApp() {
             }
             state.activeConversation = data.conversation;
             setRemoteTyping(false);
+            selectMainTab('chats');
             $('accountPanel').classList.add('hidden');
             $('contactPanel').classList.add('hidden');
+            $('featureView').classList.add('hidden');
             $('chatEmpty').classList.add('hidden');
             $('chatPane').classList.remove('hidden');
             $('sidebar').classList.add('chat-open');
@@ -1755,6 +1935,13 @@ function renderMessengerApp() {
                 await loadContactRequests();
                 await loadConversations();
             });
+            state.eventSource.addEventListener('news:new', async () => {
+                $('newsNotice').classList.toggle('hidden', state.mainTab === 'news');
+                if (state.mainTab === 'news') await loadNews();
+            });
+            state.eventSource.addEventListener('news:deleted', async () => {
+                if (state.mainTab === 'news') await loadNews();
+            });
         }
 
         window.addEventListener('offline', () => showConnectionStatus(false));
@@ -1790,7 +1977,9 @@ function renderMessengerApp() {
                 loadConversations(),
                 loadContactRequests(),
                 loadBlockedUsers(),
-            ]).catch(() => showConnectionStatus(false));
+            ]).then(() => {
+                if (new URLSearchParams(window.location.search).get('tab') === 'news') openFeatureView('news');
+            }).catch(() => showConnectionStatus(false));
         }
 
         $('authForm').addEventListener('submit', async (event) => {
@@ -2154,6 +2343,27 @@ function renderMessengerApp() {
         $('homeChatsButton').addEventListener('click', () => {
             $('sidebar').classList.remove('chat-open');
             $('chat').classList.remove('chat-open');
+        });
+        $('bottomTabs').addEventListener('click', (event) => {
+            const button = event.target.closest('[data-main-tab]');
+            if (!button) return;
+            if (button.dataset.mainTab === 'chats') {
+                showChatHome();
+                $('sidebar').classList.remove('chat-open');
+                $('chat').classList.remove('chat-open');
+                return;
+            }
+            state.activeConversation = null;
+            state.pendingAttachment = null;
+            $('attachmentInput').value = '';
+            renderPendingAttachment();
+            openFeatureView(button.dataset.mainTab);
+        });
+        $('enableNewsPush').addEventListener('click', () => {
+            $('newsPushStatus').textContent = '';
+            enableNewsPush().catch((error) => {
+                $('newsPushStatus').textContent = error.message;
+            });
         });
         $('messageInput').addEventListener('input', () => {
             hideSensitiveMessageWarning();

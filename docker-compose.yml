@@ -30,6 +30,9 @@ services:
       IMAGE_UPDATE_WEBHOOK_URL: "http://justchat-image-updater:8080/v1/update"
       IMAGE_UPDATE_WEBHOOK_METHOD: "GET"
       IMAGE_UPDATE_WEBHOOK_TOKEN: "${IMAGE_UPDATE_WEBHOOK_TOKEN:-bitte-einen-langen-geheimen-update-token-setzen}"
+      VAPID_SUBJECT: "mailto:kontakt@sgobbovista.de"
+      VAPID_PUBLIC_KEY: "${VAPID_PUBLIC_KEY}"
+      VAPID_PRIVATE_KEY: "${VAPID_PRIVATE_KEY}"
 
   justchat-image-updater:
     image: nickfedor/watchtower:latest

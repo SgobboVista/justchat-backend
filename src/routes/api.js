@@ -3,7 +3,7 @@ function registerApiRoutes(app, dependencies) {
         requireAuth, query, optimizeImageAttachment, personalAvatarLimit, parseId, getUserById,
         getExistingConversation, normalizeUsername, cleanDisplayName, cleanEmail, validateCleanName,
         sendEvent, getBlockStatus, conversationPair, getConversationForUser, cleanMessage,
-        parseAttachment, addEventClient,
+        parseAttachment, addEventClient, PUSH_ENABLED,
     } = dependencies;
 app.get('/api/avatars', async (req, res, next) => {
     try {
@@ -100,6 +100,66 @@ app.get('/api/notification-sounds', requireAuth, async (req, res, next) => {
              limit 60`,
         );
         return res.json({ sounds: result.rows });
+    } catch (error) {
+        return next(error);
+    }
+});
+
+app.get('/api/news', requireAuth, async (req, res, next) => {
+    try {
+        const result = await query(
+            `select id, author_name, audience, body, video_file_name, video_mime_type, video_size_bytes, created_at,
+                case when video_data is null then null else '/api/news/' || id || '/video' end as video_url
+             from news_posts
+             order by created_at desc
+             limit 50`,
+        );
+        return res.json({ news: result.rows, pushEnabled: PUSH_ENABLED });
+    } catch (error) {
+        return next(error);
+    }
+});
+
+app.get('/api/news/:id/video', requireAuth, async (req, res, next) => {
+    try {
+        const newsId = parseId(req.params.id);
+        const result = await query(
+            'select video_mime_type, video_data from news_posts where id = $1 and video_data is not null',
+            [newsId],
+        );
+        if (!result.rows[0]) return res.status(404).send('Video nicht gefunden');
+        res.type(result.rows[0].video_mime_type);
+        res.set('Cache-Control', 'private, max-age=3600');
+        return res.send(result.rows[0].video_data);
+    } catch (error) {
+        return next(error);
+    }
+});
+
+app.post('/api/push-subscriptions', requireAuth, async (req, res, next) => {
+    try {
+        if (!PUSH_ENABLED) return res.status(503).json({ error: 'Push-Benachrichtigungen sind noch nicht konfiguriert' });
+        const subscription = req.body.subscription;
+        const endpoint = String(subscription && subscription.endpoint || '').trim();
+        if (!endpoint) return res.status(400).json({ error: 'Push-Abo ist ungültig' });
+        await query(
+            `insert into push_subscriptions (user_id, endpoint, subscription)
+             values ($1, $2, $3::jsonb)
+             on conflict (endpoint) do update
+             set user_id = excluded.user_id, subscription = excluded.subscription, updated_at = now()`,
+            [req.user.id, endpoint, JSON.stringify(subscription)],
+        );
+        return res.status(201).json({ ok: true });
+    } catch (error) {
+        return next(error);
+    }
+});
+
+app.delete('/api/push-subscriptions', requireAuth, async (req, res, next) => {
+    try {
+        const endpoint = String(req.body.endpoint || '').trim();
+        if (endpoint) await query('delete from push_subscriptions where user_id = $1 and endpoint = $2', [req.user.id, endpoint]);
+        return res.json({ ok: true });
     } catch (error) {
         return next(error);
     }

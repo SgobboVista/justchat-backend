@@ -1,9 +1,10 @@
 function registerAdminRoutes(app, dependencies) {
     const {
-        ADMIN_PASSWORD, ADMIN_USER, ADMIN_SESSION_COOKIE, CHAT_RETENTION_DAYS,
+        ADMIN_PASSWORD, ADMIN_USER, ADMIN_SESSION_COOKIE, CHAT_RETENTION_DAYS, IMAGE_UPDATE_WEBHOOK_URL,
         getDashboardData, renderAdminLogin, renderDashboard, requireAdminAuth, hasAdminSession,
         createAdminSessionToken, query, dispatchImageUpdate, getImageUpdateState,
         optimizeImageAttachment, parseNotificationSoundAttachment, parseId, createZipArchive, zipPathSegment,
+        parseNewsVideoAttachment, broadcastEvent, sendNewsPushNotification,
     } = dependencies;
 app.get('/admin', async (req, res) => {
     if (!ADMIN_PASSWORD) {
@@ -79,15 +80,82 @@ app.get('/admin/api/overview', requireAdminAuth, async (req, res, next) => {
             order by created_at desc
             limit 50
         `);
+        const news = await query(`
+            select id, author_name, audience, body, video_file_name, video_mime_type, video_size_bytes, created_at,
+                case when video_data is null then null else '/admin/api/news/' || id || '/video' end as video_url
+            from news_posts
+            order by created_at desc
+            limit 30
+        `);
 
         return res.json({
             summary: summary.rows[0],
             users: users.rows,
             avatars: avatars.rows,
             sounds: sounds.rows,
+            news: news.rows,
             audit: audit.rows,
             imageUpdate: getImageUpdateState(),
         });
+    } catch (error) {
+        return next(error);
+    }
+});
+
+app.get('/admin/api/news/:id/video', requireAdminAuth, async (req, res, next) => {
+    try {
+        const newsId = parseId(req.params.id);
+        const result = await query(
+            'select video_mime_type, video_data from news_posts where id = $1 and video_data is not null',
+            [newsId],
+        );
+        if (!result.rows[0]) return res.status(404).send('Video nicht gefunden');
+        res.type(result.rows[0].video_mime_type);
+        res.set('Cache-Control', 'private, max-age=3600');
+        return res.send(result.rows[0].video_data);
+    } catch (error) {
+        return next(error);
+    }
+});
+
+app.post('/admin/api/news', requireAdminAuth, async (req, res, next) => {
+    try {
+        const body = String(req.body.body || '').trim().slice(0, 4000);
+        const video = parseNewsVideoAttachment(req.body.video);
+        if (!body) return res.status(400).json({ error: 'Bitte einen News-Text eingeben' });
+        const result = await query(
+            `insert into news_posts (author_name, audience, body, video_file_name, video_mime_type, video_size_bytes, video_data)
+             values ('SgobboVista', '@alle', $1, $2, $3, $4, $5)
+             returning id, author_name, audience, body, video_file_name, video_mime_type, video_size_bytes, created_at`,
+            [body, video && video.fileName, video && video.mimeType, video && video.sizeBytes, video && video.data],
+        );
+        const news = result.rows[0];
+        await query(
+            `insert into admin_audit_logs (admin_user, action, ip_address)
+             values ($1, $2, $3)`,
+            [ADMIN_USER, `news_publish_${news.id}`, req.ip],
+        );
+        broadcastEvent('news:new', { news });
+        sendNewsPushNotification(news).catch((error) => console.error('News-Push fehlgeschlagen:', error.message));
+        return res.status(201).json({ news });
+    } catch (error) {
+        return next(error);
+    }
+});
+
+app.delete('/admin/api/news/:id', requireAdminAuth, async (req, res, next) => {
+    try {
+        const newsId = parseId(req.params.id);
+        if (!newsId) return res.status(400).json({ error: 'Ungültiger News-Beitrag' });
+        const result = await query('delete from news_posts where id = $1 returning id', [newsId]);
+        if (!result.rows[0]) return res.status(404).json({ error: 'News-Beitrag nicht gefunden' });
+        await query(
+            `insert into admin_audit_logs (admin_user, action, ip_address)
+             values ($1, $2, $3)`,
+            [ADMIN_USER, `news_delete_${newsId}`, req.ip],
+        );
+        broadcastEvent('news:deleted', { newsId });
+        return res.json({ ok: true });
     } catch (error) {
         return next(error);
     }

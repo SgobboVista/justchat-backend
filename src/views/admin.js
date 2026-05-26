@@ -87,6 +87,14 @@ function renderAdminLayout(content) {
         .sound-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
         .sound-card { border: 1px solid var(--line); border-radius: 8px; padding: 12px; display: grid; gap: 10px; background: #fff; }
         .sound-card audio { width: 100%; }
+        .news-compose { display: grid; gap: 12px; margin-top: 14px; }
+        .news-compose textarea { width: 100%; min-height: 108px; resize: vertical; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; font: inherit; }
+        .news-list { display: grid; gap: 12px; margin-top: 18px; }
+        .news-card { display: grid; gap: 9px; border: 1px solid var(--line); border-radius: 10px; padding: 14px; background: #fff; }
+        .news-head { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
+        .news-author { font-weight: 700; color: var(--accent); }
+        .news-card p { margin: 0; white-space: pre-wrap; line-height: 1.45; }
+        .news-card video { display: block; width: min(520px, 100%); max-height: 300px; border-radius: 8px; background: #000; }
         .notice { border: 1px solid #fedf89; background: #fffaeb; color: #7a4f01; border-radius: 8px; padding: 12px; margin-top: 16px; }
         .admin-login-shell { min-height: calc(100vh - 56px); display: grid; place-items: center; }
         .admin-login-card { width: min(420px, 100%); background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 28px; box-shadow: 0 18px 42px rgba(15, 23, 42, .1); }
@@ -256,6 +264,20 @@ function renderDashboard(data) {
         </div>
 
         <section class="panel">
+            <h2>News an @alle</h2>
+            <p class="muted">Veröffentliche ein Update als <strong>SgobboVista</strong>. Nutzer sehen es im News-Tab und erhalten bei aktiviertem Push eine Benachrichtigung.</p>
+            <div class="news-compose">
+                <textarea id="newsBody" maxlength="4000" placeholder="Was gibt es Neues?"></textarea>
+                <div class="toolbar">
+                    <input id="newsVideo" type="file" accept="video/mp4,video/webm,video/quicktime">
+                    <button id="publishNews" type="button">News veröffentlichen</button>
+                </div>
+                <p class="muted">Optionales Video: MP4, WebM oder MOV, maximal 25 MB.</p>
+            </div>
+            <div id="newsList" class="news-list"></div>
+        </section>
+
+        <section class="panel">
             <h2>Profilbilder</h2>
             <p class="muted">Hier lädst du erlaubte Profilbilder hoch. Nutzer können nur diese Bilder auswählen, keine eigenen Uploads.</p>
             <div class="toolbar" style="margin-top: 12px;">
@@ -290,7 +312,7 @@ function renderDashboard(data) {
         <div class="notice">Hinweis: Von Nutzern entfernte Chats werden mindestens 30 Tage serverseitig aufbewahrt. ZIP-Archive enthalten private Chatdaten und Originaldateien; sie dürfen nur für einen berechtigten Zweck und mit passender rechtlicher Grundlage herausgegeben werden.</div>
 
         <script data-cfasync="false">
-            const state = { users: [], avatars: [], sounds: [], audit: [], imageUpdate: null };
+            const state = { users: [], avatars: [], sounds: [], news: [], audit: [], imageUpdate: null };
             const el = (id) => document.getElementById(id);
             const escapeText = (value) => String(value == null ? '' : value).replace(/[&<>"']/g, (char) => ({
                 '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
@@ -332,6 +354,24 @@ function renderDashboard(data) {
                 });
             }
 
+            async function readVideoAttachment(file) {
+                if (!file) return null;
+                if (!['video/mp4', 'video/webm', 'video/quicktime'].includes(file.type)) {
+                    throw new Error('Nur MP4, WebM und MOV sind erlaubt');
+                }
+                if (file.size > 25 * 1024 * 1024) throw new Error('Video muss kleiner als 25 MB sein');
+                return new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onload = () => resolve({
+                        fileName: file.name,
+                        mimeType: file.type,
+                        dataBase64: String(reader.result).slice(String(reader.result).indexOf(',') + 1),
+                    });
+                    reader.onerror = () => reject(new Error('Video konnte nicht gelesen werden'));
+                    reader.readAsDataURL(file);
+                });
+            }
+
             async function adminApi(path, options = {}) {
                 const response = await fetch(path, Object.assign({}, options, {
                     headers: Object.assign({ 'Content-Type': 'application/json' }, options.headers || {}),
@@ -364,6 +404,11 @@ function renderDashboard(data) {
                 el('soundGrid').innerHTML = state.sounds.length ? state.sounds.map((sound) =>
                     '<div class="sound-card asset-card"><strong>' + escapeText(sound.name) + '</strong><audio controls preload="none" src="' + sound.data_url + '"></audio><span class="muted">' + Math.round(sound.size_bytes / 1024) + ' KB</span><button class="danger" type="button" data-delete-sound="' + sound.id + '">Löschen</button></div>'
                 ).join('') : '<p class="muted">Noch keine Benachrichtigungstöne hochgeladen.</p>';
+                el('newsList').innerHTML = state.news.length ? state.news.map((news) =>
+                    '<article class="news-card"><div class="news-head"><span class="news-author">' + escapeText(news.author_name) + ' <span class="muted">' + escapeText(news.audience) + '</span></span><button class="danger" type="button" data-delete-news="' + news.id + '">Löschen</button></div>' +
+                    '<span class="muted">' + new Date(news.created_at).toLocaleString() + '</span><p>' + escapeText(news.body) + '</p>' +
+                    (news.video_url ? '<video controls preload="metadata" src="' + news.video_url + '"></video>' : '') + '</article>'
+                ).join('') : '<p class="muted">Noch keine News veröffentlicht.</p>';
                 el('auditRows').innerHTML = state.audit.map((row) =>
                     '<tr><td>' + new Date(row.created_at).toLocaleString() + '</td><td>' + escapeText(row.admin_user) + '</td><td>' + escapeText(row.action) + '</td><td>' + escapeText(row.ip_address || '-') + '</td></tr>'
                 ).join('');
@@ -388,6 +433,7 @@ function renderDashboard(data) {
                 state.users = data.users;
                 state.avatars = data.avatars;
                 state.sounds = data.sounds;
+                state.news = data.news;
                 state.audit = data.audit;
                 state.imageUpdate = data.imageUpdate;
                 render();
@@ -406,6 +452,30 @@ function renderDashboard(data) {
                     state.imageUpdate = data.imageUpdate;
                     render();
                     setTimeout(() => loadAdmin().catch(() => {}), 1500);
+                } catch (error) {
+                    alert(error.message);
+                }
+            });
+            el('publishNews').addEventListener('click', async () => {
+                try {
+                    const video = await readVideoAttachment(el('newsVideo').files[0]);
+                    await adminApi('/admin/api/news', {
+                        method: 'POST',
+                        body: JSON.stringify({ body: el('newsBody').value, video }),
+                    });
+                    el('newsBody').value = '';
+                    el('newsVideo').value = '';
+                    await loadAdmin();
+                } catch (error) {
+                    alert(error.message);
+                }
+            });
+            el('newsList').addEventListener('click', async (event) => {
+                const button = event.target.closest('[data-delete-news]');
+                if (!button) return;
+                try {
+                    await adminApi('/admin/api/news/' + button.dataset.deleteNews, { method: 'DELETE' });
+                    await loadAdmin();
                 } catch (error) {
                     alert(error.message);
                 }

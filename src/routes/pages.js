@@ -1,6 +1,6 @@
 function registerPageRoutes(app, dependencies) {
     const {
-        APP_VERSION, DATABASE_URL, PUBLIC_BASE_URL, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET,
+        APP_VERSION, DATABASE_URL, PUBLIC_BASE_URL, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, VAPID_PUBLIC_KEY, PUSH_ENABLED,
         getDashboardData, renderAdminLayout, renderMessengerApp,
     } = dependencies;
 app.get('/', (req, res) => {
@@ -36,6 +36,8 @@ app.get('/health', async (req, res) => {
 app.get('/api/config', (req, res) => {
     res.json({
         googleEnabled: Boolean(PUBLIC_BASE_URL && GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET),
+        pushEnabled: PUSH_ENABLED,
+        vapidPublicKey: VAPID_PUBLIC_KEY,
     });
 });
 

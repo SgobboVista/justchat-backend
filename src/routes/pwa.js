@@ -72,6 +72,30 @@ self.addEventListener('fetch', (event) => {
         );
     }
 });
+
+self.addEventListener('push', (event) => {
+    const data = event.data ? event.data.json() : {};
+    event.waitUntil(self.registration.showNotification(data.title || 'JustChat News', {
+        body: data.body || 'Es gibt ein neues Update.',
+        icon: '/pwa-icon-192.png',
+        badge: '/pwa-icon-192.png',
+        data: { url: data.url || '/?tab=news' },
+    }));
+});
+
+self.addEventListener('notificationclick', (event) => {
+    event.notification.close();
+    const url = event.notification.data && event.notification.data.url || '/?tab=news';
+    event.waitUntil(clients.matchAll({ type: 'window', includeUncontrolled: true }).then((windows) => {
+        for (const client of windows) {
+            if ('focus' in client) {
+                client.navigate(url);
+                return client.focus();
+            }
+        }
+        return clients.openWindow(url);
+    }));
+});
 `);
 });
 
