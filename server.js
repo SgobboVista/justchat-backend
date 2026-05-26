@@ -29,6 +29,7 @@ const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || '';
 const IMAGE_UPDATE_WEBHOOK_URL = process.env.IMAGE_UPDATE_WEBHOOK_URL || '';
 const IMAGE_UPDATE_WEBHOOK_TOKEN = process.env.IMAGE_UPDATE_WEBHOOK_TOKEN || '';
 const IMAGE_UPDATE_WEBHOOK_METHOD = (process.env.IMAGE_UPDATE_WEBHOOK_METHOD || 'POST').trim().toUpperCase();
+const APP_VERSION = process.env.APP_VERSION || require('./package.json').version;
 const FORBIDDEN_WORDS = (process.env.FORBIDDEN_WORDS || 'admin,administrator,moderator,system,support,root')
     .split(',')
     .map((word) => word.trim().toLowerCase())
@@ -920,6 +921,7 @@ async function getDashboardData() {
     const dbPool = getDatabasePool();
     const data = {
         appName: process.env.APP_NAME || 'JustChat',
+        appVersion: APP_VERSION,
         environment: process.env.NODE_ENV || 'development',
         port: PORT,
         uptime: formatDuration(Math.floor(process.uptime())),
@@ -983,6 +985,7 @@ const routeDependencies = {
     ADMIN_PASSWORD, ADMIN_USER, ADMIN_SESSION_COOKIE, DATABASE_URL,
     PUBLIC_BASE_URL, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET,
     CHAT_RETENTION_DAYS,
+    APP_VERSION,
     crypto, getDashboardData, renderAdminLayout, renderAdminLogin, renderDashboard, renderMessengerApp,
     requireAdminAuth, requireAuth, hasAdminSession, createAdminSessionToken,
     query, dispatchImageUpdate, parseAttachment, optimizeImageAttachment, parseNotificationSoundAttachment,

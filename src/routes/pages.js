@@ -1,6 +1,6 @@
 function registerPageRoutes(app, dependencies) {
     const {
-        DATABASE_URL, PUBLIC_BASE_URL, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET,
+        APP_VERSION, DATABASE_URL, PUBLIC_BASE_URL, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET,
         getDashboardData, renderAdminLayout, renderMessengerApp,
     } = dependencies;
 app.get('/', (req, res) => {
@@ -27,6 +27,7 @@ app.get('/health', async (req, res) => {
     const data = await getDashboardData();
     res.status(data.database.configured && data.database.online === false ? 503 : 200).json({
         ok: data.database.online !== false,
+        version: APP_VERSION,
         uptime: data.uptime,
         database: data.database,
     });

@@ -231,6 +231,7 @@ function renderDashboard(data) {
                     <h2>System</h2>
                     <dl>
                         <dt>Umgebung</dt><dd>${escapeHtml(data.environment)}</dd>
+                        <dt>App-Version</dt><dd>${escapeHtml(data.appVersion)}</dd>
                         <dt>Uptime</dt><dd>${escapeHtml(data.uptime)}</dd>
                         <dt>Speicher</dt><dd>${escapeHtml(data.memoryMb)} MB</dd>
                         <dt>Node.js</dt><dd>${escapeHtml(data.nodeVersion)}</dd>
