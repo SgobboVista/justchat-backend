@@ -550,6 +550,11 @@ app.get('/api/groups', requireAuth, async (req, res, next) => {
                 select body, created_at
                 from group_messages
                 where group_id = g.id
+                   and not exists (
+                        select 1 from user_blocks b
+                        where (b.blocker_id = $1 and b.blocked_user_id = group_messages.sender_id)
+                           or (b.blocker_id = group_messages.sender_id and b.blocked_user_id = $1)
+                   )
                 order by created_at desc
                 limit 1
              ) latest on true
@@ -638,9 +643,14 @@ app.get('/api/groups/:id/messages', requireAuth, async (req, res, next) => {
              from group_messages gm
              join users u on u.id = gm.sender_id
              where gm.group_id = $1
+                and not exists (
+                    select 1 from user_blocks b
+                    where (b.blocker_id = $2 and b.blocked_user_id = gm.sender_id)
+                       or (b.blocker_id = gm.sender_id and b.blocked_user_id = $2)
+                )
              order by gm.created_at desc
              limit 200`,
-            [groupId],
+            [groupId, req.user.id],
         );
         return res.json({ group: groupResult.rows[0], messages: messages.rows.reverse() });
     } catch (error) {
@@ -710,7 +720,17 @@ app.post('/api/groups/:id/messages', requireAuth, async (req, res, next) => {
             [groupId, req.user.id, body],
         );
         const message = inserted.rows[0];
-        const recipients = await query('select user_id from group_members where group_id = $1', [groupId]);
+        const recipients = await query(
+            `select members.user_id
+             from group_members members
+             where members.group_id = $1
+                and not exists (
+                    select 1 from user_blocks b
+                    where (b.blocker_id = $2 and b.blocked_user_id = members.user_id)
+                       or (b.blocker_id = members.user_id and b.blocked_user_id = $2)
+                )`,
+            [groupId, req.user.id],
+        );
         recipients.rows.forEach((member) => sendEvent(member.user_id, 'group:message', { groupId, message }));
         return res.status(201).json({ message });
     } catch (error) {

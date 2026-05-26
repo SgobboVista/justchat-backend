@@ -82,7 +82,7 @@ function renderMessengerApp() {
         .install-panel p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.45; }
         .install-panel .primary { width: 100%; }
         .install-status:empty { display: none; }
-        .app { height: 100vh; height: 100dvh; padding-bottom: calc(68px + env(safe-area-inset-bottom)); display: grid; grid-template-columns: 360px 1fr; overflow: hidden; }
+        .app { height: 100vh; height: 100dvh; padding-bottom: calc(86px + env(safe-area-inset-bottom)); display: grid; grid-template-columns: 360px 1fr; overflow: hidden; }
         .sidebar { background: var(--sidebar); border-right: 1px solid var(--line); display: grid; grid-template-rows: auto auto auto minmax(0, 1fr); min-width: 0; min-height: 0; overflow: hidden; }
         .topbar { padding: 16px; border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; gap: 12px; }
         .me-box { display: grid; grid-template-columns: 50px 1fr; gap: 10px; align-items: center; min-width: 0; }
@@ -220,20 +220,21 @@ function renderMessengerApp() {
         .group-sender { display: block; color: var(--accent); font-size: 12px; font-weight: 700; margin-bottom: 4px; }
         .group-composer { grid-row: 4; display: grid; grid-template-columns: minmax(0, 1fr) 48px; align-items: end; gap: 9px; padding: 11px; border-top: 1px solid var(--line); }
         .group-composer textarea { width: 100%; min-height: 48px; max-height: 110px; resize: vertical; border: 1px solid var(--line); border-radius: 24px; padding: 13px 17px; }
-        .tab-notice { width: 8px; height: 8px; border-radius: 50%; background: #22c55e; position: absolute; top: 8px; right: calc(50% - 25px); }
+        .tab-notice { width: 10px; height: 10px; border-radius: 50%; background: #22c55e; position: absolute; top: 7px; left: calc(50% + 15px); box-shadow: 0 0 0 2px #fff; }
         .bottom-tabs {
             position: fixed;
             z-index: 18;
             right: 0;
             bottom: 0;
             left: 0;
-            height: calc(68px + env(safe-area-inset-bottom));
-            padding: 6px 8px env(safe-area-inset-bottom);
+            height: calc(86px + env(safe-area-inset-bottom));
+            padding: 8px 10px env(safe-area-inset-bottom);
             display: grid;
             grid-template-columns: repeat(3, 1fr);
-            gap: 4px;
+            gap: 6px;
             border-top: 1px solid var(--line);
-            background: rgba(255, 255, 255, .98);
+            background: var(--panel);
+            box-shadow: 0 -1px 4px rgba(15, 23, 42, .03);
         }
         .bottom-tab {
             position: relative;
@@ -241,15 +242,17 @@ function renderMessengerApp() {
             display: grid;
             justify-items: center;
             align-content: center;
-            gap: 3px;
-            border-radius: 10px;
+            gap: 5px;
             background: transparent;
             color: var(--muted);
-            font-size: 12px;
+            font-size: 14px;
             font-weight: 700;
         }
-        .bottom-tab svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
-        .bottom-tab.active { background: #eef8f6; color: var(--accent); }
+        .bottom-tab svg { display: block; width: 64px; height: 37px; padding: 6px 20px; border-radius: 999px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; transition: background .16s ease, color .16s ease; }
+        .bottom-tab.active { color: var(--text); font-weight: 800; }
+        .bottom-tab.active svg { color: var(--accent-strong); background: #d7eee9; }
+        .bottom-tab:hover svg { background: #eef8f6; }
+        .bottom-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: 14px; }
         @keyframes homeFloat { to { transform: translate3d(22px, -18px, 0) scale(1.08); } }
         .chat.drop-active .messages { outline: 2px dashed var(--accent); outline-offset: -10px; background: #dff1ec; }
         .drop-hint { display: none; position: absolute; inset: 72px 18px 74px; place-items: center; pointer-events: none; z-index: 2; color: var(--accent); font-size: 18px; font-weight: 700; }
@@ -2081,6 +2084,10 @@ function renderMessengerApp() {
             state.eventSource.addEventListener('contact:changed', async (event) => {
                 const payload = JSON.parse(event.data);
                 if (!$('accountPanel').classList.contains('hidden')) await loadBlockedUsers();
+                if (state.mainTab === 'groups') {
+                    await loadGroups();
+                    if (state.activeGroup) await refreshOpenGroup(state.activeGroup.id);
+                }
                 if (state.activeConversation && Number(state.activeConversation.user_id) === Number(payload.userId)) {
                     const showingProfile = !$('contactPanel').classList.contains('hidden');
                     await openConversation(state.activeConversation.id);
