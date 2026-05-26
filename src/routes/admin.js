@@ -84,7 +84,9 @@ app.get('/admin/api/overview', requireAdminAuth, async (req, res, next) => {
         let warning = '';
         try {
             news = await query(`
-                select id, author_name, audience, body, video_file_name, video_mime_type, video_size_bytes, created_at,
+                select id, author_name, audience, body, image_file_name, image_mime_type, image_size_bytes,
+                    video_file_name, video_mime_type, video_size_bytes, created_at,
+                    case when image_data is null then null else '/admin/api/news/' || id || '/image' end as image_url,
                     case when video_data is null then null else '/admin/api/news/' || id || '/video' end as video_url
                 from news_posts
                 order by created_at desc
@@ -125,16 +127,36 @@ app.get('/admin/api/news/:id/video', requireAdminAuth, async (req, res, next) =>
     }
 });
 
+app.get('/admin/api/news/:id/image', requireAdminAuth, async (req, res, next) => {
+    try {
+        const newsId = parseId(req.params.id);
+        const result = await query(
+            'select image_mime_type, image_data from news_posts where id = $1 and image_data is not null',
+            [newsId],
+        );
+        if (!result.rows[0]) return res.status(404).send('Bild nicht gefunden');
+        res.type(result.rows[0].image_mime_type);
+        res.set('Cache-Control', 'private, max-age=3600');
+        return res.send(result.rows[0].image_data);
+    } catch (error) {
+        return next(error);
+    }
+});
+
 app.post('/admin/api/news', requireAdminAuth, async (req, res, next) => {
     try {
         const body = String(req.body.body || '').trim().slice(0, 4000);
+        const image = await optimizeImageAttachment(req.body.image);
         const video = parseNewsVideoAttachment(req.body.video);
         if (!body) return res.status(400).json({ error: 'Bitte einen News-Text eingeben' });
         const result = await query(
-            `insert into news_posts (author_name, audience, body, video_file_name, video_mime_type, video_size_bytes, video_data)
-             values ('SgobboVista', '@alle', $1, $2, $3, $4, $5)
-             returning id, author_name, audience, body, video_file_name, video_mime_type, video_size_bytes, created_at`,
-            [body, video && video.fileName, video && video.mimeType, video && video.sizeBytes, video && video.data],
+            `insert into news_posts (author_name, audience, body, image_file_name, image_mime_type, image_size_bytes, image_data,
+                video_file_name, video_mime_type, video_size_bytes, video_data)
+             values ('SgobboVista', '@alle', $1, $2, $3, $4, $5, $6, $7, $8, $9)
+             returning id, author_name, audience, body, image_file_name, image_mime_type, image_size_bytes,
+                video_file_name, video_mime_type, video_size_bytes, created_at`,
+            [body, image && image.fileName, image && image.mimeType, image && image.sizeBytes, image && image.data,
+                video && video.fileName, video && video.mimeType, video && video.sizeBytes, video && video.data],
         );
         const news = result.rows[0];
         await query(

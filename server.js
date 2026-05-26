@@ -60,7 +60,7 @@ let imageUpdateState = {
         : 'IMAGE_UPDATE_WEBHOOK_URL ist nicht konfiguriert.',
 };
 
-app.use(express.json({ limit: '40mb' }));
+app.use(express.json({ limit: '70mb' }));
 
 if (PUSH_ENABLED) {
     webPush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
@@ -810,6 +810,10 @@ async function initDatabase() {
             author_name text not null default 'SgobboVista',
             audience text not null default '@alle',
             body text not null,
+            image_file_name text,
+            image_mime_type text,
+            image_size_bytes integer,
+            image_data bytea,
             video_file_name text,
             video_mime_type text,
             video_size_bytes integer,
@@ -842,6 +846,10 @@ async function initDatabase() {
         alter table conversations add column if not exists hidden_for_user_two boolean not null default false;
         alter table conversations add column if not exists deleted_for_user_one_at timestamptz;
         alter table conversations add column if not exists deleted_for_user_two_at timestamptz;
+        alter table news_posts add column if not exists image_file_name text;
+        alter table news_posts add column if not exists image_mime_type text;
+        alter table news_posts add column if not exists image_size_bytes integer;
+        alter table news_posts add column if not exists image_data bytea;
 
         create unique index if not exists idx_users_email_unique
             on users(email)

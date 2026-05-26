@@ -96,7 +96,13 @@ function renderAdminLayout(content) {
         .news-head { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
         .news-author { font-weight: 700; color: var(--accent); }
         .news-card p { margin: 0; white-space: pre-wrap; line-height: 1.45; }
+        .news-card img { display: block; width: min(520px, 100%); max-height: 340px; border-radius: 8px; object-fit: contain; background: #f3f6fa; }
         .news-card video { display: block; width: min(520px, 100%); max-height: 300px; border-radius: 8px; background: #000; }
+        .news-archive { margin-top: 18px; border: 1px solid var(--line); border-radius: 10px; background: #f9fbfe; }
+        .news-archive summary { cursor: pointer; padding: 14px; color: var(--accent); font-weight: 700; }
+        .news-archive .news-list { margin: 0; padding: 0 14px 14px; }
+        .sensitive-value { display: inline-block; filter: blur(5px); transition: filter .15s ease; cursor: default; }
+        .sensitive-value:hover, .sensitive-value:focus { filter: none; outline: none; }
         .notice { border: 1px solid #fedf89; background: #fffaeb; color: #7a4f01; border-radius: 8px; padding: 12px; margin-top: 16px; }
         .load-error { border: 1px solid #fecdca; background: #fef3f2; color: var(--error); border-radius: 8px; padding: 12px; margin-bottom: 16px; }
         .admin-login-shell { min-height: calc(100vh - 56px); display: grid; place-items: center; }
@@ -273,12 +279,16 @@ function renderDashboard(data) {
             <div class="news-compose">
                 <textarea id="newsBody" maxlength="4000" placeholder="Was gibt es Neues?"></textarea>
                 <div class="toolbar">
+                    <input id="newsImage" type="file" accept="image/png,image/jpeg,image/webp,image/gif">
                     <input id="newsVideo" type="file" accept="video/mp4,video/webm,video/quicktime">
                     <button id="publishNews" type="button">News veröffentlichen</button>
                 </div>
-                <p class="muted">Optionales Video: MP4, WebM oder MOV, maximal 25 MB.</p>
+                <p class="muted">Optionales Bild: JPEG, PNG, WebP oder GIF, maximal 20 MB. Optionales Video: MP4, WebM oder MOV, maximal 25 MB.</p>
             </div>
-            <div id="newsList" class="news-list"></div>
+            <details class="news-archive">
+                <summary id="newsArchiveSummary">Veröffentlichte News verwalten</summary>
+                <div id="newsList" class="news-list"></div>
+            </details>
         </section>
 
         <section class="panel">
@@ -400,7 +410,7 @@ function renderDashboard(data) {
                     const avatar = user.avatar_url
                         ? '<img class="avatar-preview" src="' + user.avatar_url + '" alt="">'
                         : '<div class="avatar-preview" style="display:grid;place-items:center;background:' + user.avatar_color + ';color:#fff;font-weight:800;">' + initials(user.display_name) + '</div>';
-                    return '<tr><td>' + avatar + '</td><td><strong>' + escapeText(user.display_name) + '</strong><br><span class="muted">@' + escapeText(user.username) + '</span></td><td>' + escapeText(user.email || '-') + '</td><td>' + user.conversation_count + '</td><td>' + user.message_count + '</td></tr>';
+                    return '<tr><td>' + avatar + '</td><td><strong>' + escapeText(user.display_name) + '</strong><br><span class="muted">@' + escapeText(user.username) + '</span></td><td><span class="sensitive-value" tabindex="0" title="Zum Anzeigen berühren oder darüberfahren">' + escapeText(user.email || '-') + '</span></td><td>' + user.conversation_count + '</td><td>' + user.message_count + '</td></tr>';
                 }).join('');
                 el('avatarGrid').innerHTML = state.avatars.length ? state.avatars.map((avatar) =>
                     '<div class="avatar-card asset-card"><img src="' + avatar.data_url + '" alt=""><strong>' + escapeText(avatar.name) + '</strong><span class="muted">' + Math.round(avatar.size_bytes / 1024) + ' KB</span><button class="danger" type="button" data-delete-avatar="' + avatar.id + '">Löschen</button></div>'
@@ -411,10 +421,12 @@ function renderDashboard(data) {
                 el('newsList').innerHTML = state.news.length ? state.news.map((news) =>
                     '<article class="news-card"><div class="news-head"><span class="news-author">' + escapeText(news.author_name) + ' <span class="muted">' + escapeText(news.audience) + '</span></span><button class="danger" type="button" data-delete-news="' + news.id + '">Löschen</button></div>' +
                     '<span class="muted">' + new Date(news.created_at).toLocaleString() + '</span><p>' + escapeText(news.body) + '</p>' +
+                    (news.image_url ? '<img loading="lazy" src="' + news.image_url + '" alt="News-Bild">' : '') +
                     (news.video_url ? '<video controls preload="metadata" src="' + news.video_url + '"></video>' : '') + '</article>'
                 ).join('') : '<p class="muted">Noch keine News veröffentlicht.</p>';
+                el('newsArchiveSummary').textContent = 'Veröffentlichte News verwalten (' + state.news.length + ')';
                 el('auditRows').innerHTML = state.audit.map((row) =>
-                    '<tr><td>' + new Date(row.created_at).toLocaleString() + '</td><td>' + escapeText(row.admin_user) + '</td><td>' + escapeText(row.action) + '</td><td>' + escapeText(row.ip_address || '-') + '</td></tr>'
+                    '<tr><td>' + new Date(row.created_at).toLocaleString() + '</td><td>' + escapeText(row.admin_user) + '</td><td>' + escapeText(row.action) + '</td><td><span class="sensitive-value" tabindex="0" title="Zum Anzeigen berühren oder darüberfahren">' + escapeText(row.ip_address || '-') + '</span></td></tr>'
                 ).join('');
                 const update = state.imageUpdate || { configured: false, status: 'not_configured', message: 'Nicht konfiguriert.' };
                 const statusNames = {
@@ -472,12 +484,19 @@ function renderDashboard(data) {
             });
             el('publishNews').addEventListener('click', async () => {
                 try {
+                    const imageFile = el('newsImage').files[0];
+                    const image = imageFile ? {
+                        fileName: imageFile.name,
+                        mimeType: imageFile.type,
+                        dataBase64: await readFileBase64(imageFile),
+                    } : null;
                     const video = await readVideoAttachment(el('newsVideo').files[0]);
                     await adminApi('/admin/api/news', {
                         method: 'POST',
-                        body: JSON.stringify({ body: el('newsBody').value, video }),
+                        body: JSON.stringify({ body: el('newsBody').value, image, video }),
                     });
                     el('newsBody').value = '';
+                    el('newsImage').value = '';
                     el('newsVideo').value = '';
                     await loadAdmin();
                 } catch (error) {

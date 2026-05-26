@@ -108,7 +108,9 @@ app.get('/api/notification-sounds', requireAuth, async (req, res, next) => {
 app.get('/api/news', requireAuth, async (req, res, next) => {
     try {
         const result = await query(
-            `select id, author_name, audience, body, video_file_name, video_mime_type, video_size_bytes, created_at,
+            `select id, author_name, audience, body, image_file_name, image_mime_type, image_size_bytes,
+                video_file_name, video_mime_type, video_size_bytes, created_at,
+                case when image_data is null then null else '/api/news/' || id || '/image' end as image_url,
                 case when video_data is null then null else '/api/news/' || id || '/video' end as video_url
              from news_posts
              order by created_at desc
@@ -131,6 +133,22 @@ app.get('/api/news/:id/video', requireAuth, async (req, res, next) => {
         res.type(result.rows[0].video_mime_type);
         res.set('Cache-Control', 'private, max-age=3600');
         return res.send(result.rows[0].video_data);
+    } catch (error) {
+        return next(error);
+    }
+});
+
+app.get('/api/news/:id/image', requireAuth, async (req, res, next) => {
+    try {
+        const newsId = parseId(req.params.id);
+        const result = await query(
+            'select image_mime_type, image_data from news_posts where id = $1 and image_data is not null',
+            [newsId],
+        );
+        if (!result.rows[0]) return res.status(404).send('Bild nicht gefunden');
+        res.type(result.rows[0].image_mime_type);
+        res.set('Cache-Control', 'private, max-age=3600');
+        return res.send(result.rows[0].image_data);
     } catch (error) {
         return next(error);
     }

@@ -203,6 +203,7 @@ function renderMessengerApp() {
         .news-post-author { color: var(--accent); font-weight: 800; }
         .news-post time { color: var(--muted); font-size: 12px; }
         .news-post p { margin: 0; line-height: 1.5; white-space: pre-wrap; }
+        .news-post img { display: block; width: 100%; max-height: 510px; border-radius: 9px; object-fit: contain; background: #f3f6fa; }
         .news-post video { display: block; width: 100%; max-height: 410px; border-radius: 9px; background: #000; }
         .news-empty { border: 1px dashed var(--line); border-radius: 12px; padding: 28px; color: var(--muted); text-align: center; background: #fff; }
         .groups-view { width: min(720px, 100%); margin: 0 auto; display: grid; gap: 15px; }
@@ -1433,6 +1434,7 @@ function renderMessengerApp() {
                 '<article class="news-post"><div class="news-post-head"><span class="news-post-author">' +
                 escapeText(news.author_name) + ' <span class="muted">' + escapeText(news.audience) + '</span></span><time>' +
                 new Date(news.created_at).toLocaleString() + '</time></div><p>' + escapeText(news.body) + '</p>' +
+                (news.image_url ? '<img loading="lazy" src="' + news.image_url + '?token=' + encodeURIComponent(state.token) + '" alt="News-Bild">' : '') +
                 (news.video_url ? '<video controls preload="metadata" playsinline src="' + news.video_url + '?token=' + encodeURIComponent(state.token) + '"></video>' : '') + '</article>'
             ).join('') : '<div class="news-empty">Noch keine News veröffentlicht.</div>';
         }
