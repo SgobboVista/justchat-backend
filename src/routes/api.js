@@ -563,7 +563,17 @@ app.get('/api/groups', requireAuth, async (req, res, next) => {
              order by latest.created_at desc nulls last, g.created_at desc`,
             [req.user.id],
         );
-        return res.json({ groups: result.rows });
+        const invitations = await query(
+            `select invitation.id, invitation.group_id, invitation.created_at,
+                g.name, g.owner_user_id, inviter.display_name as inviter_display_name, inviter.username as inviter_username
+             from group_invitations invitation
+             join chat_groups g on g.id = invitation.group_id
+             join users inviter on inviter.id = invitation.inviter_user_id
+             where invitation.invitee_user_id = $1 and invitation.status = 'pending'
+             order by invitation.created_at desc`,
+            [req.user.id],
+        );
+        return res.json({ groups: result.rows, invitations: invitations.rows });
     } catch (error) {
         return next(error);
     }
@@ -609,10 +619,14 @@ app.post('/api/groups', requireAuth, async (req, res, next) => {
         );
         if (memberIds.length) {
             await query(
-                `insert into group_members (group_id, user_id, role)
-                 select $1, invited_id, 'member'
-                 from unnest($2::bigint[]) invited_id`,
-                [group.id, memberIds],
+                `insert into group_invitations (group_id, inviter_user_id, invitee_user_id)
+                 select $1, $2, invited_id
+                 from unnest($3::bigint[]) invited_id
+                 where not exists (
+                    select 1 from group_invitation_blocks b
+                    where b.blocker_user_id = invited_id and b.inviter_user_id = $2
+                 )`,
+                [group.id, req.user.id, memberIds],
             );
         }
         [req.user.id, ...memberIds].forEach((userId) => sendEvent(userId, 'group:changed', { groupId: group.id }));
@@ -688,16 +702,68 @@ app.post('/api/groups/:id/members', requireAuth, async (req, res, next) => {
             return res.status(400).json({ error: 'Du kannst nur eigene, nicht blockierte Kontakte einladen' });
         }
         const added = await query(
-            `insert into group_members (group_id, user_id, role)
-             select $1, invited_id, 'member'
-             from unnest($2::bigint[]) invited_id
-             on conflict (group_id, user_id) do nothing
-             returning user_id`,
-            [groupId, memberIds],
+            `insert into group_invitations (group_id, inviter_user_id, invitee_user_id)
+             select $1, $2, invited_id
+             from unnest($3::bigint[]) invited_id
+             where not exists (
+                select 1 from group_members membership
+                where membership.group_id = $1 and membership.user_id = invited_id
+             )
+               and not exists (
+                select 1 from group_invitation_blocks b
+                where b.blocker_user_id = invited_id and b.inviter_user_id = $2
+             )
+             on conflict (group_id, invitee_user_id) do update
+             set status = 'pending', inviter_user_id = excluded.inviter_user_id, created_at = now(), responded_at = null
+             where group_invitations.status not in ('pending', 'accepted', 'declined_forever')
+             returning invitee_user_id as user_id`,
+            [groupId, req.user.id, memberIds],
         );
         added.rows.forEach((member) => sendEvent(member.user_id, 'group:changed', { groupId }));
         sendEvent(req.user.id, 'group:changed', { groupId });
         return res.json({ addedCount: added.rows.length });
+    } catch (error) {
+        return next(error);
+    }
+});
+
+app.post('/api/group-invitations/:id/respond', requireAuth, async (req, res, next) => {
+    try {
+        const invitationId = parseId(req.params.id);
+        const action = ['accept', 'decline', 'decline_forever'].includes(req.body.action) ? req.body.action : null;
+        if (!invitationId || !action) return res.status(400).json({ error: 'Ungültige Aktion' });
+        const result = await query(
+            `select id, group_id, inviter_user_id
+             from group_invitations
+             where id = $1 and invitee_user_id = $2 and status = 'pending'`,
+            [invitationId, req.user.id],
+        );
+        const invitation = result.rows[0];
+        if (!invitation) return res.status(404).json({ error: 'Einladung nicht gefunden' });
+        const status = action === 'accept' ? 'accepted' : action === 'decline_forever' ? 'declined_forever' : 'declined';
+        await query(
+            'update group_invitations set status = $1, responded_at = now() where id = $2',
+            [status, invitation.id],
+        );
+        if (action === 'accept') {
+            await query(
+                `insert into group_members (group_id, user_id, role)
+                 values ($1, $2, 'member')
+                 on conflict (group_id, user_id) do nothing`,
+                [invitation.group_id, req.user.id],
+            );
+        }
+        if (action === 'decline_forever') {
+            await query(
+                `insert into group_invitation_blocks (blocker_user_id, inviter_user_id)
+                 values ($1, $2)
+                 on conflict (blocker_user_id, inviter_user_id) do nothing`,
+                [req.user.id, invitation.inviter_user_id],
+            );
+        }
+        sendEvent(req.user.id, 'group:changed', { groupId: invitation.group_id });
+        sendEvent(invitation.inviter_user_id, 'group:changed', { groupId: invitation.group_id });
+        return res.json({ ok: true, status, groupId: invitation.group_id });
     } catch (error) {
         return next(error);
     }

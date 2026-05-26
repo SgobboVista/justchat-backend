@@ -742,6 +742,27 @@ async function initDatabase() {
             created_at timestamptz not null default now()
         );
 
+        create table if not exists group_invitations (
+            id bigserial primary key,
+            group_id bigint not null references chat_groups(id) on delete cascade,
+            inviter_user_id bigint not null references users(id) on delete cascade,
+            invitee_user_id bigint not null references users(id) on delete cascade,
+            status text not null default 'pending',
+            created_at timestamptz not null default now(),
+            responded_at timestamptz,
+            unique(group_id, invitee_user_id),
+            check(inviter_user_id <> invitee_user_id),
+            check(status in ('pending', 'accepted', 'declined', 'declined_forever'))
+        );
+
+        create table if not exists group_invitation_blocks (
+            blocker_user_id bigint not null references users(id) on delete cascade,
+            inviter_user_id bigint not null references users(id) on delete cascade,
+            created_at timestamptz not null default now(),
+            primary key (blocker_user_id, inviter_user_id),
+            check(blocker_user_id <> inviter_user_id)
+        );
+
         create table if not exists admin_audit_logs (
             id bigserial primary key,
             admin_user text not null,
@@ -834,6 +855,8 @@ async function initDatabase() {
             on group_members(user_id);
         create index if not exists idx_group_messages_group_created
             on group_messages(group_id, created_at);
+        create index if not exists idx_group_invitations_invitee_status
+            on group_invitations(invitee_user_id, status, created_at desc);
         create index if not exists idx_conversations_user_one
             on conversations(user_one_id);
         create index if not exists idx_conversations_user_two

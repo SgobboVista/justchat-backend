@@ -31,6 +31,13 @@ jobs:
         id: app-version
         run: node -e "require('fs').appendFileSync(process.env.GITHUB_OUTPUT, 'value=' + require('./package.json').version + String.fromCharCode(10))"
 
+      - name: Check JavaScript syntax
+        run: |
+          node --check server.js
+          for file in src/routes/*.js src/views/*.js; do
+            node --check "$file"
+          done
+
       - name: Generate image metadata
         id: meta
         uses: docker/metadata-action@v5

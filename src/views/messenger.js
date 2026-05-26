@@ -208,6 +208,13 @@ function renderMessengerApp() {
         .group-picker-item input { width: 18px; height: 18px; accent-color: var(--accent); }
         .group-picker-item span { display: grid; gap: 2px; }
         .group-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+        .group-invitations { display: grid; gap: 9px; }
+        .group-invitation { display: grid; gap: 10px; border: 1px solid #b8ded8; border-radius: 12px; padding: 14px; background: #eef8f6; }
+        .group-invitation strong { font-size: 16px; }
+        .group-invitation p { margin: 0; color: var(--muted); font-size: 13px; }
+        .group-invitation-actions { display: flex; gap: 7px; flex-wrap: wrap; }
+        .group-invitation-actions button { padding: 9px 11px; border-radius: 8px; font-weight: 700; }
+        .group-decline { color: var(--danger); background: #fff; border: 1px solid #f3c6c1; }
         .group-list { display: grid; gap: 9px; }
         .group-row { width: 100%; border: 1px solid var(--line); border-radius: 12px; padding: 14px; background: #fff; text-align: left; display: grid; gap: 5px; }
         .group-row:hover { border-color: #b8ded8; background: #f7fbfa; }
@@ -552,7 +559,7 @@ function renderMessengerApp() {
                         </div>
                         <div>
                             <strong>Kontakte einladen</strong>
-                            <p class="muted small">Wähle Kontakte aus, die direkt zur Gruppe hinzugefügt werden.</p>
+                            <p class="muted small">Wähle Kontakte aus. Sie können die Einladung annehmen oder ablehnen.</p>
                         </div>
                         <div id="groupContactPicker" class="group-picker"></div>
                         <p id="groupCreateError" class="error"></p>
@@ -561,6 +568,7 @@ function renderMessengerApp() {
                             <button id="cancelGroupCreate" class="ghost" type="button">Abbrechen</button>
                         </div>
                     </form>
+                    <div id="groupInvitations" class="group-invitations"></div>
                     <div id="groupList" class="group-list"></div>
                 </div>
                 <div id="groupRoom" class="group-room hidden">
@@ -839,6 +847,7 @@ function renderMessengerApp() {
             <button class="bottom-tab" type="button" data-main-tab="groups">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 20v-2a4 4 0 0 0-8 0v2"></path><circle cx="12" cy="10" r="3.5"></circle><path d="M20 20v-2a3.4 3.4 0 0 0-2.5-3.3M16.5 7a3.2 3.2 0 0 1 0 6"></path><path d="M4 20v-2a3.4 3.4 0 0 1 2.5-3.3M7.5 7a3.2 3.2 0 0 0 0 6"></path></svg>
                 <span>Gruppen</span>
+                <span id="groupsNotice" class="tab-notice hidden" aria-hidden="true"></span>
             </button>
             <button class="bottom-tab" type="button" data-main-tab="news">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h13v15H6a2 2 0 0 1-2-2V5z"></path><path d="M17 9h3v9a2 2 0 0 1-2 2"></path><path d="M7 9h7M7 13h7M7 17h4"></path></svg>
@@ -907,6 +916,7 @@ function renderMessengerApp() {
             news: [],
             pushConfig: null,
             groups: [],
+            groupInvitations: [],
             groupContacts: [],
             activeGroup: null,
         };
@@ -1201,6 +1211,7 @@ function renderMessengerApp() {
                 $('newsView').classList.add('hidden');
                 $('groupRoom').classList.add('hidden');
                 $('groupsView').classList.remove('hidden');
+                $('groupsNotice').classList.add('hidden');
                 loadGroups().catch((error) => {
                     $('groupList').innerHTML = '<div class="news-empty">' + escapeText(error.message) + '</div>';
                 });
@@ -1211,6 +1222,15 @@ function renderMessengerApp() {
         }
 
         function renderGroups() {
+            $('groupInvitations').innerHTML = state.groupInvitations.map((invitation) =>
+                '<article class="group-invitation"><strong>Einladung: ' + escapeText(invitation.name) + '</strong>' +
+                '<p>' + escapeText(invitation.inviter_display_name) + ' (@' + escapeText(invitation.inviter_username) + ') möchte dich zur Gruppe hinzufügen.</p>' +
+                '<div class="group-invitation-actions">' +
+                '<button class="primary" type="button" data-accept-group-invitation="' + invitation.id + '">Beitreten</button>' +
+                '<button class="group-decline" type="button" data-decline-group-invitation="' + invitation.id + '">Ablehnen</button>' +
+                '<button class="group-decline" type="button" data-block-group-invitation="' + invitation.id + '">Ablehnen und nie wieder fragen</button>' +
+                '</div></article>'
+            ).join('');
             $('groupList').innerHTML = state.groups.length ? state.groups.map((group) =>
                 '<button class="group-row" type="button" data-group="' + group.id + '">' +
                 '<span class="group-row-head"><strong>' + escapeText(group.name) + '</strong><span class="muted small">' +
@@ -1222,6 +1242,8 @@ function renderMessengerApp() {
         async function loadGroups() {
             const data = await api('/api/groups');
             state.groups = data.groups || [];
+            state.groupInvitations = data.invitations || [];
+            $('groupsNotice').classList.toggle('hidden', !state.groupInvitations.length || state.mainTab === 'groups');
             renderGroups();
         }
 
@@ -2115,7 +2137,7 @@ function renderMessengerApp() {
                 if (state.mainTab === 'news') await loadNews();
             });
             state.eventSource.addEventListener('group:changed', async () => {
-                if (state.mainTab === 'groups') await loadGroups();
+                await loadGroups();
             });
             state.eventSource.addEventListener('group:message', async (event) => {
                 const payload = JSON.parse(event.data);
@@ -2164,6 +2186,7 @@ function renderMessengerApp() {
                 loadConversations(),
                 loadContactRequests(),
                 loadBlockedUsers(),
+                loadGroups(),
             ]).then(() => {
                 if (new URLSearchParams(window.location.search).get('tab') === 'news') openFeatureView('news');
             }).catch(() => showConnectionStatus(false));
@@ -2609,12 +2632,32 @@ function renderMessengerApp() {
                     body: JSON.stringify({ memberIds }),
                 });
                 $('groupInviteError').textContent = data.addedCount
-                    ? data.addedCount + ' Kontakt(e) eingeladen.'
-                    : 'Diese Kontakte sind bereits in der Gruppe.';
+                    ? data.addedCount + ' Einladung(en) gesendet.'
+                    : 'Keine neue Einladung möglich. Die Person ist bereits Mitglied, eingeladen oder möchte keine weiteren Einladungen.';
                 await refreshOpenGroup(state.activeGroup.id);
                 await loadGroups();
             } catch (error) {
                 $('groupInviteError').textContent = error.message;
+            }
+        });
+        $('groupInvitations').addEventListener('click', async (event) => {
+            const accept = event.target.closest('[data-accept-group-invitation]');
+            const decline = event.target.closest('[data-decline-group-invitation]');
+            const block = event.target.closest('[data-block-group-invitation]');
+            const button = accept || decline || block;
+            if (!button) return;
+            const invitationId = accept
+                ? accept.dataset.acceptGroupInvitation
+                : decline ? decline.dataset.declineGroupInvitation : block.dataset.blockGroupInvitation;
+            const action = accept ? 'accept' : decline ? 'decline' : 'decline_forever';
+            try {
+                await api('/api/group-invitations/' + invitationId + '/respond', {
+                    method: 'POST',
+                    body: JSON.stringify({ action }),
+                });
+                await loadGroups();
+            } catch (error) {
+                $('groupList').innerHTML = '<div class="news-empty">' + escapeText(error.message) + '</div>';
             }
         });
         $('groupComposer').addEventListener('submit', async (event) => {
