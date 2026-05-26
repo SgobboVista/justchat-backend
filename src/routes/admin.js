@@ -80,13 +80,19 @@ app.get('/admin/api/overview', requireAdminAuth, async (req, res, next) => {
             order by created_at desc
             limit 50
         `);
-        const news = await query(`
-            select id, author_name, audience, body, video_file_name, video_mime_type, video_size_bytes, created_at,
-                case when video_data is null then null else '/admin/api/news/' || id || '/video' end as video_url
-            from news_posts
-            order by created_at desc
-            limit 30
-        `);
+        let news = { rows: [] };
+        let warning = '';
+        try {
+            news = await query(`
+                select id, author_name, audience, body, video_file_name, video_mime_type, video_size_bytes, created_at,
+                    case when video_data is null then null else '/admin/api/news/' || id || '/video' end as video_url
+                from news_posts
+                order by created_at desc
+                limit 30
+            `);
+        } catch (error) {
+            warning = `News konnten nicht geladen werden: ${error.message}`;
+        }
 
         return res.json({
             summary: summary.rows[0],
@@ -96,9 +102,10 @@ app.get('/admin/api/overview', requireAdminAuth, async (req, res, next) => {
             news: news.rows,
             audit: audit.rows,
             imageUpdate: getImageUpdateState(),
+            warning,
         });
     } catch (error) {
-        return next(error);
+        return res.status(500).json({ error: `Statistik-Abfrage fehlgeschlagen: ${error.message}` });
     }
 });
 

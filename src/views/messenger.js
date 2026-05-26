@@ -37,6 +37,7 @@ function renderMessengerApp() {
         .loading-card { display: grid; justify-items: center; gap: 16px; color: var(--accent); }
         .loading-brand { font-size: 34px; font-weight: 800; color: var(--text); }
         .spinner { width: 42px; height: 42px; border-radius: 50%; border: 4px solid #cfe8e5; border-top-color: var(--accent); animation: spin .85s linear infinite; }
+        .loading-error { max-width: 420px; color: var(--danger); text-align: center; line-height: 1.45; }
         @keyframes spin { to { transform: rotate(360deg); } }
         .connection-banner { position: fixed; top: 0; left: 0; right: 0; z-index: 50; min-height: 28px; padding: calc(6px + env(safe-area-inset-top)) 12px 6px; text-align: center; font-size: 13px; font-weight: 700; color: #fff; transition: transform .18s ease, opacity .18s ease; }
         .connection-banner.offline { background: #b42318; }
@@ -362,6 +363,8 @@ function renderMessengerApp() {
             <div class="loading-brand">JustChat</div>
             <div class="spinner" aria-hidden="true"></div>
             <span id="loadingStatus" class="muted">Chats werden geladen...</span>
+            <p id="loadingError" class="loading-error hidden" role="alert"></p>
+            <button id="retryBoot" class="primary hidden" type="button">Erneut versuchen</button>
         </div>
     </div>
 
@@ -2129,6 +2132,8 @@ function renderMessengerApp() {
                 clearTimeout(state.bootRetryTimer);
                 state.bootRetryTimer = null;
             }
+            $('loadingError').classList.add('hidden');
+            $('retryBoot').classList.add('hidden');
             $('loadingStatus').textContent = 'Anmeldung wird geprüft...';
             try {
                 await loadMe();
@@ -2139,7 +2144,10 @@ function renderMessengerApp() {
                 if (!error.status || error.status >= 500) {
                     showConnectionStatus(false);
                     if (!$('loading').classList.contains('hidden')) {
-                        $('loadingStatus').textContent = error.message + '. Neuer Versuch...';
+                        $('loadingStatus').textContent = 'Verbindung zum Server fehlgeschlagen.';
+                        $('loadingError').textContent = error.message + '. Die App versucht es erneut.';
+                        $('loadingError').classList.remove('hidden');
+                        $('retryBoot').classList.remove('hidden');
                     }
                     state.bootRetryTimer = setTimeout(boot, 3000);
                     return;
@@ -2509,6 +2517,9 @@ function renderMessengerApp() {
             localStorage.removeItem('justchat_token');
             if (state.eventSource) state.eventSource.close();
             location.reload();
+        });
+        $('retryBoot').addEventListener('click', () => {
+            boot();
         });
         $('back').addEventListener('click', () => {
             showChatHome();

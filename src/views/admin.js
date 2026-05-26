@@ -96,6 +96,7 @@ function renderAdminLayout(content) {
         .news-card p { margin: 0; white-space: pre-wrap; line-height: 1.45; }
         .news-card video { display: block; width: min(520px, 100%); max-height: 300px; border-radius: 8px; background: #000; }
         .notice { border: 1px solid #fedf89; background: #fffaeb; color: #7a4f01; border-radius: 8px; padding: 12px; margin-top: 16px; }
+        .load-error { border: 1px solid #fecdca; background: #fef3f2; color: var(--error); border-radius: 8px; padding: 12px; margin-bottom: 16px; }
         .admin-login-shell { min-height: calc(100vh - 56px); display: grid; place-items: center; }
         .admin-login-card { width: min(420px, 100%); background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 28px; box-shadow: 0 18px 42px rgba(15, 23, 42, .1); }
         .admin-login-card h1 { margin-bottom: 8px; }
@@ -207,6 +208,7 @@ function renderDashboard(data) {
                 <span class="status ${dbStatus}">Datenbank: ${statusText(data.database.online)}</span>
             </div>
         </header>
+        <p id="adminLoadError" class="load-error hidden" role="alert"></p>
         <section class="grid" aria-label="Server Kennzahlen">
             <div class="metric"><span>Nutzer</span><strong id="statUsers">-</strong></div>
             <div class="metric"><span>Chats</span><strong id="statConversations">-</strong></div>
@@ -428,15 +430,25 @@ function renderDashboard(data) {
             }
 
             async function loadAdmin() {
-                const data = await adminApi('/admin/api/overview');
-                state.summary = data.summary;
-                state.users = data.users;
-                state.avatars = data.avatars;
-                state.sounds = data.sounds;
-                state.news = data.news;
-                state.audit = data.audit;
-                state.imageUpdate = data.imageUpdate;
-                render();
+                el('adminLoadError').classList.add('hidden');
+                try {
+                    const data = await adminApi('/admin/api/overview');
+                    state.summary = data.summary;
+                    state.users = data.users;
+                    state.avatars = data.avatars;
+                    state.sounds = data.sounds;
+                    state.news = data.news || [];
+                    state.audit = data.audit;
+                    state.imageUpdate = data.imageUpdate;
+                    render();
+                    if (data.warning) {
+                        el('adminLoadError').textContent = data.warning;
+                        el('adminLoadError').classList.remove('hidden');
+                    }
+                } catch (error) {
+                    el('adminLoadError').textContent = 'Statistiken konnten nicht geladen werden: ' + error.message;
+                    el('adminLoadError').classList.remove('hidden');
+                }
             }
 
             el('refreshButton').addEventListener('click', loadAdmin);
