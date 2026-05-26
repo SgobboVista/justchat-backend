@@ -998,8 +998,8 @@ function renderAdminLayout(content) {
             --error: #c62828;
         }
         * { box-sizing: border-box; }
-        html { height: 100%; }
-        body { margin: 0; min-height: 100vh; font-family: Arial, sans-serif; background: var(--bg); color: var(--text); }
+        html { height: 100%; touch-action: manipulation; }
+        body { margin: 0; min-height: 100vh; touch-action: manipulation; font-family: Arial, sans-serif; background: var(--bg); color: var(--text); }
         main { width: min(1280px, calc(100% - 32px)); margin: 0 auto; padding: 28px 0; }
         header { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin-bottom: 24px; }
         h1, h2, p { margin: 0; }
@@ -1021,7 +1021,8 @@ function renderAdminLayout(content) {
         dd { margin: 0; overflow-wrap: anywhere; }
         code { background: #f5f7fb; border: 1px solid var(--line); border-radius: 6px; padding: 2px 6px; }
         a { color: var(--accent); font-weight: 700; text-decoration: none; }
-        button, input, select { font: inherit; }
+        button, input, select { font: inherit; touch-action: manipulation; }
+        input, select, textarea { font-size: 16px; }
         button, .button { background: var(--accent); color: #fff; border: 0; border-radius: 8px; padding: 10px 12px; font-weight: 700; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
         button:hover, .button:hover { background: var(--accent-dark); }
         button:disabled { cursor: not-allowed; opacity: .56; }
@@ -1072,7 +1073,13 @@ function renderAdminLayout(content) {
         }
     </style>
 </head>
-<body><main>${content}</main></body>
+<body><main>${content}</main>
+    <script data-cfasync="false">
+        ['gesturestart', 'gesturechange', 'gestureend'].forEach((name) => {
+            document.addEventListener(name, (event) => event.preventDefault(), { passive: false });
+        });
+    </script>
+</body>
 </html>`;
 }
 
@@ -1460,9 +1467,10 @@ function renderMessengerApp() {
             --danger: #b42318;
         }
         * { box-sizing: border-box; }
-        html { height: 100%; }
-        body { margin: 0; min-height: 100vh; font-family: Arial, sans-serif; background: var(--bg); color: var(--text); }
-        button, input, textarea { font: inherit; }
+        html { height: 100%; touch-action: manipulation; }
+        body { margin: 0; min-height: 100vh; touch-action: manipulation; font-family: Arial, sans-serif; background: var(--bg); color: var(--text); }
+        button, input, textarea, select { font: inherit; touch-action: manipulation; }
+        input, textarea, select { font-size: 16px; }
         button { cursor: pointer; border: 0; }
         .loading-shell { min-height: 100vh; min-height: 100dvh; display: grid; place-items: center; padding: 24px; background: linear-gradient(135deg, #f7fbff 0%, #edf7f4 100%); }
         .loading-card { display: grid; justify-items: center; gap: 16px; color: var(--accent); }
@@ -1650,7 +1658,9 @@ function renderMessengerApp() {
         .modal-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 16px; }
         .image-viewer { position: fixed; inset: 0; z-index: 70; display: grid; place-items: center; touch-action: none; padding: max(18px, env(safe-area-inset-top)) max(18px, env(safe-area-inset-right)) max(18px, env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left)); background: rgba(5, 12, 22, .9); }
         .image-viewer img { display: block; max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 8px; }
-        .image-viewer-close { position: absolute; top: calc(12px + env(safe-area-inset-top)); right: calc(12px + env(safe-area-inset-right)); z-index: 1; width: 46px; height: 46px; border-radius: 50%; padding: 0; display: grid; place-items: center; color: #fff; background: rgba(15, 23, 42, .62); font-size: 32px; line-height: 1; }
+        .image-viewer-close { position: fixed; top: calc(14px + env(safe-area-inset-top)); right: calc(14px + env(safe-area-inset-right)); z-index: 72; width: 52px; height: 52px; border: 2px solid rgba(255, 255, 255, .88); border-radius: 50%; padding: 0; display: grid; place-items: center; color: #fff; background: rgba(9, 18, 32, .82); box-shadow: 0 6px 22px rgba(0, 0, 0, .35); font-size: 30px; line-height: 1; }
+        .image-viewer-close:hover { background: rgba(30, 41, 59, .96); }
+        .image-viewer-close:focus-visible { outline: 3px solid #fff; outline-offset: 3px; }
         .close-button { width: 38px; height: 38px; display: grid; place-items: center; font-size: 28px; line-height: 1; padding: 0; border-radius: 50%; }
         .segmented { display: flex; gap: 8px; flex-wrap: wrap; }
         .small { font-size: 13px; }
@@ -2116,7 +2126,7 @@ function renderMessengerApp() {
         </form>
     </div>
     <div id="imageViewer" class="image-viewer hidden" role="dialog" aria-modal="true" aria-label="Bildansicht">
-        <button id="closeImageViewer" class="image-viewer-close" type="button" aria-label="Bild schließen" title="Schließen">&times;</button>
+        <button id="closeImageViewer" class="image-viewer-close" type="button" aria-label="Bild schließen" title="Schließen">&#10005;</button>
         <img id="imageViewerImage" alt="">
     </div>
 
@@ -2158,6 +2168,10 @@ function renderMessengerApp() {
         };
 
         const $ = (id) => document.getElementById(id);
+
+        ['gesturestart', 'gesturechange', 'gestureend'].forEach((name) => {
+            document.addEventListener(name, (event) => event.preventDefault(), { passive: false });
+        });
 
         function updateViewportHeight() {
             document.documentElement.style.setProperty('--app-height', window.innerHeight + 'px');
