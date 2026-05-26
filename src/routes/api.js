@@ -514,6 +514,210 @@ app.post('/api/contact-requests/:id/archive', requireAuth, async (req, res, next
     }
 });
 
+app.get('/api/groups/contacts', requireAuth, async (req, res, next) => {
+    try {
+        const result = await query(
+            `select u.id, u.username, u.display_name, u.avatar_color,
+                case when aa.id is null then null else 'data:' || aa.mime_type || ';base64,' || encode(aa.data, 'base64') end as avatar_url
+             from conversations c
+             join users u on u.id = case when c.user_one_id = $1 then c.user_two_id else c.user_one_id end
+             left join avatar_assets aa on aa.id = u.avatar_asset_id and aa.is_active = true
+             where $1 in (c.user_one_id, c.user_two_id)
+                and not exists (
+                    select 1 from user_blocks b
+                    where (b.blocker_id = $1 and b.blocked_user_id = u.id)
+                       or (b.blocker_id = u.id and b.blocked_user_id = $1)
+                )
+             order by lower(u.display_name), lower(u.username)`,
+            [req.user.id],
+        );
+        return res.json({ contacts: result.rows });
+    } catch (error) {
+        return next(error);
+    }
+});
+
+app.get('/api/groups', requireAuth, async (req, res, next) => {
+    try {
+        const result = await query(
+            `select g.id, g.name, g.owner_user_id, g.created_at,
+                count(members.user_id)::int as member_count,
+                latest.body as last_message, latest.created_at as last_message_at
+             from group_members mine
+             join chat_groups g on g.id = mine.group_id
+             join group_members members on members.group_id = g.id
+             left join lateral (
+                select body, created_at
+                from group_messages
+                where group_id = g.id
+                order by created_at desc
+                limit 1
+             ) latest on true
+             where mine.user_id = $1
+             group by g.id, latest.body, latest.created_at
+             order by latest.created_at desc nulls last, g.created_at desc`,
+            [req.user.id],
+        );
+        return res.json({ groups: result.rows });
+    } catch (error) {
+        return next(error);
+    }
+});
+
+app.post('/api/groups', requireAuth, async (req, res, next) => {
+    try {
+        const name = String(req.body.name || '').trim().slice(0, 60);
+        if (name.length < 2) return res.status(400).json({ error: 'Bitte gib einen Gruppennamen ein' });
+        const memberIds = [...new Set((Array.isArray(req.body.memberIds) ? req.body.memberIds : [])
+            .map((id) => parseId(id))
+            .filter((id) => id && Number(id) !== Number(req.user.id)))];
+        if (memberIds.length > 50) return res.status(400).json({ error: 'Eine Gruppe kann maximal 50 eingeladene Kontakte enthalten' });
+        if (memberIds.length) {
+            const contacts = await query(
+                `select u.id
+                 from conversations c
+                 join users u on u.id = case when c.user_one_id = $1 then c.user_two_id else c.user_one_id end
+                 where $1 in (c.user_one_id, c.user_two_id)
+                    and u.id = any($2::bigint[])
+                    and not exists (
+                        select 1 from user_blocks b
+                        where (b.blocker_id = $1 and b.blocked_user_id = u.id)
+                           or (b.blocker_id = u.id and b.blocked_user_id = $1)
+                    )`,
+                [req.user.id, memberIds],
+            );
+            if (contacts.rows.length !== memberIds.length) {
+                return res.status(400).json({ error: 'Du kannst nur eigene, nicht blockierte Kontakte einladen' });
+            }
+        }
+        const created = await query(
+            `insert into chat_groups (name, owner_user_id)
+             values ($1, $2)
+             returning id, name, owner_user_id, created_at`,
+            [name, req.user.id],
+        );
+        const group = created.rows[0];
+        await query(
+            `insert into group_members (group_id, user_id, role)
+             values ($1, $2, 'owner')`,
+            [group.id, req.user.id],
+        );
+        if (memberIds.length) {
+            await query(
+                `insert into group_members (group_id, user_id, role)
+                 select $1, invited_id, 'member'
+                 from unnest($2::bigint[]) invited_id`,
+                [group.id, memberIds],
+            );
+        }
+        [req.user.id, ...memberIds].forEach((userId) => sendEvent(userId, 'group:changed', { groupId: group.id }));
+        return res.status(201).json({ group });
+    } catch (error) {
+        return next(error);
+    }
+});
+
+app.get('/api/groups/:id/messages', requireAuth, async (req, res, next) => {
+    try {
+        const groupId = parseId(req.params.id);
+        if (!groupId) return res.status(400).json({ error: 'Ungültige Gruppe' });
+        const groupResult = await query(
+            `select g.id, g.name, g.owner_user_id, g.created_at,
+                count(all_members.user_id)::int as member_count
+             from chat_groups g
+             join group_members mine on mine.group_id = g.id and mine.user_id = $2
+             join group_members all_members on all_members.group_id = g.id
+             where g.id = $1
+             group by g.id`,
+            [groupId, req.user.id],
+        );
+        if (!groupResult.rows[0]) return res.status(404).json({ error: 'Gruppe nicht gefunden' });
+        const messages = await query(
+            `select gm.id, gm.group_id, gm.sender_id, gm.body, gm.created_at,
+                u.display_name, u.username
+             from group_messages gm
+             join users u on u.id = gm.sender_id
+             where gm.group_id = $1
+             order by gm.created_at desc
+             limit 200`,
+            [groupId],
+        );
+        return res.json({ group: groupResult.rows[0], messages: messages.rows.reverse() });
+    } catch (error) {
+        return next(error);
+    }
+});
+
+app.post('/api/groups/:id/members', requireAuth, async (req, res, next) => {
+    try {
+        const groupId = parseId(req.params.id);
+        if (!groupId) return res.status(400).json({ error: 'Ungültige Gruppe' });
+        const ownedGroup = await query(
+            'select id from chat_groups where id = $1 and owner_user_id = $2',
+            [groupId, req.user.id],
+        );
+        if (!ownedGroup.rows[0]) return res.status(403).json({ error: 'Nur der Ersteller kann Kontakte einladen' });
+        const memberIds = [...new Set((Array.isArray(req.body.memberIds) ? req.body.memberIds : [])
+            .map((id) => parseId(id))
+            .filter((id) => id && Number(id) !== Number(req.user.id)))];
+        if (!memberIds.length) return res.status(400).json({ error: 'Bitte wähle mindestens einen Kontakt aus' });
+        const contacts = await query(
+            `select u.id
+             from conversations c
+             join users u on u.id = case when c.user_one_id = $1 then c.user_two_id else c.user_one_id end
+             where $1 in (c.user_one_id, c.user_two_id)
+                and u.id = any($2::bigint[])
+                and not exists (
+                    select 1 from user_blocks b
+                    where (b.blocker_id = $1 and b.blocked_user_id = u.id)
+                       or (b.blocker_id = u.id and b.blocked_user_id = $1)
+                )`,
+            [req.user.id, memberIds],
+        );
+        if (contacts.rows.length !== memberIds.length) {
+            return res.status(400).json({ error: 'Du kannst nur eigene, nicht blockierte Kontakte einladen' });
+        }
+        const added = await query(
+            `insert into group_members (group_id, user_id, role)
+             select $1, invited_id, 'member'
+             from unnest($2::bigint[]) invited_id
+             on conflict (group_id, user_id) do nothing
+             returning user_id`,
+            [groupId, memberIds],
+        );
+        added.rows.forEach((member) => sendEvent(member.user_id, 'group:changed', { groupId }));
+        sendEvent(req.user.id, 'group:changed', { groupId });
+        return res.json({ addedCount: added.rows.length });
+    } catch (error) {
+        return next(error);
+    }
+});
+
+app.post('/api/groups/:id/messages', requireAuth, async (req, res, next) => {
+    try {
+        const groupId = parseId(req.params.id);
+        const body = cleanMessage(req.body.body);
+        if (!groupId || !body) return res.status(400).json({ error: 'Nachricht ist leer' });
+        const membership = await query(
+            'select group_id from group_members where group_id = $1 and user_id = $2',
+            [groupId, req.user.id],
+        );
+        if (!membership.rows[0]) return res.status(404).json({ error: 'Gruppe nicht gefunden' });
+        const inserted = await query(
+            `insert into group_messages (group_id, sender_id, body)
+             values ($1, $2, $3)
+             returning id, group_id, sender_id, body, created_at`,
+            [groupId, req.user.id, body],
+        );
+        const message = inserted.rows[0];
+        const recipients = await query('select user_id from group_members where group_id = $1', [groupId]);
+        recipients.rows.forEach((member) => sendEvent(member.user_id, 'group:message', { groupId, message }));
+        return res.status(201).json({ message });
+    } catch (error) {
+        return next(error);
+    }
+});
+
 app.get('/api/conversations', requireAuth, async (req, res, next) => {
     try {
         const result = await query(

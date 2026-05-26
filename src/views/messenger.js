@@ -82,7 +82,7 @@ function renderMessengerApp() {
         .install-panel p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.45; }
         .install-panel .primary { width: 100%; }
         .install-status:empty { display: none; }
-        .app { height: 100vh; height: 100dvh; display: grid; grid-template-columns: 360px 1fr; overflow: hidden; }
+        .app { height: 100vh; height: 100dvh; padding-bottom: calc(68px + env(safe-area-inset-bottom)); display: grid; grid-template-columns: 360px 1fr; overflow: hidden; }
         .sidebar { background: var(--sidebar); border-right: 1px solid var(--line); display: grid; grid-template-rows: auto auto auto minmax(0, 1fr); min-width: 0; min-height: 0; overflow: hidden; }
         .topbar { padding: 16px; border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; gap: 12px; }
         .me-box { display: grid; grid-template-columns: 50px 1fr; gap: 10px; align-items: center; min-width: 0; }
@@ -195,8 +195,61 @@ function renderMessengerApp() {
         .news-post p { margin: 0; line-height: 1.5; white-space: pre-wrap; }
         .news-post video { display: block; width: 100%; max-height: 410px; border-radius: 9px; background: #000; }
         .news-empty { border: 1px dashed var(--line); border-radius: 12px; padding: 28px; color: var(--muted); text-align: center; background: #fff; }
+        .groups-view { width: min(720px, 100%); margin: 0 auto; display: grid; gap: 15px; }
+        .groups-head { display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap; }
+        .groups-head h2 { margin: 0; font-size: 28px; }
+        .groups-head p { margin: 5px 0 0; color: var(--muted); }
+        .group-create { border: 1px solid var(--line); border-radius: 13px; padding: 16px; background: #fff; display: grid; gap: 13px; }
+        .group-picker { display: grid; gap: 7px; max-height: 250px; overflow-y: auto; }
+        .group-picker-item { display: flex; align-items: center; gap: 10px; padding: 9px 11px; border: 1px solid var(--line); border-radius: 9px; background: #f7fbfa; }
+        .group-picker-item input { width: 18px; height: 18px; accent-color: var(--accent); }
+        .group-picker-item span { display: grid; gap: 2px; }
+        .group-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+        .group-list { display: grid; gap: 9px; }
+        .group-row { width: 100%; border: 1px solid var(--line); border-radius: 12px; padding: 14px; background: #fff; text-align: left; display: grid; gap: 5px; }
+        .group-row:hover { border-color: #b8ded8; background: #f7fbfa; }
+        .group-row-head { display: flex; justify-content: space-between; gap: 12px; }
+        .group-row-head strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .group-room { width: min(780px, 100%); min-height: min(680px, calc(100vh - 118px)); margin: 0 auto; display: grid; grid-template-rows: auto auto minmax(280px, 1fr) auto; overflow: hidden; border: 1px solid var(--line); border-radius: 14px; background: #fff; }
+        .group-room-head { padding: 12px 14px; border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 10px; }
+        .group-room-title { display: grid; gap: 3px; min-width: 0; }
+        .group-room-title strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 18px; }
+        .group-room-invite { margin-left: auto; }
+        .group-invite { grid-row: 2; margin: 12px; }
+        .group-messages { grid-row: 3; min-height: 0; padding: 15px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; background: #e9f0f4; }
+        .group-sender { display: block; color: var(--accent); font-size: 12px; font-weight: 700; margin-bottom: 4px; }
+        .group-composer { grid-row: 4; display: grid; grid-template-columns: minmax(0, 1fr) 48px; align-items: end; gap: 9px; padding: 11px; border-top: 1px solid var(--line); }
+        .group-composer textarea { width: 100%; min-height: 48px; max-height: 110px; resize: vertical; border: 1px solid var(--line); border-radius: 24px; padding: 13px 17px; }
         .tab-notice { width: 8px; height: 8px; border-radius: 50%; background: #22c55e; position: absolute; top: 8px; right: calc(50% - 25px); }
-        .bottom-tabs { display: none; }
+        .bottom-tabs {
+            position: fixed;
+            z-index: 18;
+            right: 0;
+            bottom: 0;
+            left: 0;
+            height: calc(68px + env(safe-area-inset-bottom));
+            padding: 6px 8px env(safe-area-inset-bottom);
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 4px;
+            border-top: 1px solid var(--line);
+            background: rgba(255, 255, 255, .98);
+        }
+        .bottom-tab {
+            position: relative;
+            min-width: 0;
+            display: grid;
+            justify-items: center;
+            align-content: center;
+            gap: 3px;
+            border-radius: 10px;
+            background: transparent;
+            color: var(--muted);
+            font-size: 12px;
+            font-weight: 700;
+        }
+        .bottom-tab svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+        .bottom-tab.active { background: #eef8f6; color: var(--accent); }
         @keyframes homeFloat { to { transform: translate3d(22px, -18px, 0) scale(1.08); } }
         .chat.drop-active .messages { outline: 2px dashed var(--accent); outline-offset: -10px; background: #dff1ec; }
         .drop-hint { display: none; position: absolute; inset: 72px 18px 74px; place-items: center; pointer-events: none; z-index: 2; color: var(--accent); font-size: 18px; font-weight: 700; }
@@ -263,14 +316,13 @@ function renderMessengerApp() {
             .topbar { padding-top: calc(16px + env(safe-area-inset-top)); }
             .sidebar.chat-open { display: none; }
             .chat:not(.chat-open) { display: none; }
-            .sidebar, .chat { padding-bottom: calc(68px + env(safe-area-inset-bottom)); }
             .chat-head {
                 min-height: 64px;
                 padding: calc(10px + env(safe-area-inset-top)) 12px 10px;
                 background: var(--panel);
                 box-shadow: 0 1px 3px rgba(15,23,42,.08);
             }
-            .sidebar, .chat { height: var(--app-height, 100vh); }
+            .sidebar, .chat { height: 100%; }
             .messages {
                 min-height: 0;
                 padding: 12px 10px;
@@ -297,35 +349,6 @@ function renderMessengerApp() {
             .home-list-button { display: block; }
             .feature-view { padding: calc(24px + env(safe-area-inset-top)) 18px 20px; }
             .feature-card { margin: clamp(28px, 12vh, 90px) auto 0; padding: 30px 22px; }
-            .bottom-tabs {
-                position: fixed;
-                z-index: 18;
-                right: 0;
-                bottom: 0;
-                left: 0;
-                height: calc(68px + env(safe-area-inset-bottom));
-                padding: 6px 8px env(safe-area-inset-bottom);
-                display: grid;
-                grid-template-columns: repeat(3, 1fr);
-                gap: 4px;
-                border-top: 1px solid var(--line);
-                background: rgba(255, 255, 255, .98);
-            }
-            .bottom-tab {
-                position: relative;
-                min-width: 0;
-                display: grid;
-                justify-items: center;
-                align-content: center;
-                gap: 3px;
-                border-radius: 10px;
-                background: transparent;
-                color: var(--muted);
-                font-size: 12px;
-                font-weight: 700;
-            }
-            .bottom-tab svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
-            .bottom-tab.active { background: #eef8f6; color: var(--accent); }
         }
     </style>
 </head>
@@ -506,11 +529,58 @@ function renderMessengerApp() {
                 </div>
             </div>
             <div id="featureView" class="feature-view hidden">
-                <div id="comingSoonView" class="feature-card">
-                    <div id="featureMark" class="feature-mark"></div>
-                    <span class="soon-badge">Demnächst</span>
-                    <h2 id="featureTitle"></h2>
-                    <p id="featureDescription"></p>
+                <div id="groupsView" class="groups-view hidden">
+                    <div class="groups-head">
+                        <div>
+                            <h2>Gruppen</h2>
+                            <p>Erstelle eine Gruppe und lade deine Kontakte ein.</p>
+                        </div>
+                        <button id="newGroup" class="primary" type="button">Neue Gruppe</button>
+                    </div>
+                    <form id="groupCreateForm" class="group-create hidden">
+                        <div class="field">
+                            <label for="groupName">Gruppenname</label>
+                            <input id="groupName" maxlength="60" placeholder="z. B. Familie" required>
+                        </div>
+                        <div>
+                            <strong>Kontakte einladen</strong>
+                            <p class="muted small">Wähle Kontakte aus, die direkt zur Gruppe hinzugefügt werden.</p>
+                        </div>
+                        <div id="groupContactPicker" class="group-picker"></div>
+                        <p id="groupCreateError" class="error"></p>
+                        <div class="group-actions">
+                            <button class="primary" type="submit">Gruppe erstellen</button>
+                            <button id="cancelGroupCreate" class="ghost" type="button">Abbrechen</button>
+                        </div>
+                    </form>
+                    <div id="groupList" class="group-list"></div>
+                </div>
+                <div id="groupRoom" class="group-room hidden">
+                    <div class="group-room-head">
+                        <button id="backToGroups" class="ghost close-button" type="button" aria-label="Zurück zu Gruppen">&lsaquo;</button>
+                        <div class="group-room-title">
+                            <strong id="groupRoomName"></strong>
+                            <span id="groupRoomMembers" class="muted small"></span>
+                        </div>
+                        <button id="inviteToGroup" class="ghost group-room-invite" type="button">Einladen</button>
+                    </div>
+                    <form id="groupInviteForm" class="group-create group-invite hidden">
+                        <strong>Weitere Kontakte einladen</strong>
+                        <div id="groupInvitePicker" class="group-picker"></div>
+                        <p id="groupInviteError" class="error"></p>
+                        <div class="group-actions">
+                            <button class="primary" type="submit">Einladen</button>
+                            <button id="cancelGroupInvite" class="ghost" type="button">Abbrechen</button>
+                        </div>
+                    </form>
+                    <div id="groupMessages" class="group-messages"></div>
+                    <form id="groupComposer" class="group-composer">
+                        <textarea id="groupMessageInput" maxlength="4000" placeholder="Nachricht an die Gruppe"></textarea>
+                        <button class="primary send-button" type="submit" aria-label="Senden" title="Senden">
+                            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M22 2 11 13"></path><path d="m22 2-7 20-4-9-9-4z"></path></svg>
+                        </button>
+                        <p id="groupComposerError" class="error composer-error"></p>
+                    </form>
                 </div>
                 <div id="newsView" class="news-view hidden">
                     <div class="news-view-head">
@@ -828,6 +898,9 @@ function renderMessengerApp() {
             mainTab: 'chats',
             news: [],
             pushConfig: null,
+            groups: [],
+            groupContacts: [],
+            activeGroup: null,
         };
 
         const $ = (id) => document.getElementById(id);
@@ -1102,13 +1175,15 @@ function renderMessengerApp() {
             stopTyping();
             setRemoteTyping(false);
             state.activeConversation = null;
+            state.activeGroup = null;
             selectMainTab(tab);
             $('chatEmpty').classList.add('hidden');
             $('chatPane').classList.add('hidden');
             $('accountPanel').classList.add('hidden');
             $('contactPanel').classList.add('hidden');
             if (tab === 'news') {
-                $('comingSoonView').classList.add('hidden');
+                $('groupsView').classList.add('hidden');
+                $('groupRoom').classList.add('hidden');
                 $('newsView').classList.remove('hidden');
                 $('newsNotice').classList.add('hidden');
                 loadNews().catch((error) => {
@@ -1116,14 +1191,96 @@ function renderMessengerApp() {
                 });
             } else {
                 $('newsView').classList.add('hidden');
-                $('comingSoonView').classList.remove('hidden');
-                $('featureTitle').textContent = 'Gruppen';
-                $('featureDescription').textContent = 'Gruppenchats werden bald verfügbar sein. Dann kannst du mit mehreren Kontakten gleichzeitig schreiben.';
-                $('featureMark').innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 20v-2a4 4 0 0 0-8 0v2"></path><circle cx="12" cy="10" r="3.5"></circle><path d="M20 20v-2a3.4 3.4 0 0 0-2.5-3.3M16.5 7a3.2 3.2 0 0 1 0 6"></path><path d="M4 20v-2a3.4 3.4 0 0 1 2.5-3.3M7.5 7a3.2 3.2 0 0 0 0 6"></path></svg>';
+                $('groupRoom').classList.add('hidden');
+                $('groupsView').classList.remove('hidden');
+                loadGroups().catch((error) => {
+                    $('groupList').innerHTML = '<div class="news-empty">' + escapeText(error.message) + '</div>';
+                });
             }
             $('featureView').classList.remove('hidden');
             $('sidebar').classList.add('chat-open');
             $('chat').classList.add('chat-open');
+        }
+
+        function renderGroups() {
+            $('groupList').innerHTML = state.groups.length ? state.groups.map((group) =>
+                '<button class="group-row" type="button" data-group="' + group.id + '">' +
+                '<span class="group-row-head"><strong>' + escapeText(group.name) + '</strong><span class="muted small">' +
+                escapeText(String(group.member_count)) + ' Mitglieder</span></span>' +
+                '<span class="preview">' + escapeText(group.last_message || 'Noch keine Nachrichten') + '</span></button>'
+            ).join('') : '<div class="news-empty">Du bist noch in keiner Gruppe. Erstelle deine erste Gruppe.</div>';
+        }
+
+        async function loadGroups() {
+            const data = await api('/api/groups');
+            state.groups = data.groups || [];
+            renderGroups();
+        }
+
+        function groupContactOptions(inputName) {
+            return state.groupContacts.length ? state.groupContacts.map((contact) =>
+                '<label class="group-picker-item"><input type="checkbox" name="' + inputName + '" value="' + contact.id + '">' +
+                '<span><strong>' + escapeText(contact.display_name) + '</strong><small class="muted">@' +
+                escapeText(contact.username) + '</small></span></label>'
+            ).join('') : '<p class="muted small">Füge zuerst Kontakte über Chats hinzu, um sie einzuladen.</p>';
+        }
+
+        function renderGroupContacts() {
+            $('groupContactPicker').innerHTML = groupContactOptions('groupContact');
+        }
+
+        async function showGroupCreate() {
+            $('groupCreateError').textContent = '';
+            $('groupName').value = '';
+            $('groupCreateForm').classList.remove('hidden');
+            const data = await api('/api/groups/contacts');
+            state.groupContacts = data.contacts || [];
+            renderGroupContacts();
+            $('groupName').focus();
+        }
+
+        async function showGroupInvite() {
+            $('groupInviteError').textContent = '';
+            const data = await api('/api/groups/contacts');
+            state.groupContacts = data.contacts || [];
+            $('groupInvitePicker').innerHTML = groupContactOptions('groupInviteContact');
+            $('groupInviteForm').classList.remove('hidden');
+        }
+
+        function renderGroupMessages(messages) {
+            $('groupMessages').innerHTML = messages.length ? messages.map((message) => {
+                const mine = state.me && Number(message.sender_id) === Number(state.me.id);
+                return '<div class="bubble ' + (mine ? 'me' : '') + '">' +
+                    (!mine ? '<span class="group-sender">' + escapeText(message.display_name) + '</span>' : '') +
+                    escapeText(message.body) + '<span class="meta">' +
+                    new Date(message.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) +
+                    '</span></div>';
+            }).join('') : '<div class="news-empty">Schreibe die erste Nachricht in diese Gruppe.</div>';
+            $('groupMessages').scrollTop = $('groupMessages').scrollHeight;
+        }
+
+        async function openGroup(groupId) {
+            const data = await api('/api/groups/' + groupId + '/messages');
+            if (!state.activeGroup || Number(state.activeGroup.id) !== Number(data.group.id)) {
+                $('groupMessageInput').value = '';
+            }
+            state.activeGroup = data.group;
+            $('groupsView').classList.add('hidden');
+            $('groupRoom').classList.remove('hidden');
+            $('groupInviteForm').classList.add('hidden');
+            $('inviteToGroup').classList.toggle('hidden', Number(data.group.owner_user_id) !== Number(state.me.id));
+            $('groupRoomName').textContent = data.group.name;
+            $('groupRoomMembers').textContent = data.group.member_count + ' Mitglieder';
+            $('groupComposerError').textContent = '';
+            renderGroupMessages(data.messages || []);
+        }
+
+        async function refreshOpenGroup(groupId) {
+            if (!state.activeGroup || Number(state.activeGroup.id) !== Number(groupId)) return;
+            const data = await api('/api/groups/' + groupId + '/messages');
+            state.activeGroup = data.group;
+            $('groupRoomMembers').textContent = data.group.member_count + ' Mitglieder';
+            renderGroupMessages(data.messages || []);
         }
 
         function renderNews() {
@@ -1828,6 +1985,7 @@ function renderMessengerApp() {
             setRemoteTyping(false);
             selectMainTab('chats');
             state.pendingAttachment = null;
+            state.activeGroup = null;
             hideSensitiveMessageWarning();
             $('attachmentInput').value = '';
             renderPendingAttachment();
@@ -1845,6 +2003,7 @@ function renderMessengerApp() {
             if (!state.activeConversation || Number(state.activeConversation.id) !== Number(conversationId)) return;
             const data = await api('/api/conversations/' + conversationId + '/messages');
             state.activeConversation = data.conversation;
+            state.activeGroup = null;
             if (!$('chatPane').classList.contains('hidden')) {
                 renderMessages(data.messages);
                 updateMessageControls();
@@ -1862,6 +2021,7 @@ function renderMessengerApp() {
                 renderPendingAttachment();
             }
             state.activeConversation = data.conversation;
+            state.activeGroup = null;
             setRemoteTyping(false);
             selectMainTab('chats');
             $('accountPanel').classList.add('hidden');
@@ -1941,6 +2101,16 @@ function renderMessengerApp() {
             });
             state.eventSource.addEventListener('news:deleted', async () => {
                 if (state.mainTab === 'news') await loadNews();
+            });
+            state.eventSource.addEventListener('group:changed', async () => {
+                if (state.mainTab === 'groups') await loadGroups();
+            });
+            state.eventSource.addEventListener('group:message', async (event) => {
+                const payload = JSON.parse(event.data);
+                if (state.mainTab === 'groups') {
+                    await loadGroups();
+                    await refreshOpenGroup(payload.groupId);
+                }
             });
         }
 
@@ -2358,6 +2528,90 @@ function renderMessengerApp() {
             $('attachmentInput').value = '';
             renderPendingAttachment();
             openFeatureView(button.dataset.mainTab);
+        });
+        $('newGroup').addEventListener('click', () => {
+            showGroupCreate().catch((error) => {
+                $('groupCreateError').textContent = error.message;
+            });
+        });
+        $('cancelGroupCreate').addEventListener('click', () => {
+            $('groupCreateForm').classList.add('hidden');
+            $('groupCreateError').textContent = '';
+        });
+        $('groupCreateForm').addEventListener('submit', async (event) => {
+            event.preventDefault();
+            $('groupCreateError').textContent = '';
+            const memberIds = Array.from(document.querySelectorAll('input[name="groupContact"]:checked'))
+                .map((input) => input.value);
+            try {
+                const data = await api('/api/groups', {
+                    method: 'POST',
+                    body: JSON.stringify({ name: $('groupName').value, memberIds }),
+                });
+                $('groupCreateForm').classList.add('hidden');
+                await loadGroups();
+                await openGroup(data.group.id);
+            } catch (error) {
+                $('groupCreateError').textContent = error.message;
+            }
+        });
+        $('groupList').addEventListener('click', (event) => {
+            const group = event.target.closest('[data-group]');
+            if (!group) return;
+            openGroup(group.dataset.group).catch((error) => {
+                $('groupList').innerHTML = '<div class="news-empty">' + escapeText(error.message) + '</div>';
+            });
+        });
+        $('backToGroups').addEventListener('click', () => {
+            state.activeGroup = null;
+            $('groupRoom').classList.add('hidden');
+            $('groupsView').classList.remove('hidden');
+            loadGroups().catch(() => {});
+        });
+        $('inviteToGroup').addEventListener('click', () => {
+            showGroupInvite().catch((error) => {
+                $('groupInviteError').textContent = error.message;
+            });
+        });
+        $('cancelGroupInvite').addEventListener('click', () => {
+            $('groupInviteForm').classList.add('hidden');
+            $('groupInviteError').textContent = '';
+        });
+        $('groupInviteForm').addEventListener('submit', async (event) => {
+            event.preventDefault();
+            if (!state.activeGroup) return;
+            $('groupInviteError').textContent = '';
+            const memberIds = Array.from(document.querySelectorAll('input[name="groupInviteContact"]:checked'))
+                .map((input) => input.value);
+            try {
+                const data = await api('/api/groups/' + state.activeGroup.id + '/members', {
+                    method: 'POST',
+                    body: JSON.stringify({ memberIds }),
+                });
+                $('groupInviteError').textContent = data.addedCount
+                    ? data.addedCount + ' Kontakt(e) eingeladen.'
+                    : 'Diese Kontakte sind bereits in der Gruppe.';
+                await refreshOpenGroup(state.activeGroup.id);
+                await loadGroups();
+            } catch (error) {
+                $('groupInviteError').textContent = error.message;
+            }
+        });
+        $('groupComposer').addEventListener('submit', async (event) => {
+            event.preventDefault();
+            if (!state.activeGroup) return;
+            $('groupComposerError').textContent = '';
+            try {
+                await api('/api/groups/' + state.activeGroup.id + '/messages', {
+                    method: 'POST',
+                    body: JSON.stringify({ body: $('groupMessageInput').value }),
+                });
+                $('groupMessageInput').value = '';
+                await refreshOpenGroup(state.activeGroup.id);
+                await loadGroups();
+            } catch (error) {
+                $('groupComposerError').textContent = error.message;
+            }
         });
         $('enableNewsPush').addEventListener('click', () => {
             $('newsPushStatus').textContent = '';

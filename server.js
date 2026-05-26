@@ -718,6 +718,30 @@ async function initDatabase() {
             created_at timestamptz not null default now()
         );
 
+        create table if not exists chat_groups (
+            id bigserial primary key,
+            name text not null,
+            owner_user_id bigint not null references users(id) on delete cascade,
+            created_at timestamptz not null default now()
+        );
+
+        create table if not exists group_members (
+            group_id bigint not null references chat_groups(id) on delete cascade,
+            user_id bigint not null references users(id) on delete cascade,
+            role text not null default 'member',
+            joined_at timestamptz not null default now(),
+            primary key (group_id, user_id),
+            check(role in ('owner', 'member'))
+        );
+
+        create table if not exists group_messages (
+            id bigserial primary key,
+            group_id bigint not null references chat_groups(id) on delete cascade,
+            sender_id bigint not null references users(id) on delete cascade,
+            body text not null,
+            created_at timestamptz not null default now()
+        );
+
         create table if not exists admin_audit_logs (
             id bigserial primary key,
             admin_user text not null,
@@ -806,6 +830,10 @@ async function initDatabase() {
             where google_id is not null and google_id <> '';
         create index if not exists idx_messages_conversation_created
             on messages(conversation_id, created_at);
+        create index if not exists idx_group_members_user
+            on group_members(user_id);
+        create index if not exists idx_group_messages_group_created
+            on group_messages(group_id, created_at);
         create index if not exists idx_conversations_user_one
             on conversations(user_one_id);
         create index if not exists idx_conversations_user_two
