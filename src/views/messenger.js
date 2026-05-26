@@ -237,6 +237,11 @@ function renderMessengerApp() {
         .group-sender { display: block; color: var(--accent); font-size: 12px; font-weight: 700; margin-bottom: 4px; }
         .group-composer { grid-row: 4; display: grid; grid-template-columns: minmax(0, 1fr) 48px; align-items: end; gap: 9px; padding: 11px; border-top: 1px solid var(--line); }
         .group-composer textarea { width: 100%; min-height: 48px; max-height: 110px; resize: vertical; border: 1px solid var(--line); border-radius: 24px; padding: 13px 17px; }
+        .feature-view.group-room-open { padding: 0; overflow: hidden; }
+        .feature-view.group-room-open .group-room { width: 100%; height: 100%; min-height: 0; margin: 0; border: 0; border-radius: 0; }
+        .feature-view.group-room-open .group-room-head { min-height: 73px; padding: 14px 18px; background: var(--panel); }
+        .feature-view.group-room-open .group-messages { padding: 18px; }
+        .feature-view.group-room-open .group-composer { padding: 12px; gap: 10px; background: var(--panel); }
         .tab-notice { width: 10px; height: 10px; border-radius: 50%; background: #22c55e; position: absolute; top: 7px; left: calc(50% + 15px); box-shadow: 0 0 0 2px #fff; }
         .bottom-tabs {
             position: fixed;
@@ -368,6 +373,16 @@ function renderMessengerApp() {
             .home-card { padding: 28px 22px; border-radius: 20px; }
             .home-list-button { display: block; }
             .feature-view { padding: calc(24px + env(safe-area-inset-top)) 18px 20px; }
+            .feature-view.group-room-open { padding: 0; }
+            .feature-view.group-room-open .group-room-head {
+                min-height: 64px;
+                padding: calc(10px + env(safe-area-inset-top)) 12px 10px;
+                background: var(--panel);
+                box-shadow: 0 1px 3px rgba(15,23,42,.08);
+            }
+            .feature-view.group-room-open .group-messages { padding: 12px 10px; }
+            .feature-view.group-room-open .group-composer { padding: 10px 10px calc(10px + env(safe-area-inset-bottom)); gap: 8px; background: #f0f2f5; }
+            .feature-view.group-room-open .group-composer textarea { border: 0; min-height: 48px; resize: none; }
             .feature-card { margin: clamp(28px, 12vh, 90px) auto 0; padding: 30px 22px; }
         }
     </style>
@@ -1293,6 +1308,7 @@ function renderMessengerApp() {
             $('chatPane').classList.add('hidden');
             $('accountPanel').classList.add('hidden');
             $('contactPanel').classList.add('hidden');
+            $('featureView').classList.remove('group-room-open');
             $('groupsView').classList.add('hidden');
             $('groupRoom').classList.add('hidden');
             $('newsView').classList.add('hidden');
@@ -1393,6 +1409,7 @@ function renderMessengerApp() {
                 $('groupMessageInput').value = '';
             }
             state.activeGroup = data.group;
+            $('featureView').classList.add('group-room-open');
             $('groupsView').classList.add('hidden');
             $('groupRoom').classList.remove('hidden');
             $('groupInviteForm').classList.add('hidden');
@@ -2162,6 +2179,7 @@ function renderMessengerApp() {
             renderPendingAttachment();
             $('accountPanel').classList.add('hidden');
             $('contactPanel').classList.add('hidden');
+            $('featureView').classList.remove('group-room-open');
             $('featureView').classList.add('hidden');
             $('chatPane').classList.add('hidden');
             $('chatEmpty').classList.remove('hidden');
@@ -2197,6 +2215,7 @@ function renderMessengerApp() {
             selectMainTab('chats');
             $('accountPanel').classList.add('hidden');
             $('contactPanel').classList.add('hidden');
+            $('featureView').classList.remove('group-room-open');
             $('featureView').classList.add('hidden');
             $('chatEmpty').classList.add('hidden');
             $('chatPane').classList.remove('hidden');
@@ -2755,6 +2774,7 @@ function renderMessengerApp() {
         });
         $('backToGroups').addEventListener('click', () => {
             state.activeGroup = null;
+            $('featureView').classList.remove('group-room-open');
             $('groupRoom').classList.add('hidden');
             $('groupsView').classList.remove('hidden');
             loadGroups().catch(() => {});
