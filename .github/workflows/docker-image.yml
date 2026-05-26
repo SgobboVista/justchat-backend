@@ -29,7 +29,7 @@ jobs:
 
       - name: Read app version
         id: app-version
-        run: echo "value=$(node -p \"require('./package.json').version\")" >> "$GITHUB_OUTPUT"
+        run: node -e "require('fs').appendFileSync(process.env.GITHUB_OUTPUT, 'value=' + require('./package.json').version + String.fromCharCode(10))"
 
       - name: Generate image metadata
         id: meta
