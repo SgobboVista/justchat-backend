@@ -190,6 +190,13 @@ function renderMessengerApp() {
         .news-view-head { display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap; }
         .news-view-head h2 { margin: 0; font-size: 28px; }
         .news-view-head p { margin: 5px 0 0; color: var(--muted); }
+        .more-view { width: min(720px, 100%); margin: 0 auto; display: grid; gap: 15px; }
+        .more-card { background: #fff; border: 1px solid var(--line); border-radius: 14px; padding: 18px; display: grid; gap: 15px; }
+        .more-copy { color: var(--text); line-height: 1.6; display: grid; gap: 10px; }
+        .more-copy p { margin: 0; }
+        .more-copy ul { margin: 0; padding-left: 20px; display: grid; gap: 6px; }
+        .anniversary-card { border-radius: 12px; padding: 16px; background: #eef8f6; border: 1px solid #c7e6df; display: grid; gap: 6px; }
+        .anniversary-card strong { color: var(--accent-strong); font-size: 19px; }
         .news-feed { display: grid; gap: 12px; }
         .news-post { display: grid; gap: 10px; padding: 16px; border: 1px solid var(--line); border-radius: 13px; background: #fff; }
         .news-post-head { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
@@ -240,7 +247,7 @@ function renderMessengerApp() {
             height: calc(86px + env(safe-area-inset-bottom));
             padding: 8px 10px env(safe-area-inset-bottom);
             display: grid;
-            grid-template-columns: repeat(3, 1fr);
+            grid-template-columns: repeat(4, 1fr);
             gap: 6px;
             border-top: 1px solid var(--line);
             background: var(--panel);
@@ -609,6 +616,89 @@ function renderMessengerApp() {
                     <p id="newsPushStatus" class="muted small"></p>
                     <div id="newsFeed" class="news-feed"></div>
                 </div>
+                <div id="moreView" class="more-view hidden">
+                    <div class="news-view-head">
+                        <div>
+                            <h2>Weiteres</h2>
+                            <p>Informationen zu JustChat und SgobboVista</p>
+                        </div>
+                    </div>
+                    <div class="more-card">
+                        <nav id="moreBreadcrumb" class="settings-breadcrumb" aria-label="Weiteres Pfad">
+                            <strong>Weiteres</strong>
+                        </nav>
+                        <div id="moreOverview" class="settings-overview">
+                            <button class="settings-category" type="button" data-more-category="privacy">
+                                <span>
+                                    <span class="settings-category-title">Datenschutzbestimmungen</span>
+                                    <span class="settings-category-description">Verarbeitung und Schutz deiner Daten</span>
+                                </span>
+                                <span class="settings-category-arrow" aria-hidden="true">&rsaquo;</span>
+                            </button>
+                            <button class="settings-category" type="button" data-more-category="terms">
+                                <span>
+                                    <span class="settings-category-title">Nutzervereinbarung</span>
+                                    <span class="settings-category-description">Regeln für die Nutzung der App</span>
+                                </span>
+                                <span class="settings-category-arrow" aria-hidden="true">&rsaquo;</span>
+                            </button>
+                            <button class="settings-category" type="button" data-more-category="agb">
+                                <span>
+                                    <span class="settings-category-title">AGB</span>
+                                    <span class="settings-category-description">Allgemeine Bedingungen des Angebots</span>
+                                </span>
+                                <span class="settings-category-arrow" aria-hidden="true">&rsaquo;</span>
+                            </button>
+                            <button class="settings-category" type="button" data-more-category="copyright">
+                                <span>
+                                    <span class="settings-category-title">Copyright / Urheberrechte</span>
+                                    <span class="settings-category-description">Rechte an App und Inhalten</span>
+                                </span>
+                                <span class="settings-category-arrow" aria-hidden="true">&rsaquo;</span>
+                            </button>
+                            <button class="settings-category" type="button" data-more-category="anniversary">
+                                <span>
+                                    <span class="settings-category-title">Seitdem die App existiert</span>
+                                    <span class="settings-category-description">Startdatum und jährliche Jubiläen</span>
+                                </span>
+                                <span class="settings-category-arrow" aria-hidden="true">&rsaquo;</span>
+                            </button>
+                        </div>
+                        <section class="settings-section more-copy hidden" data-more-panel="privacy">
+                            <h3>Datenschutzbestimmungen</h3>
+                            <p>JustChat verarbeitet Kontodaten, Profilinformationen, Kontakte, Nachrichten, Gruppendaten und von dir hochgeladene Dateien, damit die Chat-Funktionen bereitgestellt werden können.</p>
+                            <p>Push-Benachrichtigungen werden nur genutzt, wenn du sie aktivierst. Blockierungen und Sichtbarkeitseinstellungen helfen dir, deine Privatsphäre selbst zu steuern.</p>
+                            <p>Bitte teile in Chats nur Inhalte, die du mit den jeweiligen Empfängern teilen möchtest.</p>
+                        </section>
+                        <section class="settings-section more-copy hidden" data-more-panel="terms">
+                            <h3>Nutzervereinbarung</h3>
+                            <ul>
+                                <li>Behandle andere Personen respektvoll und verwende JustChat nicht für Belästigung, Bedrohungen oder unerlaubte Inhalte.</li>
+                                <li>Du bist für Nachrichten und Medien verantwortlich, die du sendest oder hochlädst.</li>
+                                <li>Missbrauch, Manipulation oder unberechtigter Zugriff auf Konten ist nicht gestattet.</li>
+                            </ul>
+                        </section>
+                        <section class="settings-section more-copy hidden" data-more-panel="agb">
+                            <h3>AGB</h3>
+                            <p>JustChat wird von SgobboVista als Kommunikationsdienst angeboten. Für die Nutzung ist ein persönliches Konto erforderlich.</p>
+                            <p>Funktionen können weiterentwickelt oder aus Sicherheitsgründen eingeschränkt werden. Bei Verstößen gegen die Nutzervereinbarung kann ein Konto eingeschränkt werden.</p>
+                        </section>
+                        <section class="settings-section more-copy hidden" data-more-panel="copyright">
+                            <h3>Copyright / Urheberrechte</h3>
+                            <p>&copy; 2026 SgobboVista. Die App-Oberfläche, Marke und von SgobboVista bereitgestellte Inhalte sind urheberrechtlich geschützt.</p>
+                            <p>Nutzer behalten die Verantwortung und Rechte an eigenen Inhalten. Lade nur Medien hoch, die du verwenden und teilen darfst.</p>
+                        </section>
+                        <section class="settings-section more-copy hidden" data-more-panel="anniversary">
+                            <h3>Seitdem die App existiert</h3>
+                            <div class="anniversary-card">
+                                <strong id="appAnniversaryTitle">JustChat seit 25.05.2026</strong>
+                                <span id="appAnniversaryStatus"></span>
+                                <span id="appAnniversaryNext" class="muted small"></span>
+                            </div>
+                            <p>JustChat von SgobboVista wurde am 25.05.2026 gestartet. An jedem 25. Mai zeigt die App automatisch das nächste Jahresjubiläum an.</p>
+                        </section>
+                    </div>
+                </div>
             </div>
             <div id="chatPane" class="hidden" style="display: contents;">
                 <div class="chat-head">
@@ -853,6 +943,10 @@ function renderMessengerApp() {
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h13v15H6a2 2 0 0 1-2-2V5z"></path><path d="M17 9h3v9a2 2 0 0 1-2 2"></path><path d="M7 9h7M7 13h7M7 17h4"></path></svg>
                 <span>News</span>
                 <span id="newsNotice" class="tab-notice hidden" aria-hidden="true"></span>
+            </button>
+            <button class="bottom-tab" type="button" data-main-tab="more">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.4"></circle><circle cx="12" cy="12" r="1.4"></circle><circle cx="19" cy="12" r="1.4"></circle></svg>
+                <span>Weiteres</span>
             </button>
         </nav>
     </div>
@@ -1199,22 +1293,26 @@ function renderMessengerApp() {
             $('chatPane').classList.add('hidden');
             $('accountPanel').classList.add('hidden');
             $('contactPanel').classList.add('hidden');
+            $('groupsView').classList.add('hidden');
+            $('groupRoom').classList.add('hidden');
+            $('newsView').classList.add('hidden');
+            $('moreView').classList.add('hidden');
             if (tab === 'news') {
-                $('groupsView').classList.add('hidden');
-                $('groupRoom').classList.add('hidden');
                 $('newsView').classList.remove('hidden');
                 $('newsNotice').classList.add('hidden');
                 loadNews().catch((error) => {
                     $('newsFeed').innerHTML = '<div class="news-empty">' + escapeText(error.message) + '</div>';
                 });
-            } else {
-                $('newsView').classList.add('hidden');
-                $('groupRoom').classList.add('hidden');
+            } else if (tab === 'groups') {
                 $('groupsView').classList.remove('hidden');
                 $('groupsNotice').classList.add('hidden');
                 loadGroups().catch((error) => {
                     $('groupList').innerHTML = '<div class="news-empty">' + escapeText(error.message) + '</div>';
                 });
+            } else {
+                $('moreView').classList.remove('hidden');
+                showMoreCategory();
+                renderAppAnniversary();
             }
             $('featureView').classList.remove('hidden');
             $('sidebar').classList.add('chat-open');
@@ -1932,6 +2030,13 @@ function renderMessengerApp() {
             chat: 'Benachrichtigungen & Chat',
             security: 'Sicherheit',
         };
+        const moreCategoryNames = {
+            privacy: 'Datenschutzbestimmungen',
+            terms: 'Nutzervereinbarung',
+            agb: 'AGB',
+            copyright: 'Copyright / Urheberrechte',
+            anniversary: 'Seitdem die App existiert',
+        };
 
         function showSettingsCategory(category) {
             const categoryName = settingsCategoryNames[category] || '';
@@ -1944,6 +2049,42 @@ function renderMessengerApp() {
             $('settingsBreadcrumb').innerHTML = categoryName
                 ? '<button type="button" data-settings-home aria-label="Zur Einstellungsübersicht">&lsaquo; Einstellungen</button><span aria-hidden="true">/</span><strong>' + escapeText(categoryName) + '</strong>'
                 : '<strong>Einstellungen</strong>';
+        }
+
+        function showMoreCategory(category) {
+            const categoryName = moreCategoryNames[category] || '';
+            $('moreOverview').classList.toggle('hidden', Boolean(categoryName));
+            document.querySelectorAll('[data-more-panel]').forEach((panel) => {
+                panel.classList.toggle('hidden', panel.dataset.morePanel !== category);
+            });
+            $('moreBreadcrumb').classList.toggle('has-category', Boolean(categoryName));
+            $('moreBreadcrumb').innerHTML = categoryName
+                ? '<button type="button" data-more-home aria-label="Zur Weiteres-Übersicht">&lsaquo; Weiteres</button><span aria-hidden="true">/</span><strong>' + escapeText(categoryName) + '</strong>'
+                : '<strong>Weiteres</strong>';
+        }
+
+        function renderAppAnniversary() {
+            const startDate = new Date(2026, 4, 25);
+            const today = new Date();
+            const date = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+            let years = date.getFullYear() - startDate.getFullYear();
+            const anniversaryThisYear = new Date(date.getFullYear(), startDate.getMonth(), startDate.getDate());
+            if (date < anniversaryThisYear) years -= 1;
+            const anniversaryToday = years > 0 &&
+                date.getMonth() === startDate.getMonth() &&
+                date.getDate() === startDate.getDate();
+            const nextYear = date <= anniversaryThisYear ? date.getFullYear() : date.getFullYear() + 1;
+            const nextAnniversary = new Date(nextYear, startDate.getMonth(), startDate.getDate());
+            const nextNumber = nextYear - startDate.getFullYear();
+            $('appAnniversaryTitle').textContent = anniversaryToday
+                ? 'Heute: ' + years + '. Jubiläum von JustChat'
+                : 'JustChat seit 25.05.2026';
+            $('appAnniversaryStatus').textContent = years > 0
+                ? 'Die App besteht seit ' + years + (years === 1 ? ' Jahr.' : ' Jahren.')
+                : 'Die App ist im Gründungsjahr gestartet.';
+            $('appAnniversaryNext').textContent = anniversaryToday
+                ? 'Danke, dass du diesen Geburtstag mit uns feierst.'
+                : 'Nächstes Jubiläum: ' + nextAnniversary.toLocaleDateString('de-DE') + ' (' + nextNumber + '.)';
         }
 
         function openAccount() {
@@ -2276,6 +2417,13 @@ function renderMessengerApp() {
         });
         $('settingsBreadcrumb').addEventListener('click', (event) => {
             if (event.target.closest('[data-settings-home]')) showSettingsCategory();
+        });
+        $('moreOverview').addEventListener('click', (event) => {
+            const button = event.target.closest('[data-more-category]');
+            if (button) showMoreCategory(button.dataset.moreCategory);
+        });
+        $('moreBreadcrumb').addEventListener('click', (event) => {
+            if (event.target.closest('[data-more-home]')) showMoreCategory();
         });
         $('chatProfileButton').addEventListener('click', () => {
             if (!state.activeConversation) return;
