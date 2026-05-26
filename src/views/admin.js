@@ -17,6 +17,8 @@ function renderAdminLayout(content) {
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <link rel="icon" type="image/png" sizes="32x32" href="/pwa-icon-32.png">
     <title>JustChat Admin</title>
     <style>
         :root {

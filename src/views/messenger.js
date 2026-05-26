@@ -9,6 +9,8 @@ function renderMessengerApp() {
     <meta name="apple-mobile-web-app-status-bar-style" content="default">
     <meta name="apple-mobile-web-app-title" content="JustChat">
     <link rel="manifest" href="/manifest.webmanifest">
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <link rel="icon" type="image/png" sizes="32x32" href="/pwa-icon-32.png">
     <link rel="icon" type="image/png" sizes="192x192" href="/pwa-icon-192.png">
     <link rel="apple-touch-icon" href="/pwa-icon-180.png">
     <title>JustChat</title>

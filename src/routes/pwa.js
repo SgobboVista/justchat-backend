@@ -1,5 +1,5 @@
 function registerPwaRoutes(app, { sharp }) {
-const PWA_CACHE_NAME = 'justchat-shell-v3';
+const PWA_CACHE_NAME = 'justchat-shell-v4';
 const PWA_ICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
     <rect width="512" height="512" rx="116" fill="#0f766e"/>
     <path fill="#ffffff" d="M117 142c0-29 24-53 53-53h172c29 0 53 24 53 53v147c0 29-24 53-53 53H229l-76 65c-14 12-36 2-36-17V142z"/>
@@ -25,7 +25,12 @@ app.get('/manifest.webmanifest', (req, res) => {
     });
 });
 
-app.get('/pwa-icon-:size(180|192|512).png', async (req, res, next) => {
+app.get('/favicon.svg', (req, res) => {
+    res.set('Cache-Control', 'public, max-age=86400');
+    return res.type('image/svg+xml').send(PWA_ICON_SVG);
+});
+
+app.get('/pwa-icon-:size(32|180|192|512).png', async (req, res, next) => {
     try {
         const size = Number(req.params.size);
         const icon = await sharp(Buffer.from(PWA_ICON_SVG)).resize(size, size).png().toBuffer();
@@ -36,11 +41,21 @@ app.get('/pwa-icon-:size(180|192|512).png', async (req, res, next) => {
     }
 });
 
+app.get('/favicon.ico', async (req, res, next) => {
+    try {
+        const icon = await sharp(Buffer.from(PWA_ICON_SVG)).resize(32, 32).png().toBuffer();
+        res.set('Cache-Control', 'public, max-age=86400');
+        return res.type('image/png').send(icon);
+    } catch (error) {
+        return next(error);
+    }
+});
+
 app.get('/sw.js', (req, res) => {
     res.set('Cache-Control', 'no-cache');
     res.type('application/javascript').send(`
 const CACHE_NAME = '${PWA_CACHE_NAME}';
-const APP_SHELL = ['/', '/manifest.webmanifest', '/pwa-icon-192.png', '/pwa-icon-512.png'];
+const APP_SHELL = ['/', '/manifest.webmanifest', '/favicon.svg', '/pwa-icon-32.png', '/pwa-icon-192.png', '/pwa-icon-512.png'];
 
 self.addEventListener('install', (event) => {
     event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL)).catch(() => {}));
