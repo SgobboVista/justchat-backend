@@ -101,6 +101,13 @@ function renderAdminLayout(content) {
         .news-archive { margin-top: 18px; border: 1px solid var(--line); border-radius: 10px; background: #f9fbfe; }
         .news-archive summary { cursor: pointer; padding: 14px; color: var(--accent); font-weight: 700; }
         .news-archive .news-list { margin: 0; padding: 0 14px 14px; }
+        .report-list { display: grid; gap: 13px; margin-top: 14px; }
+        .report-card { display: grid; gap: 11px; border: 1px solid var(--line); border-radius: 10px; padding: 14px; background: #fff; }
+        .report-head { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; flex-wrap: wrap; }
+        .report-evidence { padding: 11px; border-radius: 8px; background: #f6f8fc; white-space: pre-wrap; overflow-wrap: anywhere; }
+        .report-file img { display: block; max-width: min(420px, 100%); max-height: 300px; border-radius: 8px; object-fit: contain; background: #edf1f6; }
+        .report-actions { display: grid; grid-template-columns: minmax(170px, 220px) minmax(220px, 1fr) auto; gap: 9px; align-items: start; }
+        .report-actions textarea { width: 100%; min-height: 74px; resize: vertical; border: 1px solid var(--line); border-radius: 8px; padding: 10px; font: inherit; }
         .sensitive-value { display: inline-block; filter: blur(5px); transition: filter .15s ease; cursor: default; }
         .sensitive-value:hover, .sensitive-value:focus { filter: none; outline: none; }
         .notice { border: 1px solid #fedf89; background: #fffaeb; color: #7a4f01; border-radius: 8px; padding: 12px; margin-top: 16px; }
@@ -117,6 +124,7 @@ function renderAdminLayout(content) {
             .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
             .two { grid-template-columns: 1fr; }
             dl { grid-template-columns: 1fr; }
+            .report-actions { grid-template-columns: 1fr; }
         }
         @media (max-width: 520px) {
             .grid { grid-template-columns: 1fr; }
@@ -274,6 +282,12 @@ function renderDashboard(data) {
         </div>
 
         <section class="panel">
+            <h2>Inhaltsmeldungen</h2>
+            <p class="muted">Gemeldete Nachrichten, Dateien und Medien prüfen. Für schwere Fälle kannst du den gesamten betroffenen Chat als Beweis-ZIP sichern und anschließend selbst an zuständige Behörden weitergeben.</p>
+            <div id="reportList" class="report-list"></div>
+        </section>
+
+        <section class="panel">
             <h2>News an @alle</h2>
             <p class="muted">Veröffentliche ein Update als <strong>SgobboVista</strong>. Nutzer sehen es im News-Tab und erhalten bei aktiviertem Push eine Benachrichtigung.</p>
             <div class="news-compose">
@@ -326,7 +340,7 @@ function renderDashboard(data) {
         <div class="notice">Hinweis: Von Nutzern entfernte Chats werden mindestens 30 Tage serverseitig aufbewahrt. ZIP-Archive enthalten private Chatdaten und Originaldateien; sie dürfen nur für einen berechtigten Zweck und mit passender rechtlicher Grundlage herausgegeben werden.</div>
 
         <script data-cfasync="false">
-            const state = { users: [], avatars: [], sounds: [], news: [], audit: [], imageUpdate: null };
+            const state = { users: [], avatars: [], sounds: [], news: [], reports: [], audit: [], imageUpdate: null };
             const el = (id) => document.getElementById(id);
             const escapeText = (value) => String(value == null ? '' : value).replace(/[&<>"']/g, (char) => ({
                 '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
@@ -335,6 +349,20 @@ function renderDashboard(data) {
             function initials(name) {
                 return String(name || '?').slice(0, 1).toUpperCase() || '?';
             }
+
+            const reportCategories = {
+                sexual_content: 'Sexuelle Inhalte / Nacktbilder',
+                grooming: 'Grooming / sexuelle Kontaktanbahnung',
+                child_safety: 'Sexuelle Inhalte mit Minderjährigen',
+                harassment: 'Belästigung / Mobbing',
+                threats: 'Drohung',
+                violence: 'Gewalt',
+                hate_speech: 'Hassrede / Diskriminierung',
+                fraud: 'Betrug / Phishing',
+                spam: 'Spam',
+                illegal_content: 'Illegale Inhalte',
+                other: 'Sonstiges',
+            };
 
             async function readFileBase64(file) {
                 if (!file) throw new Error('Bitte ein Bild auswählen');
@@ -410,7 +438,7 @@ function renderDashboard(data) {
                     const avatar = user.avatar_url
                         ? '<img class="avatar-preview" src="' + user.avatar_url + '" alt="">'
                         : '<div class="avatar-preview" style="display:grid;place-items:center;background:' + user.avatar_color + ';color:#fff;font-weight:800;">' + initials(user.display_name) + '</div>';
-                    return '<tr><td>' + avatar + '</td><td><strong>' + escapeText(user.display_name) + '</strong><br><span class="muted">@' + escapeText(user.username) + '</span></td><td><span class="sensitive-value" tabindex="0" title="Zum Anzeigen berühren oder darüberfahren">' + escapeText(user.email || '-') + '</span></td><td>' + user.conversation_count + '</td><td>' + user.message_count + '</td></tr>';
+                    return '<tr><td>' + avatar + '</td><td><strong>' + escapeText(user.display_name) + '</strong><br><span class="muted">@' + escapeText(user.username) + '</span>' + (user.banned_at ? '<br><span class="status error">Gesperrt</span>' : '') + '</td><td><span class="sensitive-value" tabindex="0" title="Zum Anzeigen berühren oder darüberfahren">' + escapeText(user.email || '-') + '</span></td><td>' + user.conversation_count + '</td><td>' + user.message_count + '</td></tr>';
                 }).join('');
                 el('avatarGrid').innerHTML = state.avatars.length ? state.avatars.map((avatar) =>
                     '<div class="avatar-card asset-card"><img src="' + avatar.data_url + '" alt=""><strong>' + escapeText(avatar.name) + '</strong><span class="muted">' + Math.round(avatar.size_bytes / 1024) + ' KB</span><button class="danger" type="button" data-delete-avatar="' + avatar.id + '">Löschen</button></div>'
@@ -425,6 +453,23 @@ function renderDashboard(data) {
                     (news.video_url ? '<video controls preload="metadata" src="' + news.video_url + '"></video>' : '') + '</article>'
                 ).join('') : '<p class="muted">Noch keine News veröffentlicht.</p>';
                 el('newsArchiveSummary').textContent = 'Veröffentlichte News verwalten (' + state.news.length + ')';
+                el('reportList').innerHTML = state.reports.length ? state.reports.map((report) => {
+                    const file = report.attachment_id
+                        ? '<div class="report-file">' + (String(report.mime_type || '').startsWith('image/')
+                            ? '<img src="/admin/api/reports/' + report.id + '/attachment" alt="Gemeldetes Bild">'
+                            : '<a class="button secondary" href="/admin/api/reports/' + report.id + '/attachment" target="_blank">Gemeldete Datei anzeigen</a>') + '</div>'
+                        : '';
+                    const label = report.status === 'open' ? 'Offen' : report.status === 'escalated' ? 'Beweise gesichert' : report.status === 'dismissed' ? 'Abgewiesen' : 'Maßnahme erfolgt';
+                    return '<article class="report-card"><div class="report-head"><div><strong>Meldung #' + report.id + ': ' + escapeText(reportCategories[report.category] || report.category) + '</strong>' +
+                        '<p class="muted">Von ' + escapeText(report.reporter_name) + ' (@' + escapeText(report.reporter_username) + ') gegen ' + escapeText(report.reported_name) + ' (@' + escapeText(report.reported_username) + ') - ' + new Date(report.created_at).toLocaleString() + '</p></div>' +
+                        '<span class="status ' + (report.status === 'open' ? 'warn' : report.status === 'dismissed' ? 'error' : 'ok') + '">' + label + '</span></div>' +
+                        '<div class="report-evidence">' + escapeText(report.message_body || '(nur Datei/Medium)') + '</div>' + file +
+                        (report.details ? '<p><strong>Beschreibung:</strong> ' + escapeText(report.details) + '</p>' : '') +
+                        (report.admin_note ? '<p><strong>Admin-Hinweis:</strong> ' + escapeText(report.admin_note) + '</p>' : '') +
+                        '<a class="button secondary" href="/admin/reports/' + report.id + '/export">Gesamten Chat als Beweis-ZIP herunterladen</a>' +
+                        '<div class="report-actions"><select data-report-action="' + report.id + '"><option value="lock_chat">Chat sperren + Hinweis</option><option value="unlock_chat">Chat freigeben + Hinweis</option><option value="ban_user">Nutzer bannen + Chat sperren</option><option value="unban_user">Bann aufheben</option><option value="police_evidence">Für Behördenmeldung sichern</option><option value="dismiss">Meldung abweisen</option></select>' +
+                        '<textarea data-report-note="' + report.id + '" maxlength="1000" placeholder="Begründung / Hinweis für Betroffene"></textarea><button type="button" data-apply-report="' + report.id + '">Maßnahme ausführen</button></div></article>';
+                }).join('') : '<p class="muted">Keine Meldungen vorhanden.</p>';
                 el('auditRows').innerHTML = state.audit.map((row) =>
                     '<tr><td>' + new Date(row.created_at).toLocaleString() + '</td><td>' + escapeText(row.admin_user) + '</td><td>' + escapeText(row.action) + '</td><td><span class="sensitive-value" tabindex="0" title="Zum Anzeigen berühren oder darüberfahren">' + escapeText(row.ip_address || '-') + '</span></td></tr>'
                 ).join('');
@@ -452,6 +497,7 @@ function renderDashboard(data) {
                     state.avatars = data.avatars;
                     state.sounds = data.sounds;
                     state.news = data.news || [];
+                    state.reports = data.reports || [];
                     state.audit = data.audit;
                     state.imageUpdate = data.imageUpdate;
                     render();
@@ -508,6 +554,23 @@ function renderDashboard(data) {
                 if (!button) return;
                 try {
                     await adminApi('/admin/api/news/' + button.dataset.deleteNews, { method: 'DELETE' });
+                    await loadAdmin();
+                } catch (error) {
+                    alert(error.message);
+                }
+            });
+            el('reportList').addEventListener('click', async (event) => {
+                const button = event.target.closest('[data-apply-report]');
+                if (!button) return;
+                const reportId = button.dataset.applyReport;
+                const action = document.querySelector('[data-report-action="' + reportId + '"]').value;
+                const note = document.querySelector('[data-report-note="' + reportId + '"]').value;
+                if (!confirm('Diese Moderationsmaßnahme wirklich durchführen?')) return;
+                try {
+                    await adminApi('/admin/api/reports/' + reportId + '/action', {
+                        method: 'POST',
+                        body: JSON.stringify({ action, note }),
+                    });
                     await loadAdmin();
                 } catch (error) {
                     alert(error.message);

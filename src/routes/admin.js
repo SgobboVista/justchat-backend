@@ -4,7 +4,7 @@ function registerAdminRoutes(app, dependencies) {
         getDashboardData, renderAdminLogin, renderDashboard, requireAdminAuth, hasAdminSession,
         createAdminSessionToken, query, dispatchImageUpdate, getImageUpdateState,
         optimizeImageAttachment, parseNotificationSoundAttachment, parseId, createZipArchive, zipPathSegment,
-        parseNewsVideoAttachment, broadcastEvent, sendNewsPushNotification,
+        parseNewsVideoAttachment, broadcastEvent, sendNewsPushNotification, sendEvent,
     } = dependencies;
 app.get('/admin', async (req, res) => {
     if (!ADMIN_PASSWORD) {
@@ -48,7 +48,7 @@ app.get('/admin/api/overview', requireAdminAuth, async (req, res, next) => {
                 (select count(*)::int from message_attachments) as attachments
         `);
         const users = await query(`
-            select u.id, u.username, u.display_name, u.email, u.avatar_color, u.avatar_asset_id,
+            select u.id, u.username, u.display_name, u.email, u.avatar_color, u.avatar_asset_id, u.banned_at, u.ban_reason,
                 case when aa.id is null then null else 'data:' || aa.mime_type || ';base64,' || encode(aa.data, 'base64') end as avatar_url,
                 count(distinct c.id)::int as conversation_count,
                 count(distinct m.id)::int as message_count
@@ -80,6 +80,28 @@ app.get('/admin/api/overview', requireAdminAuth, async (req, res, next) => {
             order by created_at desc
             limit 50
         `);
+        const reports = await query(`
+            select report.id, report.category, report.details, report.status, report.admin_note, report.action_taken,
+                report.created_at, report.reviewed_at, report.conversation_id, report.message_id, report.reported_user_id,
+                reporter.display_name as reporter_name, reporter.username as reporter_username,
+                reported.display_name as reported_name, reported.username as reported_username, reported.banned_at,
+                message.body as message_body, message.created_at as message_created_at,
+                attachment.id as attachment_id, attachment.file_name, attachment.mime_type, attachment.size_bytes,
+                conversation.moderation_locked, conversation.moderation_notice
+            from content_reports report
+            join users reporter on reporter.id = report.reporter_user_id
+            join users reported on reported.id = report.reported_user_id
+            join conversations conversation on conversation.id = report.conversation_id
+            join messages message on message.id = report.message_id
+            left join lateral (
+                select id, file_name, mime_type, size_bytes
+                from message_attachments
+                where message_id = report.message_id
+                limit 1
+            ) attachment on true
+            order by case when report.status = 'open' then 0 else 1 end, report.created_at desc
+            limit 100
+        `);
         let news = { rows: [] };
         let warning = '';
         try {
@@ -103,11 +125,154 @@ app.get('/admin/api/overview', requireAdminAuth, async (req, res, next) => {
             sounds: sounds.rows,
             news: news.rows,
             audit: audit.rows,
+            reports: reports.rows,
             imageUpdate: getImageUpdateState(),
             warning,
         });
     } catch (error) {
         return res.status(500).json({ error: `Statistik-Abfrage fehlgeschlagen: ${error.message}` });
+    }
+});
+
+app.get('/admin/api/reports/:id/attachment', requireAdminAuth, async (req, res, next) => {
+    try {
+        const reportId = parseId(req.params.id);
+        const result = await query(
+            `select attachment.file_name, attachment.mime_type, attachment.data
+             from content_reports report
+             join message_attachments attachment on attachment.message_id = report.message_id
+             where report.id = $1
+             limit 1`,
+            [reportId],
+        );
+        if (!result.rows[0]) return res.status(404).send('Datei nicht gefunden');
+        res.type(result.rows[0].mime_type);
+        res.set('Content-Disposition', `inline; filename="${zipPathSegment(result.rows[0].file_name)}"`);
+        res.set('Cache-Control', 'private, no-store');
+        return res.send(result.rows[0].data);
+    } catch (error) {
+        return next(error);
+    }
+});
+
+app.post('/admin/api/reports/:id/action', requireAdminAuth, async (req, res, next) => {
+    try {
+        const reportId = parseId(req.params.id);
+        const action = String(req.body.action || '').trim();
+        const note = String(req.body.note || '').trim().slice(0, 1000);
+        const permitted = new Set(['lock_chat', 'unlock_chat', 'ban_user', 'unban_user', 'police_evidence', 'dismiss']);
+        if (!reportId || !permitted.has(action)) return res.status(400).json({ error: 'Ungültige Maßnahme' });
+        if (['lock_chat', 'unlock_chat', 'ban_user', 'unban_user'].includes(action) && !note) {
+            return res.status(400).json({ error: 'Bitte schreibe eine Begründung für die Betroffenen' });
+        }
+        const reportResult = await query('select * from content_reports where id = $1', [reportId]);
+        const report = reportResult.rows[0];
+        if (!report) return res.status(404).json({ error: 'Meldung nicht gefunden' });
+
+        let status = action === 'dismiss' ? 'dismissed' : (action === 'police_evidence' ? 'escalated' : 'actioned');
+        if (action === 'lock_chat' || action === 'ban_user') {
+            const notice = `Es wurden Maßnahmen eingeleitet. ${note}`;
+            await query(
+                `update conversations set moderation_locked = true, moderation_notice = $1, moderation_action_at = now()
+                 where id = $2`,
+                [notice, report.conversation_id],
+            );
+        }
+        if (action === 'unlock_chat') {
+            const notice = `Die Maßnahme wurde geprüft. Weiterchatten ist wieder möglich. ${note}`;
+            await query(
+                `update conversations set moderation_locked = false, moderation_notice = $1, moderation_action_at = now()
+                 where id = $2`,
+                [notice, report.conversation_id],
+            );
+        }
+        if (action === 'ban_user') {
+            await query(
+                'update users set banned_at = now(), ban_reason = $1 where id = $2',
+                [note, report.reported_user_id],
+            );
+        }
+        if (action === 'unban_user') {
+            await query(
+                'update users set banned_at = null, ban_reason = null where id = $1',
+                [report.reported_user_id],
+            );
+        }
+        await query(
+            `update content_reports
+             set status = $1, admin_note = $2, action_taken = $3, reviewed_at = now()
+             where id = $4`,
+            [status, note, action, reportId],
+        );
+        await query(
+            `insert into admin_audit_logs (admin_user, action, ip_address)
+             values ($1, $2, $3)`,
+            [ADMIN_USER, `report_${reportId}_${action}`, req.ip],
+        );
+        const participants = await query('select user_one_id, user_two_id from conversations where id = $1', [report.conversation_id]);
+        if (participants.rows[0]) {
+            sendEvent(participants.rows[0].user_one_id, 'moderation:changed', { conversationId: report.conversation_id });
+            sendEvent(participants.rows[0].user_two_id, 'moderation:changed', { conversationId: report.conversation_id });
+        }
+        return res.json({ ok: true });
+    } catch (error) {
+        return next(error);
+    }
+});
+
+app.get('/admin/reports/:id/export', requireAdminAuth, async (req, res, next) => {
+    try {
+        const reportId = parseId(req.params.id);
+        const reportResult = await query('select * from content_reports where id = $1', [reportId]);
+        const report = reportResult.rows[0];
+        if (!report) return res.status(404).send('Meldung nicht gefunden');
+        const conversation = await query('select * from conversations where id = $1', [report.conversation_id]);
+        const users = await query(
+            'select id, username, display_name, email, birth_date, created_at, last_seen_at, banned_at, ban_reason from users where id in (select user_one_id from conversations where id = $1 union select user_two_id from conversations where id = $1)',
+            [report.conversation_id],
+        );
+        const messages = await query(
+            'select id, conversation_id, sender_id, body, created_at, read_at from messages where conversation_id = $1 order by created_at',
+            [report.conversation_id],
+        );
+        const attachments = await query(
+            'select id, message_id, file_name, mime_type, size_bytes, created_at, data from message_attachments where message_id in (select id from messages where conversation_id = $1) order by message_id, id',
+            [report.conversation_id],
+        );
+        const exportedAt = new Date().toISOString();
+        const attachmentMetadata = attachments.rows.map((attachment) => ({
+            id: attachment.id,
+            message_id: attachment.message_id,
+            file_name: attachment.file_name,
+            mime_type: attachment.mime_type,
+            size_bytes: attachment.size_bytes,
+            created_at: attachment.created_at,
+            archive_path: `dateien/nachricht-${attachment.message_id}/${attachment.id}-${zipPathSegment(attachment.file_name)}`,
+        }));
+        const files = [{
+            name: 'fall-manifest.json',
+            data: Buffer.from(JSON.stringify({
+                exported_at: exportedAt,
+                purpose: 'Beweissicherung zu einer Inhaltsmeldung; Weitergabe nur bei berechtigtem Zweck und passender Rechtsgrundlage.',
+                report,
+                conversation: conversation.rows[0],
+                users: users.rows,
+                messages: messages.rows,
+                attachments: attachmentMetadata,
+            }, null, 2), 'utf8'),
+        }];
+        attachments.rows.forEach((attachment, index) => files.push({ name: attachmentMetadata[index].archive_path, data: attachment.data }));
+        await query(
+            `insert into admin_audit_logs (admin_user, action, ip_address)
+             values ($1, $2, $3)`,
+            [ADMIN_USER, `report_${reportId}_evidence_zip_export`, req.ip],
+        );
+        const archive = createZipArchive(files);
+        res.setHeader('Content-Type', 'application/zip');
+        res.setHeader('Content-Disposition', `attachment; filename="justchat-meldung-${reportId}-${exportedAt.slice(0, 10)}.zip"`);
+        return res.send(archive);
+    } catch (error) {
+        return next(error);
     }
 });
 

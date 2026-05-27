@@ -5,6 +5,10 @@ function registerApiRoutes(app, dependencies) {
         sendEvent, getBlockStatus, conversationPair, getConversationForUser, cleanMessage,
         findBlockedDomain, parseAttachment, addEventClient, PUSH_ENABLED, parseBirthDate, isAtLeastAge, getMailer,
     } = dependencies;
+const REPORT_CATEGORIES = new Set([
+    'sexual_content', 'grooming', 'child_safety', 'harassment', 'threats',
+    'violence', 'hate_speech', 'fraud', 'spam', 'illegal_content', 'other',
+]);
 app.get('/api/avatars', async (req, res, next) => {
     try {
         const result = await query(
@@ -962,6 +966,8 @@ app.get('/api/conversations', requireAuth, async (req, res, next) => {
                 latest.created_at as last_message_at,
                 latest.sender_id as last_sender_id,
                 unread.count as unread_count,
+                c.moderation_locked,
+                c.moderation_notice,
                 exists(select 1 from user_blocks where blocker_id = $1 and blocked_user_id = other_user.id) as blocked_by_me,
                 exists(select 1 from user_blocks where blocker_id = other_user.id and blocked_user_id = $1) as blocked_me
              from conversations c
@@ -1112,6 +1118,9 @@ app.get('/api/conversations/:id/messages', requireAuth, async (req, res, next) =
                 last_seen_at: otherUser.last_seen_at,
                 blocked_by_me: blockStatus.blocked_by_me,
                 blocked_me: blockStatus.blocked_me,
+                moderation_locked: conversation.moderation_locked,
+                moderation_notice: conversation.moderation_notice,
+                moderation_action_at: conversation.moderation_action_at,
             },
             messages: messageRows,
         });
@@ -1145,6 +1154,12 @@ app.post('/api/conversations/:id/messages', requireAuth, async (req, res, next) 
         const blockStatus = await getBlockStatus(req.user.id, conversation.other_user_id);
         if (blockStatus.blocked_by_me || blockStatus.blocked_me) {
             return res.status(403).json({ error: 'In diesem Chat sind Nachrichten blockiert' });
+        }
+        if (conversation.moderation_locked) {
+            return res.status(403).json({
+                error: conversation.moderation_notice || 'Für diesen Chat wurden Maßnahmen eingeleitet. Weitere Nachrichten sind derzeit nicht möglich.',
+                code: 'moderation_locked',
+            });
         }
         await query(
             `update conversations
@@ -1196,12 +1211,43 @@ app.post('/api/conversations/:id/messages', requireAuth, async (req, res, next) 
     }
 });
 
+app.post('/api/conversations/:id/messages/:messageId/report', requireAuth, async (req, res, next) => {
+    try {
+        const conversation = await getConversationForUser(req.params.id, req.user.id);
+        const messageId = parseId(req.params.messageId);
+        if (!conversation || !messageId) return res.status(404).json({ error: 'Nachricht nicht gefunden' });
+        const category = String(req.body.category || '').trim();
+        const details = String(req.body.details || '').trim().slice(0, 1000);
+        if (!REPORT_CATEGORIES.has(category)) {
+            return res.status(400).json({ error: 'Bitte wähle einen Meldegrund aus' });
+        }
+        const message = await query(
+            `select id, sender_id from messages where id = $1 and conversation_id = $2`,
+            [messageId, conversation.id],
+        );
+        if (!message.rows[0] || Number(message.rows[0].sender_id) === Number(req.user.id)) {
+            return res.status(400).json({ error: 'Du kannst nur Inhalte der anderen Person melden' });
+        }
+        const result = await query(
+            `insert into content_reports (reporter_user_id, reported_user_id, conversation_id, message_id, category, details)
+             values ($1, $2, $3, $4, $5, $6)
+             on conflict (reporter_user_id, message_id) do nothing
+             returning id`,
+            [req.user.id, message.rows[0].sender_id, conversation.id, messageId, category, details],
+        );
+        if (!result.rows[0]) return res.status(409).json({ error: 'Diese Nachricht wurde von dir bereits gemeldet' });
+        return res.status(201).json({ ok: true, reportId: result.rows[0].id });
+    } catch (error) {
+        return next(error);
+    }
+});
+
 app.post('/api/conversations/:id/typing', requireAuth, async (req, res, next) => {
     try {
         const conversation = await getConversationForUser(req.params.id, req.user.id);
         if (!conversation) return res.status(404).json({ error: 'Chat nicht gefunden' });
         const blockStatus = await getBlockStatus(req.user.id, conversation.other_user_id);
-        if (blockStatus.blocked_by_me || blockStatus.blocked_me) return res.json({ ok: true });
+        if (blockStatus.blocked_by_me || blockStatus.blocked_me || conversation.moderation_locked) return res.json({ ok: true });
         sendEvent(conversation.other_user_id, 'typing', {
             conversationId: conversation.id,
             userId: req.user.id,

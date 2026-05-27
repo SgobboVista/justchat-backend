@@ -1,5 +1,5 @@
 function registerPwaRoutes(app, { sharp }) {
-const PWA_CACHE_NAME = 'justchat-shell-v14';
+const PWA_CACHE_NAME = 'justchat-shell-v15';
 const PWA_ICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
     <rect width="512" height="512" rx="116" fill="#0f766e"/>
     <path fill="#ffffff" d="M117 142c0-29 24-53 53-53h172c29 0 53 24 53 53v147c0 29-24 53-53 53H229l-76 65c-14 12-36 2-36-17V142z"/>

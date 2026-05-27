@@ -844,6 +844,8 @@ async function initDatabase() {
             gif_playback text not null default 'none',
             about text not null default '',
             avatar_color text not null default '#2563eb',
+            banned_at timestamptz,
+            ban_reason text,
             created_at timestamptz not null default now(),
             last_seen_at timestamptz
         );
@@ -917,6 +919,24 @@ async function initDatabase() {
             size_bytes integer not null,
             data bytea not null,
             created_at timestamptz not null default now()
+        );
+
+        create table if not exists content_reports (
+            id bigserial primary key,
+            reporter_user_id bigint not null references users(id) on delete cascade,
+            reported_user_id bigint not null references users(id) on delete cascade,
+            conversation_id bigint not null references conversations(id) on delete cascade,
+            message_id bigint not null references messages(id) on delete cascade,
+            category text not null,
+            details text not null default '',
+            status text not null default 'open',
+            admin_note text not null default '',
+            action_taken text not null default 'none',
+            created_at timestamptz not null default now(),
+            reviewed_at timestamptz,
+            unique(reporter_user_id, message_id),
+            check(reporter_user_id <> reported_user_id),
+            check(status in ('open', 'actioned', 'escalated', 'dismissed'))
         );
 
         create table if not exists chat_groups (
@@ -1048,11 +1068,16 @@ async function initDatabase() {
         alter table users add column if not exists notification_sound_asset_id bigint references notification_sound_assets(id);
         alter table users add column if not exists send_on_enter boolean not null default false;
         alter table users add column if not exists gif_playback text not null default 'none';
+        alter table users add column if not exists banned_at timestamptz;
+        alter table users add column if not exists ban_reason text;
         alter table avatar_assets add column if not exists owner_user_id bigint references users(id) on delete cascade;
         alter table conversations add column if not exists hidden_for_user_one boolean not null default false;
         alter table conversations add column if not exists hidden_for_user_two boolean not null default false;
         alter table conversations add column if not exists deleted_for_user_one_at timestamptz;
         alter table conversations add column if not exists deleted_for_user_two_at timestamptz;
+        alter table conversations add column if not exists moderation_locked boolean not null default false;
+        alter table conversations add column if not exists moderation_notice text not null default '';
+        alter table conversations add column if not exists moderation_action_at timestamptz;
         alter table chat_groups add column if not exists image_file_name text;
         alter table chat_groups add column if not exists image_mime_type text;
         alter table chat_groups add column if not exists image_size_bytes integer;
@@ -1091,6 +1116,7 @@ async function initDatabase() {
             on contact_requests(least(sender_id, recipient_id), greatest(sender_id, recipient_id));
         create index if not exists idx_news_posts_created on news_posts(created_at desc);
         create index if not exists idx_push_subscriptions_user on push_subscriptions(user_id);
+        create index if not exists idx_content_reports_status_created on content_reports(status, created_at desc);
     `);
 }
 
@@ -1100,6 +1126,7 @@ async function purgeExpiredArchivedConversations() {
          where hidden_for_user_one = true and hidden_for_user_two = true
             and deleted_for_user_one_at < now() - interval '${CHAT_RETENTION_DAYS} days'
             and deleted_for_user_two_at < now() - interval '${CHAT_RETENTION_DAYS} days'
+            and not exists (select 1 from content_reports report where report.conversation_id = conversations.id)
          returning id`,
     );
     if (deleted.rowCount > 0) {
@@ -1134,7 +1161,7 @@ async function getUserById(userId) {
     const result = await query(
         `select u.id, u.username, u.display_name, u.email, u.birth_date, u.about, u.avatar_color, u.avatar_asset_id,
             u.two_factor_enabled, u.display_name_visibility, u.username_history_visibility, u.notification_sound_asset_id, u.send_on_enter, u.gif_playback,
-            u.created_at, u.last_seen_at,
+            u.banned_at, u.ban_reason, u.created_at, u.last_seen_at,
             u.id in (select early_user.id from users early_user where not early_user.email_verification_required or early_user.email_verified_at is not null order by early_user.created_at, early_user.id limit 10) as first_account,
             case when aa.id is null then null else 'data:' || aa.mime_type || ';base64,' || encode(aa.data, 'base64') end as avatar_url
          from users u
@@ -1160,6 +1187,12 @@ async function requireAuth(req, res, next) {
 
         req.user = user;
         await query('update users set last_seen_at = now() where id = $1', [user.id]);
+        if (user.banned_at && req.path !== '/api/me') {
+            return res.status(403).json({
+                error: user.ban_reason || 'Dein Konto wurde gesperrt.',
+                code: 'account_banned',
+            });
+        }
         if (!user.birth_date && !['/api/me', '/api/me/birth-date'].includes(req.path)) {
             return res.status(403).json({
                 error: 'Bitte hinterlege zuerst dein Geburtsdatum. JustChat ist ab 16 Jahren verfügbar.',

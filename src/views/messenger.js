@@ -147,6 +147,9 @@ function renderMessengerApp({ appVersion = '' } = {}) {
         .date-divider span { flex: none; padding: 4px 10px; border-radius: 999px; background: rgba(255, 255, 255, .72); }
         .bubble img { display: block; max-width: min(420px, 100%); border-radius: 8px; margin-bottom: 8px; }
         .message-image { cursor: zoom-in; }
+        .message-actions { display: flex; justify-content: flex-end; margin-top: 6px; }
+        .report-message { padding: 3px 7px; border-radius: 6px; color: var(--muted); background: transparent; font-size: 11px; font-weight: 700; }
+        .report-message:hover { color: var(--danger); background: #fff3f2; }
         .attachment-link { display: flex; align-items: center; gap: 8px; color: var(--accent); font-weight: 700; text-decoration: none; padding: 9px 10px; margin-bottom: 6px; border-radius: 8px; background: rgba(15, 118, 110, .08); }
         .meta { display: block; color: var(--muted); font-size: 11px; margin-top: 5px; text-align: right; }
         .composer { width: 100%; min-width: 0; background: var(--panel); border-top: 1px solid var(--line); padding: 12px; display: grid; grid-template-columns: 48px minmax(0, 1fr) 48px; gap: 10px; align-items: end; }
@@ -351,6 +354,7 @@ function renderMessengerApp({ appVersion = '' } = {}) {
         .birth-gate-card h2 { margin: 0; font-size: clamp(27px, 8vw, 34px); }
         .birth-gate-card p { margin: 0; line-height: 1.55; color: var(--muted); }
         .age-mark { width: max-content; padding: 8px 13px; border-radius: 999px; color: #fff; background: var(--accent); font-weight: 800; }
+        .moderation-notice { margin: 12px 14px 0; padding: 12px 14px; border: 1px solid #f6cd8b; border-radius: 10px; background: #fff8eb; color: #7a4c04; line-height: 1.5; font-size: 14px; }
         .image-viewer { position: fixed; inset: 0; z-index: 70; display: grid; place-items: center; touch-action: none; padding: max(18px, env(safe-area-inset-top)) max(18px, env(safe-area-inset-right)) max(18px, env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left)); background: rgba(5, 12, 22, .9); }
         .image-viewer img { display: block; max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 8px; }
         .image-viewer-close { position: fixed; top: calc(14px + env(safe-area-inset-top)); right: calc(14px + env(safe-area-inset-right)); z-index: 72; width: 52px; height: 52px; border: 2px solid rgba(255, 255, 255, .88); border-radius: 50%; padding: 0; display: grid; place-items: center; color: #fff; background: rgba(9, 18, 32, .82); box-shadow: 0 6px 22px rgba(0, 0, 0, .35); font-size: 30px; line-height: 1; }
@@ -744,6 +748,7 @@ function renderMessengerApp({ appVersion = '' } = {}) {
                                 <li><strong>Suche</strong><span>Kontakte und Nachrichten schnell innerhalb der App finden.</span></li>
                                 <li><strong>Domain-Schutz</strong><span>Nachrichten mit gesperrten Domains aus den SgobboVista-Banlists werden vor dem Senden blockiert.</span></li>
                                 <li><strong>Bild-Schutz</strong><span>Zu sendende Chatbilder werden automatisch auf Nackt- und sexuelle Inhalte geprüft und bei Erkennung blockiert.</span></li>
+                                <li><strong>Meldesystem</strong><span>Nachrichten, Dateien und Medien melden; Moderationsmaßnahmen werden im betroffenen Chat sichtbar angezeigt.</span></li>
                                 <li><strong>Altersgrenze</strong><span>JustChat ist ab 16 Jahren verfügbar und erfordert ein Geburtsdatum zur Prüfung.</span></li>
                                 <li><strong>Profilanpassung</strong><span>Anzeigename, Info, Profilbild, Benachrichtigungston und GIF-Wiedergabe verwalten.</span></li>
                                 <li><strong>Sicherheit</strong><span>E-Mail-Bestätigung, Passwort-Wiederherstellung und optionale Zwei-Faktor-Anmeldung.</span></li>
@@ -801,6 +806,7 @@ function renderMessengerApp({ appVersion = '' } = {}) {
                         </div>
                     </button>
                 </div>
+                <div id="moderationNotice" class="moderation-notice hidden" role="status"></div>
                 <div id="messages" class="messages"></div>
                 <div class="drop-hint">Datei hier ablegen</div>
                 <form id="composer" class="composer">
@@ -1065,6 +1071,15 @@ function renderMessengerApp({ appVersion = '' } = {}) {
         </form>
     </div>
 
+    <div id="accountBanGate" class="birth-gate hidden" role="dialog" aria-modal="true" aria-labelledby="accountBanTitle">
+        <div class="birth-gate-card">
+            <span class="age-mark">Konto gesperrt</span>
+            <h2 id="accountBanTitle">Es wurden Maßnahmen eingeleitet</h2>
+            <p>Dein Konto wurde durch die Administration gesperrt.</p>
+            <p id="accountBanReason"></p>
+        </div>
+    </div>
+
     <div id="addModal" class="modal hidden">
         <form id="addForm" class="modal-card stack">
             <div class="modal-head">
@@ -1077,6 +1092,38 @@ function renderMessengerApp({ appVersion = '' } = {}) {
             </div>
             <div id="addError" class="error"></div>
             <button class="primary" type="submit">Anfrage senden</button>
+        </form>
+    </div>
+    <div id="reportModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="reportTitle">
+        <form id="reportForm" class="modal-card stack">
+            <div class="modal-head">
+                <h2 id="reportTitle">Inhalt melden</h2>
+                <button id="closeReport" class="ghost close-button" type="button" aria-label="Meldung schließen">&times;</button>
+            </div>
+            <p class="muted small">Melde diese Nachricht einschließlich angehängter Datei oder Medien. Der Inhalt wird für die Prüfung gespeichert.</p>
+            <div class="field">
+                <label for="reportCategory">Grund</label>
+                <select id="reportCategory" required>
+                    <option value="">Bitte auswählen</option>
+                    <option value="sexual_content">Sexuelle Inhalte / Nacktbilder</option>
+                    <option value="grooming">Grooming / sexuelle Kontaktanbahnung</option>
+                    <option value="child_safety">Sexuelle Inhalte mit Minderjährigen</option>
+                    <option value="harassment">Belästigung / Mobbing</option>
+                    <option value="threats">Drohung</option>
+                    <option value="violence">Gewalt / Gewaltverherrlichung</option>
+                    <option value="hate_speech">Hassrede / Diskriminierung</option>
+                    <option value="fraud">Betrug / Phishing</option>
+                    <option value="spam">Spam</option>
+                    <option value="illegal_content">Illegale Inhalte</option>
+                    <option value="other">Sonstiges</option>
+                </select>
+            </div>
+            <div class="field">
+                <label for="reportDetails">Zusätzliche Beschreibung (optional)</label>
+                <textarea id="reportDetails" maxlength="1000" placeholder="Was ist passiert?"></textarea>
+            </div>
+            <p id="reportError" class="error"></p>
+            <button class="primary" type="submit">Meldung senden</button>
         </form>
     </div>
     <div id="groupInfoModal" class="modal hidden" role="dialog" aria-modal="true" aria-label="Gruppeninfo">
@@ -1154,6 +1201,7 @@ function renderMessengerApp({ appVersion = '' } = {}) {
             groupInvitations: [],
             groupContacts: [],
             activeGroup: null,
+            reportMessageId: null,
         };
 
         const $ = (id) => document.getElementById(id);
@@ -1171,7 +1219,7 @@ function renderMessengerApp({ appVersion = '' } = {}) {
         $('requiredBirthDate').max = maximumBirthDate;
 
         function updateBirthDateGate() {
-            const required = Boolean(state.me && !state.me.birth_date);
+            const required = Boolean(state.me && !state.me.banned_at && !state.me.birth_date);
             $('birthDateGate').classList.toggle('hidden', !required);
             if (required) {
                 $('requiredBirthDate').focus();
@@ -1180,6 +1228,15 @@ function renderMessengerApp({ appVersion = '' } = {}) {
                 $('birthDateGateError').textContent = '';
             }
             return required;
+        }
+
+        function updateAccountBanGate() {
+            const banned = Boolean(state.me && state.me.banned_at);
+            $('accountBanGate').classList.toggle('hidden', !banned);
+            $('accountBanReason').textContent = banned
+                ? (state.me.ban_reason || 'Weitere Informationen erhältst du von der Administration.')
+                : '';
+            return banned;
         }
 
         if ('serviceWorker' in navigator) {
@@ -1971,7 +2028,8 @@ function renderMessengerApp({ appVersion = '' } = {}) {
         }
 
         function canMessageActiveConversation() {
-            return state.activeConversation && !state.activeConversation.blocked_by_me && !state.activeConversation.blocked_me;
+            return state.activeConversation && !state.activeConversation.blocked_by_me && !state.activeConversation.blocked_me
+                && !state.activeConversation.moderation_locked;
         }
 
         function updateMessageControls() {
@@ -1996,6 +2054,11 @@ function renderMessengerApp({ appVersion = '' } = {}) {
             }
             if (state.activeConversation.blocked_me) {
                 status.textContent = 'Nachrichten sind nicht möglich.';
+                status.classList.remove('hidden');
+                return;
+            }
+            if (state.activeConversation.moderation_locked) {
+                status.textContent = 'Nachrichten wurden durch eine Maßnahme gesperrt.';
                 status.classList.remove('hidden');
                 return;
             }
@@ -2080,9 +2143,11 @@ function renderMessengerApp({ appVersion = '' } = {}) {
         function renderConversationList() {
             $('conversationList').innerHTML = state.conversations.map((chat) => {
                 const active = state.activeConversation && state.activeConversation.id === chat.id ? ' active' : '';
-                const preview = (chat.blocked_by_me || chat.blocked_me)
-                    ? 'Geblockt'
-                    : (chat.last_message || (chat.has_attachment ? 'Datei' : 'Noch keine Nachrichten'));
+                const preview = chat.moderation_locked
+                    ? 'Maßnahmen eingeleitet - Chat gesperrt'
+                    : ((chat.blocked_by_me || chat.blocked_me)
+                        ? 'Geblockt'
+                        : (chat.last_message || (chat.has_attachment ? 'Datei' : 'Noch keine Nachrichten')));
                 const time = chat.last_message_at ? new Date(chat.last_message_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
                 const unread = Number(chat.unread_count || 0);
                 return '<button class="row' + active + '" data-chat="' + chat.id + '">' +
@@ -2205,7 +2270,9 @@ function renderMessengerApp({ appVersion = '' } = {}) {
                     : '';
                 const text = message.body ? escapeText(message.body) : '';
                 return divider + '<div class="bubble ' + (mine ? 'me' : '') + '" data-message-id="' + message.id + '">' +
-                    attachment + text + '<span class="meta">' + time + read + '</span></div>';
+                    attachment + text + '<span class="meta">' + time + read + '</span>' +
+                    (!mine ? '<div class="message-actions"><button class="report-message" type="button" data-report-message="' + message.id + '">Melden</button></div>' : '') +
+                    '</div>';
             }).join('');
             applyGifPreference($('messages'));
             const selectedMessage = state.searchMessageId
@@ -2295,6 +2362,7 @@ function renderMessengerApp({ appVersion = '' } = {}) {
             $('meUsername').textContent = '@' + state.me.username;
             $('meAvatarSlot').innerHTML = avatarMarkup(state.me, 'meAvatar');
             applyGifPreference();
+            updateAccountBanGate();
             updateBirthDateGate();
         }
 
@@ -2457,6 +2525,8 @@ function renderMessengerApp({ appVersion = '' } = {}) {
             state.activeConversation = data.conversation;
             state.activeGroup = null;
             if (!$('chatPane').classList.contains('hidden')) {
+                $('moderationNotice').textContent = data.conversation.moderation_notice || '';
+                $('moderationNotice').classList.toggle('hidden', !data.conversation.moderation_notice);
                 renderMessages(data.messages);
                 updateMessageControls();
             }
@@ -2491,6 +2561,8 @@ function renderMessengerApp({ appVersion = '' } = {}) {
             $('chatName').textContent = data.conversation.display_name;
             $('chatUser').textContent = '@' + data.conversation.username;
             $('chatAvatarSlot').innerHTML = avatarMarkup(data.conversation, 'chatAvatar');
+            $('moderationNotice').textContent = data.conversation.moderation_notice || '';
+            $('moderationNotice').classList.toggle('hidden', !data.conversation.moderation_notice);
             updateMessageControls();
             renderMessages(data.messages);
             renderConversationList();
@@ -2533,6 +2605,15 @@ function renderMessengerApp({ appVersion = '' } = {}) {
                 await loadConversations();
                 if (state.activeConversation && Number(state.activeConversation.id) === Number(payload.conversationId)) {
                     showChatHome();
+                }
+            });
+            state.eventSource.addEventListener('moderation:changed', async (event) => {
+                const payload = JSON.parse(event.data);
+                await loadMe();
+                if (state.me.banned_at) return;
+                await loadConversations();
+                if (state.activeConversation && Number(state.activeConversation.id) === Number(payload.conversationId)) {
+                    await refreshOpenMessages(payload.conversationId);
                 }
             });
             state.eventSource.addEventListener('contact:changed', async (event) => {
@@ -2594,6 +2675,7 @@ function renderMessengerApp({ appVersion = '' } = {}) {
             try {
                 await loadMe();
                 showApp();
+                if (state.me.banned_at) return;
                 if (!state.me.birth_date) return;
                 connectEvents();
                 showConnectionStatus(true);
@@ -3195,6 +3277,15 @@ function renderMessengerApp({ appVersion = '' } = {}) {
         });
         $('attachmentInput').addEventListener('change', (event) => chooseAttachment(event.target.files[0]));
         $('messages').addEventListener('click', (event) => {
+            const reportButton = event.target.closest('[data-report-message]');
+            if (reportButton) {
+                state.reportMessageId = reportButton.dataset.reportMessage;
+                $('reportCategory').value = '';
+                $('reportDetails').value = '';
+                $('reportError').textContent = '';
+                $('reportModal').classList.remove('hidden');
+                return;
+            }
             const image = event.target.closest('[data-chat-image]');
             if (image) openImageViewer(image);
         });
@@ -3205,6 +3296,29 @@ function renderMessengerApp({ appVersion = '' } = {}) {
             openImageViewer(image);
         });
         $('closeImageViewer').addEventListener('click', closeImageViewer);
+        $('closeReport').addEventListener('click', () => {
+            state.reportMessageId = null;
+            $('reportModal').classList.add('hidden');
+        });
+        $('reportForm').addEventListener('submit', async (event) => {
+            event.preventDefault();
+            if (!state.activeConversation || !state.reportMessageId) return;
+            $('reportError').textContent = '';
+            try {
+                await api('/api/conversations/' + state.activeConversation.id + '/messages/' + state.reportMessageId + '/report', {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        category: $('reportCategory').value,
+                        details: $('reportDetails').value,
+                    }),
+                });
+                state.reportMessageId = null;
+                $('reportModal').classList.add('hidden');
+                $('composerError').textContent = 'Die Nachricht wurde zur Prüfung gemeldet.';
+            } catch (error) {
+                $('reportError').textContent = error.message;
+            }
+        });
         $('imageViewer').addEventListener('click', (event) => {
             if (event.target === $('imageViewer')) closeImageViewer();
         });
