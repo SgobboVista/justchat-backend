@@ -1104,6 +1104,23 @@ app.get('/api/conversations/:id/messages', requireAuth, async (req, res, next) =
             for (const message of messageRows) {
                 message.attachment = attachmentsByMessage.get(String(message.id)) || null;
             }
+            const reportNotices = await query(
+                `select message_id, status, admin_note, reviewed_at
+                 from content_reports
+                 where reporter_user_id = $1
+                    and message_id = any($2::bigint[])
+                    and status = 'dismissed'`,
+                [req.user.id, messageIds],
+            );
+            const noticesByMessage = new Map(reportNotices.rows.map((notice) => [String(notice.message_id), notice]));
+            for (const message of messageRows) {
+                const notice = noticesByMessage.get(String(message.id));
+                message.report_notice = notice ? {
+                    status: notice.status,
+                    admin_note: notice.admin_note,
+                    reviewed_at: notice.reviewed_at,
+                } : null;
+            }
         }
 
         return res.json({

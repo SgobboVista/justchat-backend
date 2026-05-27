@@ -51,12 +51,30 @@ app.get('/admin/api/overview', requireAdminAuth, async (req, res, next) => {
             select u.id, u.username, u.display_name, u.email, u.avatar_color, u.avatar_asset_id, u.banned_at, u.ban_reason,
                 case when aa.id is null then null else 'data:' || aa.mime_type || ';base64,' || encode(aa.data, 'base64') end as avatar_url,
                 count(distinct c.id)::int as conversation_count,
-                count(distinct m.id)::int as message_count
+                count(distinct m.id)::int as message_count,
+                coalesce(reports_made.count, 0)::int as reports_made_count,
+                coalesce(reports_received.count, 0)::int as reports_received_count,
+                coalesce(report_actions.count, 0)::int as report_action_count
             from users u
             left join avatar_assets aa on aa.id = u.avatar_asset_id and aa.is_active = true
             left join conversations c on u.id in (c.user_one_id, c.user_two_id)
             left join messages m on m.sender_id = u.id
-            group by u.id, aa.id
+            left join lateral (
+                select count(*)::int as count
+                from content_reports report
+                where report.reporter_user_id = u.id
+            ) reports_made on true
+            left join lateral (
+                select count(*)::int as count
+                from content_reports report
+                where report.reported_user_id = u.id
+            ) reports_received on true
+            left join lateral (
+                select count(*)::int as count
+                from content_reports report
+                where report.reported_user_id = u.id and report.action_taken not in ('none', 'dismiss')
+            ) report_actions on true
+            group by u.id, aa.id, reports_made.count, reports_received.count, report_actions.count
             order by u.created_at desc
             limit 200
         `);
@@ -169,7 +187,7 @@ app.post('/admin/api/reports/:id/action', requireAdminAuth, async (req, res, nex
         const report = reportResult.rows[0];
         if (!report) return res.status(404).json({ error: 'Meldung nicht gefunden' });
 
-        let status = action === 'dismiss' ? 'dismissed' : (action === 'police_evidence' ? 'escalated' : 'actioned');
+        const status = action === 'dismiss' ? 'dismissed' : (action === 'police_evidence' ? 'escalated' : 'actioned');
         if (action === 'lock_chat' || action === 'ban_user') {
             const notice = `Es wurden Maßnahmen eingeleitet. ${note}`;
             await query(

@@ -153,6 +153,8 @@ function renderMessengerApp({ appVersion = '' } = {}) {
         .message-actions { display: flex; justify-content: flex-end; margin-top: 6px; }
         .report-message { padding: 3px 7px; border-radius: 6px; color: var(--muted); background: transparent; font-size: 11px; font-weight: 700; }
         .report-message:hover { color: var(--danger); background: #fff3f2; }
+        .report-notice { margin-top: 8px; padding: 8px 9px; border-radius: 8px; border: 1px solid #dbe6f6; background: #f6f8fc; color: var(--muted); font-size: 12px; line-height: 1.4; }
+        .report-notice strong { display: block; color: var(--text); margin-bottom: 2px; }
         .favorite-message { padding: 3px 8px; border-radius: 999px; color: #94a3b8; background: transparent; font-size: 17px; line-height: 1; }
         .favorite-message:hover, .favorite-message.active { color: #e11d48; background: #fff1f4; }
         .attachment-link { display: flex; align-items: center; gap: 8px; color: var(--accent); font-weight: 700; text-decoration: none; padding: 9px 10px; margin-bottom: 6px; border-radius: 8px; background: rgba(15, 118, 110, .08); }
@@ -2376,8 +2378,11 @@ function renderMessengerApp({ appVersion = '' } = {}) {
                         : '<a class="attachment-link" href="' + message.attachment.data_url + '" download="' + escapeText(message.attachment.file_name) + '">Datei: ' + escapeText(message.attachment.file_name) + '</a>')
                     : '';
                 const text = message.body ? escapeText(message.body) : '';
+                const reportNotice = message.report_notice
+                    ? '<div class="report-notice"><strong>Meldung geprüft</strong>Diese Meldung wurde abgewiesen.' + (message.report_notice.admin_note ? '<br>' + escapeText(message.report_notice.admin_note) : '') + '</div>'
+                    : '';
                 return divider + '<div class="bubble ' + (mine ? 'me' : '') + '" data-message-id="' + message.id + '">' +
-                    attachment + text + '<span class="meta">' + time + read + '</span>' +
+                    attachment + text + reportNotice + '<span class="meta">' + time + read + '</span>' +
                     '<div class="message-actions">' +
                     '<button class="favorite-message' + (message.favorited_by_me ? ' active' : '') + '" type="button" data-favorite-message="' + message.id + '" data-favorite="' + Boolean(message.favorited_by_me) + '" aria-label="' + (message.favorited_by_me ? 'Aus Favoriten entfernen' : 'Zu Favoriten hinzufügen') + '">&#10084;</button>' +
                     (!mine ? '<button class="report-message" type="button" data-report-message="' + message.id + '">Melden</button>' : '') +

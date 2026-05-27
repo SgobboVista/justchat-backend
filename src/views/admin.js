@@ -91,7 +91,7 @@ function renderAdminLayout(content) {
         .password-toggle.visible .eye-slash { display: block; }
         table { width: 100%; border-collapse: collapse; }
         .table-scroll { overflow: auto; margin-top: 16px; -webkit-overflow-scrolling: touch; }
-        .table-scroll table { min-width: 580px; }
+        .table-scroll table { min-width: 760px; }
         th, td { padding: 10px 8px; border-bottom: 1px solid #edf1f6; text-align: left; vertical-align: middle; }
         th { color: var(--muted); font-size: 12px; text-transform: uppercase; }
         .avatar-preview { width: 42px; height: 42px; border-radius: 50%; object-fit: cover; background: #eef2f7; border: 1px solid var(--line); }
@@ -123,6 +123,8 @@ function renderAdminLayout(content) {
         .report-actions textarea { width: 100%; min-height: 74px; resize: vertical; border: 1px solid var(--line); border-radius: 8px; padding: 10px; font: inherit; }
         .sensitive-value { display: inline-block; filter: blur(5px); transition: filter .15s ease; cursor: default; }
         .sensitive-value:hover, .sensitive-value:focus { filter: none; outline: none; }
+        .moderation-counts { display: flex; flex-wrap: wrap; gap: 5px; }
+        .moderation-counts span { border-radius: 999px; padding: 4px 7px; background: #eef2ff; color: var(--accent); font-size: 12px; font-weight: 700; }
         .notice { border: 1px solid #fedf89; background: #fffaeb; color: #7a4f01; border-radius: 8px; padding: 12px; margin-top: 16px; }
         .load-error { border: 1px solid #fecdca; background: #fef3f2; color: var(--error); border-radius: 8px; padding: 12px; margin-bottom: 16px; }
         .admin-login-shell { min-height: calc(100vh - 56px); display: grid; place-items: center; }
@@ -299,13 +301,17 @@ function renderDashboard(data) {
                         <option value="">Alle Nutzer</option>
                     </select>
                 </div>
+                <div class="field">
+                    <label for="userSearch">Nutzer suchen</label>
+                    <input id="userSearch" type="search" placeholder="Name, Benutzername oder E-Mail suchen">
+                </div>
                 <div class="toolbar">
                     <a id="downloadExport" class="button" href="/admin/export">ZIP-Archiv herunterladen</a>
                     <button id="downloadSelected" class="secondary" type="button">Auswahl als ZIP</button>
                 </div>
                 <div class="table-scroll">
                     <table>
-                        <thead><tr><th>Avatar</th><th>Nutzer</th><th>E-Mail</th><th>Chats</th><th>Nachrichten</th></tr></thead>
+                        <thead><tr><th>Avatar</th><th>Nutzer</th><th>E-Mail</th><th>Chats</th><th>Nachrichten</th><th>Meldungen</th></tr></thead>
                         <tbody id="userRows"></tbody>
                     </table>
                 </div>
@@ -378,7 +384,7 @@ function renderDashboard(data) {
         <div class="notice">Hinweis: Von Nutzern entfernte Chats werden mindestens 30 Tage serverseitig aufbewahrt. ZIP-Archive enthalten private Chatdaten und Originaldateien; sie dürfen nur für einen berechtigten Zweck und mit passender rechtlicher Grundlage herausgegeben werden.</div>
 
         <script data-cfasync="false">
-            const state = { users: [], avatars: [], sounds: [], news: [], reports: [], audit: [], imageUpdate: null, activeTab: 'overview' };
+            const state = { users: [], avatars: [], sounds: [], news: [], reports: [], audit: [], imageUpdate: null, activeTab: 'overview', userSearch: '', exportUserId: '' };
             const el = (id) => document.getElementById(id);
             const escapeText = (value) => String(value == null ? '' : value).replace(/[&<>"']/g, (char) => ({
                 '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
@@ -487,15 +493,19 @@ function renderDashboard(data) {
                 el('statUsers').textContent = state.summary.users;
                 el('statConversations').textContent = state.summary.conversations;
                 el('statMessages').textContent = state.summary.messages;
+                const userNeedle = state.userSearch.trim().toLowerCase();
+                const visibleUsers = userNeedle
+                    ? state.users.filter((user) => [user.display_name, user.username, user.email].some((value) => String(value || '').toLowerCase().includes(userNeedle)))
+                    : state.users;
                 el('userFilter').innerHTML = '<option value="">Alle Nutzer</option>' + state.users.map((user) =>
-                    '<option value="' + user.id + '">' + escapeText(user.display_name) + ' (@' + escapeText(user.username) + ')</option>'
+                    '<option value="' + user.id + '"' + (String(state.exportUserId) === String(user.id) ? ' selected' : '') + '>' + escapeText(user.display_name) + ' (@' + escapeText(user.username) + ')</option>'
                 ).join('');
-                el('userRows').innerHTML = state.users.map((user) => {
+                el('userRows').innerHTML = visibleUsers.length ? visibleUsers.map((user) => {
                     const avatar = user.avatar_url
                         ? '<img class="avatar-preview" src="' + user.avatar_url + '" alt="">'
                         : '<div class="avatar-preview" style="display:grid;place-items:center;background:' + user.avatar_color + ';color:#fff;font-weight:800;">' + initials(user.display_name) + '</div>';
-                    return '<tr><td>' + avatar + '</td><td><strong>' + escapeText(user.display_name) + '</strong><br><span class="muted">@' + escapeText(user.username) + '</span>' + (user.banned_at ? '<br><span class="status error">Gesperrt</span>' : '') + '</td><td><span class="sensitive-value" tabindex="0" title="Zum Anzeigen berühren oder darüberfahren">' + escapeText(user.email || '-') + '</span></td><td>' + user.conversation_count + '</td><td>' + user.message_count + '</td></tr>';
-                }).join('');
+                    return '<tr><td>' + avatar + '</td><td><strong>' + escapeText(user.display_name) + '</strong><br><span class="muted">@' + escapeText(user.username) + '</span>' + (user.banned_at ? '<br><span class="status error">Gesperrt</span>' : '') + '</td><td><span class="sensitive-value" tabindex="0" title="Zum Anzeigen berühren oder darüberfahren">' + escapeText(user.email || '-') + '</span></td><td>' + user.conversation_count + '</td><td>' + user.message_count + '</td><td><div class="moderation-counts"><span>Gemeldet: ' + user.reports_made_count + '</span><span>Gegen ihn/sie: ' + user.reports_received_count + '</span><span>Maßnahmen: ' + user.report_action_count + '</span></div></td></tr>';
+                }).join('') : '<tr><td colspan="6" class="muted">Keine Nutzer gefunden.</td></tr>';
                 el('avatarGrid').innerHTML = state.avatars.length ? state.avatars.map((avatar) =>
                     '<div class="avatar-card asset-card"><img src="' + avatar.data_url + '" alt=""><strong>' + escapeText(avatar.name) + '</strong><span class="muted">' + Math.round(avatar.size_bytes / 1024) + ' KB</span><button class="danger" type="button" data-delete-avatar="' + avatar.id + '">Löschen</button></div>'
                 ).join('') : '<p class="muted">Noch keine Profilbilder hochgeladen.</p>';
@@ -659,7 +669,12 @@ function renderDashboard(data) {
             });
             el('userFilter').addEventListener('change', () => {
                 const userId = el('userFilter').value;
+                state.exportUserId = userId;
                 el('downloadExport').href = userId ? '/admin/export?userId=' + encodeURIComponent(userId) : '/admin/export';
+            });
+            el('userSearch').addEventListener('input', () => {
+                state.userSearch = el('userSearch').value;
+                render();
             });
             el('uploadAvatar').addEventListener('click', async () => {
                 try {
