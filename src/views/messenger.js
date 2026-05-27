@@ -138,6 +138,9 @@ function renderMessengerApp({ appVersion = '' } = {}) {
         .chat-profile:hover .brand strong { color: var(--accent); }
         .typing { color: var(--accent); font-weight: 700; }
         .messages { min-height: 0; padding: 18px; overflow-y: auto; -webkit-overflow-scrolling: touch; display: flex; flex-direction: column; gap: 8px; background: #e9f0f4; }
+        .jump-latest { position: absolute; right: 22px; bottom: 94px; z-index: 6; width: 46px; height: 46px; border-radius: 50%; padding: 0; display: grid; place-items: center; color: #fff; background: var(--accent); box-shadow: 0 10px 24px rgba(15, 118, 110, .3); }
+        .jump-latest:hover { background: var(--accent-strong); }
+        .jump-latest svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }
         .bubble { max-width: min(680px, 82%); border: 1px solid rgba(15, 23, 42, .08); border-radius: 8px; padding: 9px 11px; background: var(--message-other); align-self: flex-start; overflow-wrap: anywhere; }
         .bubble.me { background: var(--message-me); align-self: flex-end; }
         .bubble.search-highlight { outline: 3px solid rgba(15, 118, 110, .35); box-shadow: 0 0 0 7px rgba(15, 118, 110, .09); animation: searchPulse 1.4s ease-out 1; }
@@ -406,6 +409,7 @@ function renderMessengerApp({ appVersion = '' } = {}) {
                 -webkit-overflow-scrolling: touch;
                 overscroll-behavior-y: contain;
             }
+            .jump-latest { right: 16px; bottom: calc(86px + env(safe-area-inset-bottom)); }
             .composer {
                 grid-template-columns: 48px minmax(0, 1fr) 48px;
                 padding: 10px 10px calc(10px + env(safe-area-inset-bottom));
@@ -827,6 +831,9 @@ function renderMessengerApp({ appVersion = '' } = {}) {
                 </div>
                 <div id="moderationNotice" class="moderation-notice hidden" role="status"></div>
                 <div id="messages" class="messages"></div>
+                <button id="jumpLatest" class="jump-latest hidden" type="button" aria-label="Zur neuesten Nachricht springen" title="Zur neuesten Nachricht">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14"></path><path d="m19 12-7 7-7-7"></path></svg>
+                </button>
                 <div class="drop-hint">Datei hier ablegen</div>
                 <form id="composer" class="composer">
                     <div id="attachmentPreview" class="attachment-preview hidden"></div>
@@ -2337,10 +2344,22 @@ function renderMessengerApp({ appVersion = '' } = {}) {
             container.scrollTop = container.scrollHeight;
             window.requestAnimationFrame(() => {
                 container.scrollTop = container.scrollHeight;
+                updateJumpLatestButton();
             });
         }
 
-        function renderMessages(messages) {
+        function isMessagesNearBottom(threshold = 120) {
+            const container = $('messages');
+            return container.scrollHeight - container.scrollTop - container.clientHeight <= threshold;
+        }
+
+        function updateJumpLatestButton() {
+            const visible = !$('chatPane').classList.contains('hidden') && !isMessagesNearBottom(140);
+            $('jumpLatest').classList.toggle('hidden', !visible);
+        }
+
+        function renderMessages(messages, options = {}) {
+            const shouldScroll = options.forceScroll || isMessagesNearBottom();
             let previousDateKey = '';
             $('messages').innerHTML = messages.map((message) => {
                 const dateKey = messageDateKey(message.created_at);
@@ -2377,10 +2396,16 @@ function renderMessengerApp({ appVersion = '' } = {}) {
                     selectedMessage.scrollIntoView();
                 }
                 state.searchMessageId = null;
+                updateJumpLatestButton();
+                window.requestAnimationFrame(updateJumpLatestButton);
             } else {
-                scrollMessagesToEnd();
+                if (shouldScroll) scrollMessagesToEnd();
+                else updateJumpLatestButton();
                 $('messages').querySelectorAll('img').forEach((image) => {
-                    if (!image.complete) image.addEventListener('load', scrollMessagesToEnd, { once: true });
+                    if (!image.complete) image.addEventListener('load', () => {
+                        if (shouldScroll) scrollMessagesToEnd();
+                        else updateJumpLatestButton();
+                    }, { once: true });
                 });
             }
         }
@@ -2655,7 +2680,7 @@ function renderMessengerApp({ appVersion = '' } = {}) {
             $('moderationNotice').textContent = data.conversation.moderation_notice || '';
             $('moderationNotice').classList.toggle('hidden', !data.conversation.moderation_notice);
             updateMessageControls();
-            renderMessages(data.messages);
+            renderMessages(data.messages, { forceScroll: !messageId });
             renderConversationList();
             await api('/api/conversations/' + id + '/read', { method: 'POST', body: '{}' });
             await loadConversations();
@@ -3393,6 +3418,11 @@ function renderMessengerApp({ appVersion = '' } = {}) {
             $('composer').requestSubmit();
         });
         $('attachmentInput').addEventListener('change', (event) => chooseAttachment(event.target.files[0]));
+        $('messages').addEventListener('scroll', updateJumpLatestButton, { passive: true });
+        $('jumpLatest').addEventListener('click', () => {
+            scrollMessagesToEnd();
+            $('messageInput').focus();
+        });
         $('messages').addEventListener('click', async (event) => {
             const favoriteButton = event.target.closest('[data-favorite-message]');
             if (favoriteButton && state.activeConversation) {
