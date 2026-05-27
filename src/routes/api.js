@@ -1,6 +1,6 @@
 function registerApiRoutes(app, dependencies) {
     const {
-        requireAuth, query, optimizeImageAttachment, personalAvatarLimit, parseId, getUserById,
+        requireAuth, query, optimizeImageAttachment, ensureOutgoingImageAllowed, personalAvatarLimit, parseId, getUserById,
         getExistingConversation, normalizeUsername, cleanDisplayName, cleanEmail, validateCleanName,
         sendEvent, getBlockStatus, conversationPair, getConversationForUser, cleanMessage,
         findBlockedDomain, parseAttachment, addEventClient, PUSH_ENABLED, parseBirthDate, isAtLeastAge, getMailer,
@@ -1136,6 +1136,9 @@ app.post('/api/conversations/:id/messages', requireAuth, async (req, res, next) 
             ? await optimizeImageAttachment(req.body.attachment)
             : parseAttachment(req.body.attachment);
         if (!body && !attachment) return res.status(400).json({ error: 'Nachricht ist leer' });
+        if (attachment && String(attachment.mimeType).startsWith('image/')) {
+            await ensureOutgoingImageAllowed(attachment);
+        }
 
         const conversation = await getConversationForUser(req.params.id, req.user.id);
         if (!conversation) return res.status(404).json({ error: 'Chat nicht gefunden' });

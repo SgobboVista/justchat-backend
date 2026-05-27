@@ -4,6 +4,8 @@ const nodemailer = require('nodemailer');
 const { Pool } = require('pg');
 const sharp = require('sharp');
 const webPush = require('web-push');
+const tf = require('@tensorflow/tfjs-node');
+const nsfwjs = require('nsfwjs');
 const { createAdminViews } = require('./src/views/admin');
 const { renderMessengerApp } = require('./src/views/messenger');
 const { registerPwaRoutes } = require('./src/routes/pwa');
@@ -55,6 +57,9 @@ const DOMAIN_BANLIST_API_URL = 'https://api.github.com/repos/SgobboVista/sgovi-b
 const DOMAIN_BANLIST_RAW_BASE_URL = 'https://raw.githubusercontent.com/SgobboVista/sgovi-banlists/main/';
 const DOMAIN_BANLIST_REFRESH_MS = 6 * 60 * 60 * 1000;
 const DOMAIN_BANLIST_FETCH_TIMEOUT_MS = 10000;
+const NSFW_BLOCK_THRESHOLD = Math.min(1, Math.max(0.1, Number(process.env.NSFW_BLOCK_THRESHOLD || 0.72)));
+const NSFW_STRONG_CLASS_THRESHOLD = Math.min(1, Math.max(0.1, Number(process.env.NSFW_STRONG_CLASS_THRESHOLD || 0.55)));
+const NSFW_MAX_GIF_FRAMES = 5;
 const DOMAIN_BANLIST_FALLBACK_FILES = [
     'adult.txt', 'animal-cruelty.txt', 'censorship.txt', 'child-abuse.txt', 'copyright.txt',
     'data-breach.txt', 'discrimination.txt', 'drugs.txt', 'duplicate.txt', 'extremism.txt',
@@ -69,6 +74,7 @@ const domainBanlistState = {
     loadedAt: 0,
     loading: null,
 };
+let nsfwModelPromise = null;
 let imageUpdateState = {
     configured: Boolean(IMAGE_UPDATE_WEBHOOK_URL),
     status: IMAGE_UPDATE_WEBHOOK_URL ? 'idle' : 'not_configured',
@@ -563,6 +569,66 @@ async function optimizeImageAttachment(attachment) {
         const invalidImage = new Error('Bild konnte nicht verarbeitet werden');
         invalidImage.statusCode = 400;
         throw invalidImage;
+    }
+}
+
+async function getNsfwModel() {
+    if (!nsfwModelPromise) {
+        tf.enableProdMode();
+        nsfwModelPromise = nsfwjs.load('MobileNetV2').catch((error) => {
+            nsfwModelPromise = null;
+            throw error;
+        });
+    }
+    return nsfwModelPromise;
+}
+
+function selectedImageFrameIndexes(frameCount) {
+    if (frameCount <= NSFW_MAX_GIF_FRAMES) {
+        return Array.from({ length: frameCount }, (_, index) => index);
+    }
+    return Array.from({ length: NSFW_MAX_GIF_FRAMES }, (_, index) =>
+        Math.round(index * (frameCount - 1) / (NSFW_MAX_GIF_FRAMES - 1))
+    );
+}
+
+async function ensureOutgoingImageAllowed(attachment) {
+    if (!attachment || !String(attachment.mimeType).startsWith('image/')) return;
+    let model;
+    try {
+        model = await getNsfwModel();
+    } catch (error) {
+        console.error('NSFW-Modell konnte nicht geladen werden:', error.message);
+        const unavailable = new Error('Bildprüfung ist derzeit nicht verfügbar. Bitte versuche es später erneut.');
+        unavailable.statusCode = 503;
+        throw unavailable;
+    }
+
+    const metadata = await sharp(attachment.data, { animated: attachment.mimeType === 'image/gif' }).metadata();
+    const indexes = selectedImageFrameIndexes(Math.max(1, Number(metadata.pages) || 1));
+    for (const page of indexes) {
+        const raw = await sharp(attachment.data, { page })
+            .flatten({ background: '#ffffff' })
+            .removeAlpha()
+            .toColourspace('srgb')
+            .raw()
+            .toBuffer({ resolveWithObject: true });
+        const tensor = tf.tensor3d(new Uint8Array(raw.data), [raw.info.height, raw.info.width, raw.info.channels], 'int32');
+        let predictions;
+        try {
+            predictions = await model.classify(tensor);
+        } finally {
+            tensor.dispose();
+        }
+        const probability = Object.fromEntries(predictions.map((result) => [result.className, result.probability]));
+        const explicitTotal = (probability.Porn || 0) + (probability.Hentai || 0) + (probability.Sexy || 0);
+        if ((probability.Porn || 0) >= NSFW_STRONG_CLASS_THRESHOLD
+            || (probability.Hentai || 0) >= NSFW_STRONG_CLASS_THRESHOLD
+            || explicitTotal >= NSFW_BLOCK_THRESHOLD) {
+            const blocked = new Error('Dieses Bild wurde als Nacktbild oder sexueller Inhalt erkannt und kann nicht gesendet werden.');
+            blocked.statusCode = 400;
+            throw blocked;
+        }
     }
 }
 
@@ -1273,7 +1339,7 @@ const routeDependencies = {
     APP_VERSION,
     crypto, getDashboardData, renderAdminLayout, renderAdminLogin, renderDashboard, renderMessengerApp,
     requireAdminAuth, requireAuth, hasAdminSession, createAdminSessionToken,
-    query, dispatchImageUpdate, parseAttachment, optimizeImageAttachment, parseNotificationSoundAttachment,
+    query, dispatchImageUpdate, parseAttachment, optimizeImageAttachment, ensureOutgoingImageAllowed, parseNotificationSoundAttachment,
     parseId, createZipArchive, zipPathSegment, createToken, verifyPassword, hashPassword,
     normalizeUsername, cleanDisplayName, validateCleanName, cleanEmail, parseBirthDate, isAtLeastAge, cleanMessage, findBlockedDomain,
     sendEmailVerificationCode, sendTwoFactorCode, sendPasswordResetCode, getUserById,
@@ -1307,6 +1373,11 @@ waitForDatabase()
             console.log(`JustChat läuft auf Port ${PORT}`);
             loadBlockedDomains().catch((error) => {
                 console.error('Domain-Banlist konnte nicht vorgeladen werden:', error.message);
+            });
+            getNsfwModel().then(() => {
+                console.log('NSFW-Bildprüfung bereit');
+            }).catch((error) => {
+                console.error('NSFW-Bildprüfung konnte nicht vorgeladen werden:', error.message);
             });
         });
     })

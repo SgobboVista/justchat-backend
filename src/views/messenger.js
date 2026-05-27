@@ -743,6 +743,7 @@ function renderMessengerApp({ appVersion = '' } = {}) {
                                 <li><strong>News von SgobboVista</strong><span>Updates an @alle mit Bildern oder Videos und optionalen Push-Benachrichtigungen.</span></li>
                                 <li><strong>Suche</strong><span>Kontakte und Nachrichten schnell innerhalb der App finden.</span></li>
                                 <li><strong>Domain-Schutz</strong><span>Nachrichten mit gesperrten Domains aus den SgobboVista-Banlists werden vor dem Senden blockiert.</span></li>
+                                <li><strong>Bild-Schutz</strong><span>Zu sendende Chatbilder werden automatisch auf Nackt- und sexuelle Inhalte geprüft und bei Erkennung blockiert.</span></li>
                                 <li><strong>Altersgrenze</strong><span>JustChat ist ab 16 Jahren verfügbar und erfordert ein Geburtsdatum zur Prüfung.</span></li>
                                 <li><strong>Profilanpassung</strong><span>Anzeigename, Info, Profilbild, Benachrichtigungston und GIF-Wiedergabe verwalten.</span></li>
                                 <li><strong>Sicherheit</strong><span>E-Mail-Bestätigung, Passwort-Wiederherstellung und optionale Zwei-Faktor-Anmeldung.</span></li>
@@ -761,6 +762,7 @@ function renderMessengerApp({ appVersion = '' } = {}) {
                             <ul>
                                 <li>Behandle andere Personen respektvoll und verwende JustChat nicht für Belästigung, Bedrohungen oder unerlaubte Inhalte.</li>
                                 <li>JustChat ist eine Plattform ab 16 Jahren. Bei der Registrierung muss ein zutreffendes Geburtsdatum angegeben werden.</li>
+                                <li>Nackt- oder sexuelle Bildinhalte dürfen nicht versendet werden und können automatisiert vor dem Speichern blockiert werden.</li>
                                 <li>Du bist für Nachrichten und Medien verantwortlich, die du sendest oder hochlädst.</li>
                                 <li>Missbrauch, Manipulation oder unberechtigter Zugriff auf Konten ist nicht gestattet.</li>
                             </ul>
