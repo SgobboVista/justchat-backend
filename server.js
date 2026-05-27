@@ -951,6 +951,8 @@ async function initDatabase() {
             id bigserial primary key,
             name text not null,
             owner_user_id bigint not null references users(id) on delete cascade,
+            media_send_policy text not null default 'all',
+            media_min_member_days integer not null default 0,
             image_file_name text,
             image_mime_type text,
             image_size_bytes integer,
@@ -974,6 +976,41 @@ async function initDatabase() {
             sender_id bigint not null references users(id) on delete cascade,
             body text not null,
             created_at timestamptz not null default now()
+        );
+
+        create table if not exists group_message_attachments (
+            id bigserial primary key,
+            group_message_id bigint not null references group_messages(id) on delete cascade,
+            file_name text not null,
+            mime_type text not null,
+            size_bytes integer not null,
+            data bytea not null,
+            created_at timestamptz not null default now()
+        );
+
+        create table if not exists group_media_allowed_users (
+            group_id bigint not null references chat_groups(id) on delete cascade,
+            user_id bigint not null references users(id) on delete cascade,
+            created_at timestamptz not null default now(),
+            primary key (group_id, user_id)
+        );
+
+        create table if not exists group_content_reports (
+            id bigserial primary key,
+            reporter_user_id bigint not null references users(id) on delete cascade,
+            reported_user_id bigint not null references users(id) on delete cascade,
+            group_id bigint not null references chat_groups(id) on delete cascade,
+            group_message_id bigint not null references group_messages(id) on delete cascade,
+            category text not null,
+            details text not null default '',
+            status text not null default 'open',
+            admin_note text not null default '',
+            action_taken text not null default 'none',
+            created_at timestamptz not null default now(),
+            reviewed_at timestamptz,
+            unique(reporter_user_id, group_message_id),
+            check(reporter_user_id <> reported_user_id),
+            check(status in ('open', 'actioned', 'escalated', 'dismissed'))
         );
 
         create table if not exists group_invitations (
@@ -1087,6 +1124,8 @@ async function initDatabase() {
         alter table conversations add column if not exists moderation_notice text not null default '';
         alter table conversations add column if not exists moderation_action_at timestamptz;
         alter table chat_groups add column if not exists image_file_name text;
+        alter table chat_groups add column if not exists media_send_policy text not null default 'all';
+        alter table chat_groups add column if not exists media_min_member_days integer not null default 0;
         alter table chat_groups add column if not exists image_mime_type text;
         alter table chat_groups add column if not exists image_size_bytes integer;
         alter table chat_groups add column if not exists image_data bytea;
@@ -1108,6 +1147,9 @@ async function initDatabase() {
             on group_members(user_id);
         create index if not exists idx_group_messages_group_created
             on group_messages(group_id, created_at);
+        create index if not exists idx_group_message_attachments_message
+            on group_message_attachments(group_message_id);
+        create index if not exists idx_group_content_reports_status_created on group_content_reports(status, created_at desc);
         create index if not exists idx_group_invitations_invitee_status
             on group_invitations(invitee_user_id, status, created_at desc);
         create index if not exists idx_conversations_user_one

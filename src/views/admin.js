@@ -520,21 +520,27 @@ function renderDashboard(data) {
                 ).join('') : '<p class="muted">Noch keine News veröffentlicht.</p>';
                 el('newsArchiveSummary').textContent = 'Veröffentlichte News verwalten (' + state.news.length + ')';
                 el('reportList').innerHTML = state.reports.length ? state.reports.map((report) => {
+                    const reportBase = report.report_type === 'group' ? '/admin/api/group-reports/' : '/admin/api/reports/';
+                    const actionBase = report.report_type === 'group' ? '/admin/api/group-reports/' : '/admin/api/reports/';
                     const file = report.attachment_id
                         ? '<div class="report-file">' + (String(report.mime_type || '').startsWith('image/')
-                            ? '<img src="/admin/api/reports/' + report.id + '/attachment" alt="Gemeldetes Bild">'
-                            : '<a class="button secondary" href="/admin/api/reports/' + report.id + '/attachment" target="_blank">Gemeldete Datei anzeigen</a>') + '</div>'
+                            ? '<img src="' + reportBase + report.id + '/attachment" alt="Gemeldetes Bild">'
+                            : '<a class="button secondary" href="' + reportBase + report.id + '/attachment" target="_blank">Gemeldete Datei anzeigen</a>') + '</div>'
                         : '';
                     const label = report.status === 'open' ? 'Offen' : report.status === 'escalated' ? 'Beweise gesichert' : report.status === 'dismissed' ? 'Abgewiesen' : 'Maßnahme erfolgt';
-                    return '<article class="report-card"><div class="report-head"><div><strong>Meldung #' + report.id + ': ' + escapeText(reportCategories[report.category] || report.category) + '</strong>' +
+                    const groupInfo = report.report_type === 'group' ? ' <span class="status warn">Gruppe: ' + escapeText(report.group_name || '-') + '</span>' : '';
+                    const actions = report.report_type === 'group'
+                        ? '<option value="ban_user">Nutzer bannen</option><option value="unban_user">Bann aufheben</option><option value="police_evidence">Für Behördenmeldung sichern</option><option value="dismiss">Meldung abweisen</option>'
+                        : '<option value="lock_chat">Chat sperren + Hinweis</option><option value="unlock_chat">Chat freigeben + Hinweis</option><option value="ban_user">Nutzer bannen + Chat sperren</option><option value="unban_user">Bann aufheben</option><option value="police_evidence">Für Behördenmeldung sichern</option><option value="dismiss">Meldung abweisen</option>';
+                    return '<article class="report-card"><div class="report-head"><div><strong>Meldung #' + report.id + ': ' + escapeText(reportCategories[report.category] || report.category) + '</strong>' + groupInfo +
                         '<p class="muted">Von ' + escapeText(report.reporter_name) + ' (@' + escapeText(report.reporter_username) + ') gegen ' + escapeText(report.reported_name) + ' (@' + escapeText(report.reported_username) + ') - ' + new Date(report.created_at).toLocaleString() + '</p></div>' +
                         '<span class="status ' + (report.status === 'open' ? 'warn' : report.status === 'dismissed' ? 'error' : 'ok') + '">' + label + '</span></div>' +
                         '<div class="report-evidence">' + escapeText(report.message_body || '(nur Datei/Medium)') + '</div>' + file +
                         (report.details ? '<p><strong>Beschreibung:</strong> ' + escapeText(report.details) + '</p>' : '') +
                         (report.admin_note ? '<p><strong>Admin-Hinweis:</strong> ' + escapeText(report.admin_note) + '</p>' : '') +
-                        '<a class="button secondary" href="/admin/reports/' + report.id + '/export">Gesamten Chat als Beweis-ZIP herunterladen</a>' +
-                        '<div class="report-actions"><select data-report-action="' + report.id + '"><option value="lock_chat">Chat sperren + Hinweis</option><option value="unlock_chat">Chat freigeben + Hinweis</option><option value="ban_user">Nutzer bannen + Chat sperren</option><option value="unban_user">Bann aufheben</option><option value="police_evidence">Für Behördenmeldung sichern</option><option value="dismiss">Meldung abweisen</option></select>' +
-                        '<textarea data-report-note="' + report.id + '" maxlength="1000" placeholder="Begründung / Hinweis für Betroffene"></textarea><button type="button" data-apply-report="' + report.id + '">Maßnahme ausführen</button></div></article>';
+                        (report.report_type === 'private' ? '<a class="button secondary" href="/admin/reports/' + report.id + '/export">Gesamten Chat als Beweis-ZIP herunterladen</a>' : '') +
+                        '<div class="report-actions"><select data-report-action="' + report.report_type + '-' + report.id + '">' + actions + '</select>' +
+                        '<textarea data-report-note="' + report.report_type + '-' + report.id + '" maxlength="1000" placeholder="Begründung / Hinweis für Betroffene"></textarea><button type="button" data-apply-report="' + report.id + '" data-report-type="' + report.report_type + '" data-action-base="' + actionBase + '">Maßnahme ausführen</button></div></article>';
                 }).join('') : '<p class="muted">Keine Meldungen vorhanden.</p>';
                 const openReportCount = state.reports.filter((report) => report.status === 'open').length;
                 el('reportTabCount').textContent = openReportCount;
@@ -650,11 +656,12 @@ function renderDashboard(data) {
                 const button = event.target.closest('[data-apply-report]');
                 if (!button) return;
                 const reportId = button.dataset.applyReport;
-                const action = document.querySelector('[data-report-action="' + reportId + '"]').value;
-                const note = document.querySelector('[data-report-note="' + reportId + '"]').value;
+                const key = button.dataset.reportType + '-' + reportId;
+                const action = document.querySelector('[data-report-action="' + key + '"]').value;
+                const note = document.querySelector('[data-report-note="' + key + '"]').value;
                 if (!confirm('Diese Moderationsmaßnahme wirklich durchführen?')) return;
                 try {
-                    await adminApi('/admin/api/reports/' + reportId + '/action', {
+                    await adminApi(button.dataset.actionBase + reportId + '/action', {
                         method: 'POST',
                         body: JSON.stringify({ action, note }),
                     });

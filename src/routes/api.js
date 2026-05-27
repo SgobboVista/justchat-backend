@@ -3,7 +3,7 @@ function registerApiRoutes(app, dependencies) {
         requireAuth, query, optimizeImageAttachment, ensureOutgoingImageAllowed, personalAvatarLimit, parseId, getUserById,
         getExistingConversation, normalizeUsername, cleanDisplayName, cleanEmail, validateCleanName,
         sendEvent, getBlockStatus, conversationPair, getConversationForUser, cleanMessage,
-        findBlockedDomain, parseAttachment, addEventClient, PUSH_ENABLED, parseBirthDate, isAtLeastAge, getMailer,
+        findBlockedDomain, parseAttachment, parseNewsVideoAttachment, addEventClient, PUSH_ENABLED, parseBirthDate, isAtLeastAge, getMailer,
     } = dependencies;
 const REPORT_CATEGORIES = new Set([
     'sexual_content', 'grooming', 'child_safety', 'harassment', 'threats',
@@ -686,6 +686,7 @@ app.get('/api/groups/:id/messages', requireAuth, async (req, res, next) => {
         const groupResult = await query(
             `select g.id, g.name, g.owner_user_id, g.created_at, g.image_updated_at,
                 case when g.image_data is null then null else '/api/groups/' || g.id || '/image' end as image_url,
+                g.media_send_policy, g.media_min_member_days,
                 count(all_members.user_id)::int as member_count
              from chat_groups g
              join group_members mine on mine.group_id = g.id and mine.user_id = $2
@@ -710,7 +711,24 @@ app.get('/api/groups/:id/messages', requireAuth, async (req, res, next) => {
              limit 200`,
             [groupId, req.user.id],
         );
-        return res.json({ group: groupResult.rows[0], messages: messages.rows.reverse() });
+        const messageRows = messages.rows.reverse();
+        if (messageRows.length) {
+            const attachments = await query(
+                `select id, group_message_id, file_name, mime_type, size_bytes, encode(data, 'base64') as data_base64
+                 from group_message_attachments
+                 where group_message_id = any($1::bigint[])`,
+                [messageRows.map((message) => message.id)],
+            );
+            const byMessage = new Map(attachments.rows.map((attachment) => [String(attachment.group_message_id), {
+                id: attachment.id,
+                file_name: attachment.file_name,
+                mime_type: attachment.mime_type,
+                size_bytes: attachment.size_bytes,
+                data_url: `data:${attachment.mime_type};base64,${attachment.data_base64}`,
+            }]));
+            messageRows.forEach((message) => { message.attachment = byMessage.get(String(message.id)) || null; });
+        }
+        return res.json({ group: groupResult.rows[0], messages: messageRows });
     } catch (error) {
         return next(error);
     }
@@ -742,6 +760,7 @@ app.get('/api/groups/:id/info', requireAuth, async (req, res, next) => {
         const groupResult = await query(
             `select g.id, g.name, g.owner_user_id, g.created_at, g.image_updated_at,
                 case when g.image_data is null then null else '/api/groups/' || g.id || '/image' end as image_url,
+                g.media_send_policy, g.media_min_member_days,
                 count(all_members.user_id)::int as member_count,
                 case when exists (
                     select 1 from user_blocks b
@@ -764,6 +783,7 @@ app.get('/api/groups/:id/info', requireAuth, async (req, res, next) => {
         if (!groupResult.rows[0]) return res.status(404).json({ error: 'Gruppe nicht gefunden' });
         const members = await query(
             `select member.user_id, member.role, member.joined_at,
+                exists(select 1 from group_media_allowed_users allowed where allowed.group_id = member.group_id and allowed.user_id = member.user_id) as media_allowed,
                 case when exists (
                     select 1 from user_blocks b
                     where (b.blocker_id = $2 and b.blocked_user_id = u.id)
@@ -781,6 +801,36 @@ app.get('/api/groups/:id/info', requireAuth, async (req, res, next) => {
             [groupId, req.user.id],
         );
         return res.json({ group: groupResult.rows[0], members: members.rows });
+    } catch (error) {
+        return next(error);
+    }
+});
+
+app.put('/api/groups/:id/media-settings', requireAuth, async (req, res, next) => {
+    try {
+        const groupId = parseId(req.params.id);
+        if (!groupId) return res.status(400).json({ error: 'Ungültige Gruppe' });
+        const policy = ['all', 'older_than', 'specific'].includes(req.body.policy) ? req.body.policy : 'all';
+        const minDays = Math.max(0, Math.min(3650, Number(req.body.minMemberDays || 0) || 0));
+        const allowedIds = [...new Set((Array.isArray(req.body.allowedUserIds) ? req.body.allowedUserIds : [])
+            .map((id) => parseId(id)).filter(Boolean))];
+        const owned = await query('select id from chat_groups where id = $1 and owner_user_id = $2', [groupId, req.user.id]);
+        if (!owned.rows[0]) return res.status(403).json({ error: 'Nur der Besitzer kann Medienrechte ändern' });
+        await query('update chat_groups set media_send_policy = $1, media_min_member_days = $2 where id = $3', [policy, minDays, groupId]);
+        await query('delete from group_media_allowed_users where group_id = $1', [groupId]);
+        if (policy === 'specific' && allowedIds.length) {
+            await query(
+                `insert into group_media_allowed_users (group_id, user_id)
+                 select $1, member.user_id
+                 from group_members member
+                 where member.group_id = $1 and member.user_id = any($2::bigint[])
+                 on conflict do nothing`,
+                [groupId, allowedIds],
+            );
+        }
+        const members = await query('select user_id from group_members where group_id = $1', [groupId]);
+        members.rows.forEach((member) => sendEvent(member.user_id, 'group:changed', { groupId }));
+        return res.json({ ok: true });
     } catch (error) {
         return next(error);
     }
@@ -910,7 +960,13 @@ app.post('/api/groups/:id/messages', requireAuth, async (req, res, next) => {
     try {
         const groupId = parseId(req.params.id);
         const body = cleanMessage(req.body.body);
-        if (!groupId || !body) return res.status(400).json({ error: 'Nachricht ist leer' });
+        const mimeType = String(req.body.attachment && req.body.attachment.mimeType || '').toLowerCase();
+        const attachment = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(mimeType)
+            ? await optimizeImageAttachment(req.body.attachment)
+            : ['video/mp4', 'video/webm', 'video/quicktime'].includes(mimeType)
+                ? parseNewsVideoAttachment(req.body.attachment)
+                : null;
+        if (!groupId || (!body && !attachment)) return res.status(400).json({ error: 'Nachricht ist leer' });
         const blockedDomain = await findBlockedDomain(body);
         if (blockedDomain) {
             return res.status(400).json({
@@ -920,10 +976,23 @@ app.post('/api/groups/:id/messages', requireAuth, async (req, res, next) => {
             });
         }
         const membership = await query(
-            'select group_id from group_members where group_id = $1 and user_id = $2',
+            `select member.group_id, member.joined_at, g.media_send_policy, g.media_min_member_days,
+                exists(select 1 from group_media_allowed_users allowed where allowed.group_id = member.group_id and allowed.user_id = member.user_id) as media_allowed
+             from group_members member
+             join chat_groups g on g.id = member.group_id
+             where member.group_id = $1 and member.user_id = $2`,
             [groupId, req.user.id],
         );
         if (!membership.rows[0]) return res.status(404).json({ error: 'Gruppe nicht gefunden' });
+        if (attachment) {
+            if (String(attachment.mimeType).startsWith('image/')) await ensureOutgoingImageAllowed(attachment);
+            const row = membership.rows[0];
+            const memberDays = (Date.now() - new Date(row.joined_at).getTime()) / (24 * 60 * 60 * 1000);
+            const allowed = row.media_send_policy === 'all'
+                || (row.media_send_policy === 'older_than' && memberDays >= Number(row.media_min_member_days || 0))
+                || (row.media_send_policy === 'specific' && row.media_allowed);
+            if (!allowed) return res.status(403).json({ error: 'Du darfst in dieser Gruppe keine Medien senden' });
+        }
         const inserted = await query(
             `insert into group_messages (group_id, sender_id, body)
              values ($1, $2, $3)
@@ -931,6 +1000,23 @@ app.post('/api/groups/:id/messages', requireAuth, async (req, res, next) => {
             [groupId, req.user.id, body],
         );
         const message = inserted.rows[0];
+        if (attachment) {
+            const stored = await query(
+                `insert into group_message_attachments (group_message_id, file_name, mime_type, size_bytes, data)
+                 values ($1, $2, $3, $4, $5)
+                 returning id, file_name, mime_type, size_bytes, encode(data, 'base64') as data_base64`,
+                [message.id, attachment.fileName, attachment.mimeType, attachment.sizeBytes, attachment.data],
+            );
+            message.attachment = {
+                id: stored.rows[0].id,
+                file_name: stored.rows[0].file_name,
+                mime_type: stored.rows[0].mime_type,
+                size_bytes: stored.rows[0].size_bytes,
+                data_url: `data:${stored.rows[0].mime_type};base64,${stored.rows[0].data_base64}`,
+            };
+        } else {
+            message.attachment = null;
+        }
         const recipients = await query(
             `select members.user_id
              from group_members members
@@ -944,6 +1030,56 @@ app.post('/api/groups/:id/messages', requireAuth, async (req, res, next) => {
         );
         recipients.rows.forEach((member) => sendEvent(member.user_id, 'group:message', { groupId, message }));
         return res.status(201).json({ message });
+    } catch (error) {
+        return next(error);
+    }
+});
+
+app.delete('/api/groups/:id/messages/:messageId', requireAuth, async (req, res, next) => {
+    try {
+        const groupId = parseId(req.params.id);
+        const messageId = parseId(req.params.messageId);
+        const deleted = await query(
+            `delete from group_messages
+             where id = $1 and group_id = $2 and sender_id = $3 and created_at >= now() - interval '60 seconds'
+             returning id`,
+            [messageId, groupId, req.user.id],
+        );
+        if (!deleted.rows[0]) return res.status(403).json({ error: 'Nachrichten können nur innerhalb einer Minute gelöscht werden' });
+        const members = await query('select user_id from group_members where group_id = $1', [groupId]);
+        members.rows.forEach((member) => sendEvent(member.user_id, 'group:message', { groupId }));
+        return res.json({ ok: true });
+    } catch (error) {
+        return next(error);
+    }
+});
+
+app.post('/api/groups/:id/messages/:messageId/report', requireAuth, async (req, res, next) => {
+    try {
+        const groupId = parseId(req.params.id);
+        const messageId = parseId(req.params.messageId);
+        const category = String(req.body.category || '').trim();
+        const details = String(req.body.details || '').trim().slice(0, 1000);
+        if (!REPORT_CATEGORIES.has(category)) return res.status(400).json({ error: 'Bitte wähle einen Meldegrund aus' });
+        const message = await query(
+            `select gm.sender_id
+             from group_messages gm
+             join group_members member on member.group_id = gm.group_id and member.user_id = $3
+             where gm.id = $1 and gm.group_id = $2`,
+            [messageId, groupId, req.user.id],
+        );
+        if (!message.rows[0] || Number(message.rows[0].sender_id) === Number(req.user.id)) {
+            return res.status(400).json({ error: 'Du kannst nur Inhalte anderer Personen melden' });
+        }
+        const inserted = await query(
+            `insert into group_content_reports (reporter_user_id, reported_user_id, group_id, group_message_id, category, details)
+             values ($1, $2, $3, $4, $5, $6)
+             on conflict (reporter_user_id, group_message_id) do nothing
+             returning id`,
+            [req.user.id, message.rows[0].sender_id, groupId, messageId, category, details],
+        );
+        if (!inserted.rows[0]) return res.status(409).json({ error: 'Diese Nachricht wurde von dir bereits gemeldet' });
+        return res.status(201).json({ ok: true, reportId: inserted.rows[0].id });
     } catch (error) {
         return next(error);
     }
@@ -1374,6 +1510,26 @@ app.delete('/api/conversations/:id', requireAuth, async (req, res, next) => {
             [conversation.id, req.user.id],
         );
         sendEvent(req.user.id, 'conversation:deleted', { conversationId: conversation.id });
+        return res.json({ ok: true });
+    } catch (error) {
+        return next(error);
+    }
+});
+
+app.delete('/api/conversations/:id/messages/:messageId', requireAuth, async (req, res, next) => {
+    try {
+        const conversation = await getConversationForUser(req.params.id, req.user.id);
+        const messageId = parseId(req.params.messageId);
+        if (!conversation || !messageId) return res.status(404).json({ error: 'Nachricht nicht gefunden' });
+        const deleted = await query(
+            `delete from messages
+             where id = $1 and conversation_id = $2 and sender_id = $3 and created_at >= now() - interval '60 seconds'
+             returning id`,
+            [messageId, conversation.id, req.user.id],
+        );
+        if (!deleted.rows[0]) return res.status(403).json({ error: 'Nachrichten können nur innerhalb einer Minute gelöscht werden' });
+        sendEvent(conversation.other_user_id, 'message:deleted', { conversationId: conversation.id, messageId });
+        sendEvent(req.user.id, 'message:deleted', { conversationId: conversation.id, messageId });
         return res.json({ ok: true });
     } catch (error) {
         return next(error);

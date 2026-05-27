@@ -61,17 +61,29 @@ app.get('/admin/api/overview', requireAdminAuth, async (req, res, next) => {
             left join messages m on m.sender_id = u.id
             left join lateral (
                 select count(*)::int as count
-                from content_reports report
+                from (
+                    select reporter_user_id from content_reports
+                    union all
+                    select reporter_user_id from group_content_reports
+                ) report
                 where report.reporter_user_id = u.id
             ) reports_made on true
             left join lateral (
                 select count(*)::int as count
-                from content_reports report
+                from (
+                    select reported_user_id from content_reports
+                    union all
+                    select reported_user_id from group_content_reports
+                ) report
                 where report.reported_user_id = u.id
             ) reports_received on true
             left join lateral (
                 select count(*)::int as count
-                from content_reports report
+                from (
+                    select reported_user_id, action_taken from content_reports
+                    union all
+                    select reported_user_id, action_taken from group_content_reports
+                ) report
                 where report.reported_user_id = u.id and report.action_taken not in ('none', 'dismiss')
             ) report_actions on true
             group by u.id, aa.id, reports_made.count, reports_received.count, report_actions.count
@@ -99,8 +111,9 @@ app.get('/admin/api/overview', requireAdminAuth, async (req, res, next) => {
             limit 50
         `);
         const reports = await query(`
-            select report.id, report.category, report.details, report.status, report.admin_note, report.action_taken,
+            select 'private' as report_type, report.id, report.category, report.details, report.status, report.admin_note, report.action_taken,
                 report.created_at, report.reviewed_at, report.conversation_id, report.message_id, report.reported_user_id,
+                null::bigint as group_id, null::bigint as group_message_id, null::text as group_name,
                 reporter.display_name as reporter_name, reporter.username as reporter_username,
                 reported.display_name as reported_name, reported.username as reported_username, reported.banned_at,
                 message.body as message_body, message.created_at as message_created_at,
@@ -115,6 +128,29 @@ app.get('/admin/api/overview', requireAdminAuth, async (req, res, next) => {
                 select id, file_name, mime_type, size_bytes
                 from message_attachments
                 where message_id = report.message_id
+                limit 1
+            ) attachment on true
+            order by case when report.status = 'open' then 0 else 1 end, report.created_at desc
+            limit 100
+        `);
+        const groupReports = await query(`
+            select 'group' as report_type, report.id, report.category, report.details, report.status, report.admin_note, report.action_taken,
+                report.created_at, report.reviewed_at, null::bigint as conversation_id, null::bigint as message_id, report.reported_user_id,
+                report.group_id, report.group_message_id, chat_group.name as group_name,
+                reporter.display_name as reporter_name, reporter.username as reporter_username,
+                reported.display_name as reported_name, reported.username as reported_username, reported.banned_at,
+                message.body as message_body, message.created_at as message_created_at,
+                attachment.id as attachment_id, attachment.file_name, attachment.mime_type, attachment.size_bytes,
+                false as moderation_locked, '' as moderation_notice
+            from group_content_reports report
+            join users reporter on reporter.id = report.reporter_user_id
+            join users reported on reported.id = report.reported_user_id
+            join chat_groups chat_group on chat_group.id = report.group_id
+            join group_messages message on message.id = report.group_message_id
+            left join lateral (
+                select id, file_name, mime_type, size_bytes
+                from group_message_attachments
+                where group_message_id = report.group_message_id
                 limit 1
             ) attachment on true
             order by case when report.status = 'open' then 0 else 1 end, report.created_at desc
@@ -143,7 +179,11 @@ app.get('/admin/api/overview', requireAdminAuth, async (req, res, next) => {
             sounds: sounds.rows,
             news: news.rows,
             audit: audit.rows,
-            reports: reports.rows,
+            reports: reports.rows.concat(groupReports.rows).sort((a, b) => {
+                if (a.status === 'open' && b.status !== 'open') return -1;
+                if (a.status !== 'open' && b.status === 'open') return 1;
+                return new Date(b.created_at) - new Date(a.created_at);
+            }).slice(0, 150),
             imageUpdate: getImageUpdateState(),
             warning,
         });
@@ -159,6 +199,27 @@ app.get('/admin/api/reports/:id/attachment', requireAdminAuth, async (req, res, 
             `select attachment.file_name, attachment.mime_type, attachment.data
              from content_reports report
              join message_attachments attachment on attachment.message_id = report.message_id
+             where report.id = $1
+             limit 1`,
+            [reportId],
+        );
+        if (!result.rows[0]) return res.status(404).send('Datei nicht gefunden');
+        res.type(result.rows[0].mime_type);
+        res.set('Content-Disposition', `inline; filename="${zipPathSegment(result.rows[0].file_name)}"`);
+        res.set('Cache-Control', 'private, no-store');
+        return res.send(result.rows[0].data);
+    } catch (error) {
+        return next(error);
+    }
+});
+
+app.get('/admin/api/group-reports/:id/attachment', requireAdminAuth, async (req, res, next) => {
+    try {
+        const reportId = parseId(req.params.id);
+        const result = await query(
+            `select attachment.file_name, attachment.mime_type, attachment.data
+             from group_content_reports report
+             join group_message_attachments attachment on attachment.group_message_id = report.group_message_id
              where report.id = $1
              limit 1`,
             [reportId],
@@ -232,6 +293,39 @@ app.post('/admin/api/reports/:id/action', requireAdminAuth, async (req, res, nex
             sendEvent(participants.rows[0].user_one_id, 'moderation:changed', { conversationId: report.conversation_id });
             sendEvent(participants.rows[0].user_two_id, 'moderation:changed', { conversationId: report.conversation_id });
         }
+        return res.json({ ok: true });
+    } catch (error) {
+        return next(error);
+    }
+});
+
+app.post('/admin/api/group-reports/:id/action', requireAdminAuth, async (req, res, next) => {
+    try {
+        const reportId = parseId(req.params.id);
+        const action = String(req.body.action || '').trim();
+        const note = String(req.body.note || '').trim().slice(0, 1000);
+        const permitted = new Set(['ban_user', 'unban_user', 'police_evidence', 'dismiss']);
+        if (!reportId || !permitted.has(action)) return res.status(400).json({ error: 'Ungültige Maßnahme' });
+        if (['ban_user', 'unban_user'].includes(action) && !note) return res.status(400).json({ error: 'Bitte schreibe eine Begründung' });
+        const reportResult = await query('select * from group_content_reports where id = $1', [reportId]);
+        const report = reportResult.rows[0];
+        if (!report) return res.status(404).json({ error: 'Meldung nicht gefunden' });
+        const status = action === 'dismiss' ? 'dismissed' : (action === 'police_evidence' ? 'escalated' : 'actioned');
+        if (action === 'ban_user') await query('update users set banned_at = now(), ban_reason = $1 where id = $2', [note, report.reported_user_id]);
+        if (action === 'unban_user') await query('update users set banned_at = null, ban_reason = null where id = $1', [report.reported_user_id]);
+        await query(
+            `update group_content_reports
+             set status = $1, admin_note = $2, action_taken = $3, reviewed_at = now()
+             where id = $4`,
+            [status, note, action, reportId],
+        );
+        await query(
+            `insert into admin_audit_logs (admin_user, action, ip_address)
+             values ($1, $2, $3)`,
+            [ADMIN_USER, `group_report_${reportId}_${action}`, req.ip],
+        );
+        const members = await query('select user_id from group_members where group_id = $1', [report.group_id]);
+        members.rows.forEach((member) => sendEvent(member.user_id, 'group:changed', { groupId: report.group_id }));
         return res.json({ ok: true });
     } catch (error) {
         return next(error);

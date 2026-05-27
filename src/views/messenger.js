@@ -149,6 +149,7 @@ function renderMessengerApp({ appVersion = '' } = {}) {
         .date-divider::before, .date-divider::after { content: ''; flex: 1; height: 1px; background: rgba(100, 116, 139, .27); }
         .date-divider span { flex: none; padding: 4px 10px; border-radius: 999px; background: rgba(255, 255, 255, .72); }
         .bubble img { display: block; max-width: min(420px, 100%); border-radius: 8px; margin-bottom: 8px; }
+        .bubble video { display: block; width: min(420px, 100%); max-height: 300px; border-radius: 8px; margin-bottom: 8px; background: #000; }
         .message-image { cursor: zoom-in; }
         .message-actions { display: flex; justify-content: flex-end; margin-top: 6px; }
         .report-message { padding: 3px 7px; border-radius: 6px; color: var(--muted); background: transparent; font-size: 11px; font-weight: 700; }
@@ -258,8 +259,9 @@ function renderMessengerApp({ appVersion = '' } = {}) {
         .group-invite { grid-row: 2; margin: 12px; }
         .group-messages { grid-row: 3; min-height: 0; padding: 15px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; background: #e9f0f4; }
         .group-sender { display: block; color: var(--accent); font-size: 12px; font-weight: 700; margin-bottom: 4px; }
-        .group-composer { grid-row: 4; display: grid; grid-template-columns: minmax(0, 1fr) 48px; align-items: end; gap: 9px; padding: 11px; border-top: 1px solid var(--line); }
+        .group-composer { grid-row: 4; display: grid; grid-template-columns: 48px minmax(0, 1fr) 48px; align-items: end; gap: 9px; padding: 11px; border-top: 1px solid var(--line); }
         .group-composer textarea { width: 100%; min-height: 48px; max-height: 110px; resize: vertical; border: 1px solid var(--line); border-radius: 24px; padding: 13px 17px; }
+        .group-composer .attachment-preview { grid-column: 1 / -1; }
         .feature-view.group-room-open { padding: 0; overflow: hidden; }
         .feature-view.group-room-open .group-room { width: 100%; height: 100%; min-height: 0; margin: 0; border: 0; border-radius: 0; }
         .feature-view.group-room-open .group-room-head { min-height: 73px; padding: 14px 18px; background: var(--panel); }
@@ -271,6 +273,7 @@ function renderMessengerApp({ appVersion = '' } = {}) {
         .group-info-owner { margin: 0; color: var(--muted); font-size: 14px; }
         .group-picture-actions { display: grid; gap: 9px; padding: 13px; border: 1px solid var(--line); border-radius: 10px; background: #f7fbfa; }
         .group-picture-actions input { width: 100%; }
+        .group-media-settings { display: grid; gap: 9px; padding: 13px; border: 1px solid var(--line); border-radius: 10px; background: #f7fbfa; }
         .group-members { display: grid; gap: 8px; }
         .group-member { display: flex; justify-content: space-between; align-items: center; gap: 12px; border: 1px solid var(--line); border-radius: 9px; padding: 10px 12px; background: #fff; }
         .group-member strong, .group-member span { display: block; }
@@ -688,11 +691,16 @@ function renderMessengerApp({ appVersion = '' } = {}) {
                                 <button id="discardBlockedGroupMessage" class="sensitive-delete" type="button">Nachricht l&ouml;schen</button>
                             </div>
                         </div>
+                        <label class="file-button" title="Bild oder Video anhängen">
+                            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21.4 11.1 12.3 20.2a6 6 0 0 1-8.5-8.5l9.1-9.1a4 4 0 1 1 5.7 5.7l-9.1 9.1a2 2 0 0 1-2.8-2.8l8.5-8.5"></path></svg>
+                            <input id="groupAttachmentInput" type="file" accept="image/png,image/jpeg,image/webp,image/gif,video/mp4,video/webm,video/quicktime">
+                        </label>
                         <textarea id="groupMessageInput" maxlength="4000" placeholder="Nachricht an die Gruppe"></textarea>
                         <button class="primary send-button" type="submit" aria-label="Senden" title="Senden">
                             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M22 2 11 13"></path><path d="m22 2-7 20-4-9-9-4z"></path></svg>
                         </button>
                         <p id="groupComposerError" class="error composer-error"></p>
+                        <div id="groupAttachmentPreview" class="attachment-preview hidden"></div>
                     </form>
                 </div>
                 <div id="newsView" class="news-view hidden">
@@ -1184,6 +1192,16 @@ function renderMessengerApp({ appVersion = '' } = {}) {
                 <p class="muted small">JPEG, PNG, WebP oder GIF, maximal 20 MB.</p>
                 <p id="groupPictureError" class="error"></p>
             </div>
+            <div id="groupMediaSettings" class="group-media-settings hidden">
+                <strong>Medien senden</strong>
+                <label class="segmented"><input type="radio" name="groupMediaPolicy" value="all" checked style="width:auto;"><span>Alle Mitglieder</span></label>
+                <label class="segmented"><input type="radio" name="groupMediaPolicy" value="older_than" style="width:auto;"><span>Nur Mitglieder älter als X Tage</span></label>
+                <input id="groupMediaMinDays" type="number" min="0" max="3650" value="0" placeholder="Tage">
+                <label class="segmented"><input type="radio" name="groupMediaPolicy" value="specific" style="width:auto;"><span>Nur bestimmte Leute</span></label>
+                <div id="groupMediaAllowedPicker" class="group-picker"></div>
+                <button id="saveGroupMediaSettings" class="primary" type="button">Medienrechte speichern</button>
+                <p id="groupMediaSettingsError" class="error"></p>
+            </div>
             <div>
                 <strong>Mitglieder</strong>
                 <div id="groupMemberList" class="group-members" style="margin-top: 10px;"></div>
@@ -1214,6 +1232,8 @@ function renderMessengerApp({ appVersion = '' } = {}) {
             sensitiveMessageApproved: false,
             blockedDomainDraft: false,
             blockedGroupDomainDraft: false,
+            groupPendingAttachment: null,
+            groupPendingAttachmentPreviewUrl: null,
             searchMessageId: null,
             searchRequestId: 0,
             sounds: [],
@@ -1241,6 +1261,7 @@ function renderMessengerApp({ appVersion = '' } = {}) {
             groupContacts: [],
             activeGroup: null,
             reportMessageId: null,
+            reportKind: 'private',
         };
 
         const $ = (id) => document.getElementById(id);
@@ -1469,6 +1490,7 @@ function renderMessengerApp({ appVersion = '' } = {}) {
             state.blockedGroupDomainDraft = false;
             $('groupBlockedDomainWarning').classList.add('hidden');
             $('groupMessageInput').disabled = false;
+            $('groupAttachmentInput').disabled = false;
             $('groupComposer').querySelector('button[type="submit"]').disabled = false;
         }
 
@@ -1477,6 +1499,7 @@ function renderMessengerApp({ appVersion = '' } = {}) {
             $('groupBlockedDomainText').textContent = blockedDomainText(error.data && error.data.blockedDomain);
             $('groupBlockedDomainWarning').classList.remove('hidden');
             $('groupMessageInput').disabled = true;
+            $('groupAttachmentInput').disabled = true;
             $('groupComposer').querySelector('button[type="submit"]').disabled = true;
         }
 
@@ -1686,11 +1709,22 @@ function renderMessengerApp({ appVersion = '' } = {}) {
         function renderGroupMessages(messages) {
             $('groupMessages').innerHTML = messages.length ? messages.map((message) => {
                 const mine = state.me && Number(message.sender_id) === Number(state.me.id);
-                return '<div class="bubble ' + (mine ? 'me' : '') + '">' +
+                const attachment = message.attachment
+                    ? (String(message.attachment.mime_type || '').startsWith('image/')
+                        ? '<img class="message-image" data-chat-image="true" tabindex="0" role="button" src="' + message.attachment.data_url + '" alt="' + escapeText(message.attachment.file_name) + '">'
+                        : String(message.attachment.mime_type || '').startsWith('video/')
+                            ? '<video controls preload="metadata" src="' + message.attachment.data_url + '"></video>'
+                            : '<a class="attachment-link" href="' + message.attachment.data_url + '" download="' + escapeText(message.attachment.file_name) + '">Datei: ' + escapeText(message.attachment.file_name) + '</a>')
+                    : '';
+                const canDelete = mine && (Date.now() - new Date(message.created_at).getTime()) <= 60000;
+                return '<div class="bubble ' + (mine ? 'me' : '') + '" data-group-message-id="' + message.id + '">' +
                     (!mine ? '<span class="group-sender">' + escapeText(message.display_name) + '</span>' : '') +
-                    escapeText(message.body) + '<span class="meta">' +
+                    attachment + escapeText(message.body || '') + '<span class="meta">' +
                     new Date(message.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) +
-                    '</span></div>';
+                    '</span><div class="message-actions">' +
+                    (canDelete ? '<button class="report-message" type="button" data-delete-group-message="' + message.id + '">Löschen</button>' : '') +
+                    (!mine ? '<button class="report-message" type="button" data-report-group-message="' + message.id + '">Melden</button>' : '') +
+                    '</div></div>';
             }).join('') : '<div class="news-empty">Schreibe die erste Nachricht in diese Gruppe.</div>';
             $('groupMessages').scrollTop = $('groupMessages').scrollHeight;
         }
@@ -1741,6 +1775,13 @@ function renderMessengerApp({ appVersion = '' } = {}) {
                 (data.group.owner_username ? ' (@' + data.group.owner_username + ')' : '');
             $('groupInfoCount').textContent = data.group.member_count + ' Mitglieder';
             $('groupPictureActions').classList.toggle('hidden', Number(data.group.owner_user_id) !== Number(state.me.id));
+            $('groupMediaSettings').classList.toggle('hidden', Number(data.group.owner_user_id) !== Number(state.me.id));
+            document.querySelectorAll('input[name="groupMediaPolicy"]').forEach((input) => { input.checked = input.value === (data.group.media_send_policy || 'all'); });
+            $('groupMediaMinDays').value = data.group.media_min_member_days || 0;
+            $('groupMediaAllowedPicker').innerHTML = data.members.map((member) =>
+                '<label class="group-picker-item"><input type="checkbox" name="groupMediaAllowed" value="' + member.user_id + '"' + (member.media_allowed ? ' checked' : '') + '>' +
+                '<span><strong>' + escapeText(member.display_name) + '</strong>' + (member.username ? '<small>@' + escapeText(member.username) + '</small>' : '') + '</span></label>'
+            ).join('');
             $('groupPictureError').textContent = '';
             $('groupMemberList').innerHTML = data.members.map((member) =>
                 '<div class="group-member"><div><strong>' + escapeText(member.display_name) + '</strong>' +
@@ -2381,9 +2422,11 @@ function renderMessengerApp({ appVersion = '' } = {}) {
                 const reportNotice = message.report_notice
                     ? '<div class="report-notice"><strong>Meldung geprüft</strong>Diese Meldung wurde abgewiesen.' + (message.report_notice.admin_note ? '<br>' + escapeText(message.report_notice.admin_note) : '') + '</div>'
                     : '';
+                const canDelete = mine && (Date.now() - new Date(message.created_at).getTime()) <= 60000;
                 return divider + '<div class="bubble ' + (mine ? 'me' : '') + '" data-message-id="' + message.id + '">' +
                     attachment + text + reportNotice + '<span class="meta">' + time + read + '</span>' +
                     '<div class="message-actions">' +
+                    (canDelete ? '<button class="report-message" type="button" data-delete-message="' + message.id + '">Löschen</button>' : '') +
                     '<button class="favorite-message' + (message.favorited_by_me ? ' active' : '') + '" type="button" data-favorite-message="' + message.id + '" data-favorite="' + Boolean(message.favorited_by_me) + '" aria-label="' + (message.favorited_by_me ? 'Aus Favoriten entfernen' : 'Zu Favoriten hinzufügen') + '">&#10084;</button>' +
                     (!mine ? '<button class="report-message" type="button" data-report-message="' + message.id + '">Melden</button>' : '') +
                     '</div>' +
@@ -2434,6 +2477,59 @@ function renderMessengerApp({ appVersion = '' } = {}) {
                 '<span class="attachment-name">Datei: ' + escapeText(state.pendingAttachment.name) + '</span></div>' +
                 '<button id="removeAttachment" type="button" aria-label="Datei entfernen">&times;</button>';
             applyGifPreference(preview);
+        }
+
+        function renderGroupPendingAttachment() {
+            const preview = $('groupAttachmentPreview');
+            if (!state.groupPendingAttachment) {
+                if (state.groupPendingAttachmentPreviewUrl) URL.revokeObjectURL(state.groupPendingAttachmentPreviewUrl);
+                state.groupPendingAttachmentPreviewUrl = null;
+                preview.classList.add('hidden');
+                preview.innerHTML = '';
+                return;
+            }
+            if (state.groupPendingAttachmentPreviewUrl) URL.revokeObjectURL(state.groupPendingAttachmentPreviewUrl);
+            state.groupPendingAttachmentPreviewUrl = String(state.groupPendingAttachment.type || '').startsWith('image/')
+                ? URL.createObjectURL(state.groupPendingAttachment)
+                : '';
+            preview.classList.remove('hidden');
+            preview.innerHTML = '<div class="attachment-info">' +
+                (state.groupPendingAttachmentPreviewUrl ? '<img class="attachment-image-preview" src="' + state.groupPendingAttachmentPreviewUrl + '" alt="Vorschau">' : '') +
+                '<span class="attachment-name">Datei: ' + escapeText(state.groupPendingAttachment.name) + '</span></div>' +
+                '<button id="removeGroupAttachment" type="button" aria-label="Datei entfernen">&times;</button>';
+        }
+
+        function chooseGroupAttachment(file) {
+            $('groupComposerError').textContent = '';
+            if (!file) return;
+            const allowed = ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'video/mp4', 'video/webm', 'video/quicktime'];
+            if (!allowed.includes(file.type)) {
+                $('groupComposerError').textContent = 'Nur Bilder und Videos sind in Gruppen erlaubt.';
+                $('groupAttachmentInput').value = '';
+                return;
+            }
+            if (file.size > 25 * 1024 * 1024) {
+                $('groupComposerError').textContent = 'Medien dürfen maximal 25 MB groß sein.';
+                $('groupAttachmentInput').value = '';
+                return;
+            }
+            state.groupPendingAttachment = file;
+            renderGroupPendingAttachment();
+        }
+
+        function readGroupAttachment() {
+            const file = state.groupPendingAttachment || $('groupAttachmentInput').files[0];
+            if (!file) return Promise.resolve(null);
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => resolve({
+                    fileName: file.name,
+                    mimeType: file.type,
+                    dataBase64: String(reader.result).slice(String(reader.result).indexOf(',') + 1),
+                });
+                reader.onerror = () => reject(new Error('Datei konnte nicht gelesen werden'));
+                reader.readAsDataURL(file);
+            });
         }
 
         function chooseAttachment(file) {
@@ -3331,6 +3427,25 @@ function renderMessengerApp({ appVersion = '' } = {}) {
                 $('groupPictureError').textContent = error.message;
             }
         });
+        $('saveGroupMediaSettings').addEventListener('click', async () => {
+            if (!state.activeGroup) return;
+            $('groupMediaSettingsError').textContent = '';
+            try {
+                const policy = document.querySelector('input[name="groupMediaPolicy"]:checked').value;
+                const allowedUserIds = Array.from(document.querySelectorAll('input[name="groupMediaAllowed"]:checked')).map((input) => input.value);
+                await api('/api/groups/' + state.activeGroup.id + '/media-settings', {
+                    method: 'PUT',
+                    body: JSON.stringify({
+                        policy,
+                        minMemberDays: $('groupMediaMinDays').value,
+                        allowedUserIds,
+                    }),
+                });
+                $('groupMediaSettingsError').textContent = 'Medienrechte wurden gespeichert.';
+            } catch (error) {
+                $('groupMediaSettingsError').textContent = error.message;
+            }
+        });
         $('inviteToGroup').addEventListener('click', () => {
             showGroupInvite().catch((error) => {
                 $('groupInviteError').textContent = error.message;
@@ -3385,11 +3500,15 @@ function renderMessengerApp({ appVersion = '' } = {}) {
             if (!state.activeGroup) return;
             $('groupComposerError').textContent = '';
             try {
+                const attachment = await readGroupAttachment();
                 await api('/api/groups/' + state.activeGroup.id + '/messages', {
                     method: 'POST',
-                    body: JSON.stringify({ body: $('groupMessageInput').value }),
+                    body: JSON.stringify({ body: $('groupMessageInput').value, attachment }),
                 });
                 $('groupMessageInput').value = '';
+                $('groupAttachmentInput').value = '';
+                state.groupPendingAttachment = null;
+                renderGroupPendingAttachment();
                 await refreshOpenGroup(state.activeGroup.id);
                 await loadGroups();
             } catch (error) {
@@ -3399,6 +3518,37 @@ function renderMessengerApp({ appVersion = '' } = {}) {
                     $('groupComposerError').textContent = error.message;
                 }
             }
+        });
+        $('groupAttachmentInput').addEventListener('change', (event) => chooseGroupAttachment(event.target.files[0]));
+        $('groupAttachmentPreview').addEventListener('click', (event) => {
+            if (!event.target.closest('#removeGroupAttachment')) return;
+            state.groupPendingAttachment = null;
+            $('groupAttachmentInput').value = '';
+            renderGroupPendingAttachment();
+        });
+        $('groupMessages').addEventListener('click', async (event) => {
+            const deleteButton = event.target.closest('[data-delete-group-message]');
+            if (deleteButton && state.activeGroup) {
+                try {
+                    await api('/api/groups/' + state.activeGroup.id + '/messages/' + deleteButton.dataset.deleteGroupMessage, { method: 'DELETE', body: '{}' });
+                    await refreshOpenGroup(state.activeGroup.id);
+                } catch (error) {
+                    $('groupComposerError').textContent = error.message;
+                }
+                return;
+            }
+            const reportButton = event.target.closest('[data-report-group-message]');
+            if (reportButton && state.activeGroup) {
+                state.reportKind = 'group';
+                state.reportMessageId = reportButton.dataset.reportGroupMessage;
+                $('reportCategory').value = '';
+                $('reportDetails').value = '';
+                $('reportError').textContent = '';
+                $('reportModal').classList.remove('hidden');
+                return;
+            }
+            const image = event.target.closest('[data-chat-image]');
+            if (image) openImageViewer(image);
         });
         $('discardBlockedGroupMessage').addEventListener('click', () => {
             $('groupMessageInput').value = '';
@@ -3429,6 +3579,20 @@ function renderMessengerApp({ appVersion = '' } = {}) {
             $('messageInput').focus();
         });
         $('messages').addEventListener('click', async (event) => {
+            const deleteButton = event.target.closest('[data-delete-message]');
+            if (deleteButton && state.activeConversation) {
+                try {
+                    await api('/api/conversations/' + state.activeConversation.id + '/messages/' + deleteButton.dataset.deleteMessage, {
+                        method: 'DELETE',
+                        body: '{}',
+                    });
+                    await refreshOpenMessages(state.activeConversation.id);
+                    await loadConversations();
+                } catch (error) {
+                    $('composerError').textContent = error.message;
+                }
+                return;
+            }
             const favoriteButton = event.target.closest('[data-favorite-message]');
             if (favoriteButton && state.activeConversation) {
                 try {
@@ -3444,6 +3608,7 @@ function renderMessengerApp({ appVersion = '' } = {}) {
             }
             const reportButton = event.target.closest('[data-report-message]');
             if (reportButton) {
+                state.reportKind = 'private';
                 state.reportMessageId = reportButton.dataset.reportMessage;
                 $('reportCategory').value = '';
                 $('reportDetails').value = '';
@@ -3463,14 +3628,19 @@ function renderMessengerApp({ appVersion = '' } = {}) {
         $('closeImageViewer').addEventListener('click', closeImageViewer);
         $('closeReport').addEventListener('click', () => {
             state.reportMessageId = null;
+            state.reportKind = 'private';
             $('reportModal').classList.add('hidden');
         });
         $('reportForm').addEventListener('submit', async (event) => {
             event.preventDefault();
-            if (!state.activeConversation || !state.reportMessageId) return;
+            if (!state.reportMessageId || (state.reportKind === 'group' ? !state.activeGroup : !state.activeConversation)) return;
             $('reportError').textContent = '';
             try {
-                await api('/api/conversations/' + state.activeConversation.id + '/messages/' + state.reportMessageId + '/report', {
+                const wasGroupReport = state.reportKind === 'group';
+                const reportUrl = state.reportKind === 'group'
+                    ? '/api/groups/' + state.activeGroup.id + '/messages/' + state.reportMessageId + '/report'
+                    : '/api/conversations/' + state.activeConversation.id + '/messages/' + state.reportMessageId + '/report';
+                await api(reportUrl, {
                     method: 'POST',
                     body: JSON.stringify({
                         category: $('reportCategory').value,
@@ -3478,8 +3648,10 @@ function renderMessengerApp({ appVersion = '' } = {}) {
                     }),
                 });
                 state.reportMessageId = null;
+                state.reportKind = 'private';
                 $('reportModal').classList.add('hidden');
-                $('composerError').textContent = 'Die Nachricht wurde zur Prüfung gemeldet.';
+                if (wasGroupReport) $('groupComposerError').textContent = 'Die Nachricht wurde zur Prüfung gemeldet.';
+                else $('composerError').textContent = 'Die Nachricht wurde zur Prüfung gemeldet.';
             } catch (error) {
                 $('reportError').textContent = error.message;
             }
