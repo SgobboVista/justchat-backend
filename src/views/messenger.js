@@ -137,29 +137,32 @@ function renderMessengerApp({ appVersion = '' } = {}) {
         .chat-profile { min-width: 0; display: flex; align-items: center; gap: 12px; background: transparent; padding: 0; text-align: left; }
         .chat-profile:hover .brand strong { color: var(--accent); }
         .typing { color: var(--accent); font-weight: 700; }
-        .messages { min-height: 0; padding: 18px; overflow-y: auto; -webkit-overflow-scrolling: touch; display: flex; flex-direction: column; gap: 8px; background: #e9f0f4; }
+        .messages { min-height: 0; padding: 22px 18px; overflow-y: auto; -webkit-overflow-scrolling: touch; display: flex; flex-direction: column; gap: 7px; background: radial-gradient(circle at top left, rgba(255,255,255,.72), transparent 32%), linear-gradient(180deg, #eaf2f6 0%, #dde8ee 100%); }
         .jump-latest { position: absolute; right: 22px; bottom: 94px; z-index: 6; width: 46px; height: 46px; border-radius: 50%; padding: 0; display: grid; place-items: center; color: #fff; background: var(--accent); box-shadow: 0 10px 24px rgba(15, 118, 110, .3); }
         .jump-latest:hover { background: var(--accent-strong); }
         .jump-latest svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }
-        .bubble { max-width: min(680px, 82%); border: 1px solid rgba(15, 23, 42, .08); border-radius: 8px; padding: 9px 11px; background: var(--message-other); align-self: flex-start; overflow-wrap: anywhere; }
-        .bubble.me { background: var(--message-me); align-self: flex-end; }
+        .bubble { position: relative; max-width: min(620px, 76%); border: 1px solid rgba(15, 23, 42, .06); border-radius: 18px 18px 18px 6px; padding: 9px 11px 7px; background: var(--message-other); align-self: flex-start; overflow-wrap: anywhere; box-shadow: 0 4px 14px rgba(15, 23, 42, .06); }
+        .bubble.me { border-color: rgba(15, 118, 110, .14); border-radius: 18px 18px 6px 18px; background: linear-gradient(135deg, #d9fbef 0%, #c9f3e7 100%); align-self: flex-end; }
         .bubble.search-highlight { outline: 3px solid rgba(15, 118, 110, .35); box-shadow: 0 0 0 7px rgba(15, 118, 110, .09); animation: searchPulse 1.4s ease-out 1; }
         @keyframes searchPulse { from { box-shadow: 0 0 0 14px rgba(15, 118, 110, .18); } to { box-shadow: 0 0 0 7px rgba(15, 118, 110, .09); } }
         .date-divider { width: 100%; display: flex; align-items: center; gap: 12px; margin: 12px 0 6px; color: var(--muted); font-size: 12px; font-weight: 700; }
         .date-divider::before, .date-divider::after { content: ''; flex: 1; height: 1px; background: rgba(100, 116, 139, .27); }
         .date-divider span { flex: none; padding: 4px 10px; border-radius: 999px; background: rgba(255, 255, 255, .72); }
-        .bubble img { display: block; max-width: min(420px, 100%); border-radius: 8px; margin-bottom: 8px; }
-        .bubble video { display: block; width: min(420px, 100%); max-height: 300px; border-radius: 8px; margin-bottom: 8px; background: #000; }
+        .message-text { display: block; color: #071125; font-size: 15.5px; line-height: 1.38; white-space: pre-wrap; }
+        .message-meta-row { display: flex; align-items: center; justify-content: flex-end; gap: 8px; min-height: 22px; margin-top: 3px; }
+        .message-status { color: var(--muted); font-size: 11px; white-space: nowrap; }
+        .bubble img { display: block; max-width: min(420px, 100%); border-radius: 14px; margin-bottom: 8px; box-shadow: inset 0 0 0 1px rgba(15,23,42,.06); }
+        .bubble video { display: block; width: min(420px, 100%); max-height: 300px; border-radius: 14px; margin-bottom: 8px; background: #000; }
         .message-image { cursor: zoom-in; }
-        .message-actions { display: flex; justify-content: flex-end; margin-top: 6px; }
-        .report-message { padding: 3px 7px; border-radius: 6px; color: var(--muted); background: transparent; font-size: 11px; font-weight: 700; }
+        .message-actions { display: inline-flex; align-items: center; justify-content: flex-end; gap: 3px; }
+        .report-message { padding: 4px 7px; border-radius: 999px; color: #52627a; background: rgba(255, 255, 255, .45); font-size: 11px; font-weight: 700; }
         .report-message:hover { color: var(--danger); background: #fff3f2; }
         .report-notice { margin-top: 8px; padding: 8px 9px; border-radius: 8px; border: 1px solid #dbe6f6; background: #f6f8fc; color: var(--muted); font-size: 12px; line-height: 1.4; }
         .report-notice strong { display: block; color: var(--text); margin-bottom: 2px; }
-        .favorite-message { padding: 3px 8px; border-radius: 999px; color: #94a3b8; background: transparent; font-size: 17px; line-height: 1; }
-        .favorite-message:hover, .favorite-message.active { color: #e11d48; background: #fff1f4; }
+        .favorite-message { width: 28px; height: 28px; display: inline-grid; place-items: center; padding: 0; border-radius: 999px; color: #94a3b8; background: rgba(255, 255, 255, .45); font-size: 15px; line-height: 1; }
+        .favorite-message:hover, .favorite-message.active { color: #e11d48; background: #fff1f4; transform: translateY(-1px); }
         .attachment-link { display: flex; align-items: center; gap: 8px; color: var(--accent); font-weight: 700; text-decoration: none; padding: 9px 10px; margin-bottom: 6px; border-radius: 8px; background: rgba(15, 118, 110, .08); }
-        .meta { display: block; color: var(--muted); font-size: 11px; margin-top: 5px; text-align: right; }
+        .meta { color: var(--muted); font-size: 11px; text-align: right; }
         .composer { width: 100%; min-width: 0; background: var(--panel); border-top: 1px solid var(--line); padding: 12px; display: grid; grid-template-columns: 48px minmax(0, 1fr) 48px; gap: 10px; align-items: end; }
         .composer textarea { width: 100%; min-width: 0; min-height: 48px; max-height: 120px; resize: vertical; border: 1px solid var(--line); border-radius: 24px; padding: 12px 18px; outline: none; }
         .composer textarea:focus { border-color: var(--accent); }
@@ -257,8 +260,8 @@ function renderMessengerApp({ appVersion = '' } = {}) {
         .group-room-title strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 18px; }
         .group-room-invite { margin-left: auto; }
         .group-invite { grid-row: 2; margin: 12px; }
-        .group-messages { grid-row: 3; min-height: 0; padding: 15px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; background: #e9f0f4; }
-        .group-sender { display: block; color: var(--accent); font-size: 12px; font-weight: 700; margin-bottom: 4px; }
+        .group-messages { grid-row: 3; min-height: 0; padding: 22px 18px; overflow-y: auto; display: flex; flex-direction: column; gap: 7px; background: radial-gradient(circle at top left, rgba(255,255,255,.72), transparent 32%), linear-gradient(180deg, #eaf2f6 0%, #dde8ee 100%); }
+        .group-sender { display: block; color: var(--accent); font-size: 12px; font-weight: 800; margin-bottom: 4px; }
         .group-composer { grid-row: 4; display: grid; grid-template-columns: 48px minmax(0, 1fr) 48px; align-items: end; gap: 9px; padding: 11px; border-top: 1px solid var(--line); }
         .group-composer textarea { width: 100%; min-height: 48px; max-height: 110px; resize: vertical; border: 1px solid var(--line); border-radius: 24px; padding: 13px 17px; }
         .group-composer .attachment-preview { grid-column: 1 / -1; }
@@ -409,11 +412,15 @@ function renderMessengerApp({ appVersion = '' } = {}) {
             .sidebar, .chat { height: 100%; }
             .messages {
                 min-height: 0;
-                padding: 12px 10px;
+                padding: 14px 10px;
                 overflow-y: auto;
                 -webkit-overflow-scrolling: touch;
                 overscroll-behavior-y: contain;
             }
+            .bubble { max-width: 86%; border-radius: 16px 16px 16px 5px; padding: 8px 10px 6px; }
+            .bubble.me { border-radius: 16px 16px 5px 16px; }
+            .message-text { font-size: 15px; line-height: 1.35; }
+            .message-meta-row { min-height: 21px; }
             .jump-latest { right: 16px; bottom: calc(86px + env(safe-area-inset-bottom)); }
             .composer {
                 grid-template-columns: 48px minmax(0, 1fr) 48px;
@@ -441,7 +448,7 @@ function renderMessengerApp({ appVersion = '' } = {}) {
                 background: var(--panel);
                 box-shadow: 0 1px 3px rgba(15,23,42,.08);
             }
-            .feature-view.group-room-open .group-messages { padding: 12px 10px; }
+            .feature-view.group-room-open .group-messages { padding: 14px 10px; }
             .feature-view.group-room-open .group-composer { padding: 10px 10px calc(10px + env(safe-area-inset-bottom)); gap: 8px; background: #f0f2f5; }
             .feature-view.group-room-open .group-composer textarea { border: 0; min-height: 48px; resize: none; }
             .feature-card { margin: clamp(28px, 12vh, 90px) auto 0; padding: 30px 22px; }
@@ -1721,14 +1728,14 @@ function renderMessengerApp({ appVersion = '' } = {}) {
                             : '<a class="attachment-link" href="' + message.attachment.data_url + '" download="' + escapeText(message.attachment.file_name) + '">Datei: ' + escapeText(message.attachment.file_name) + '</a>')
                     : '';
                 const canDelete = mine && (Date.now() - new Date(message.created_at).getTime()) <= 60000;
+                const time = new Date(message.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
                 return '<div class="bubble ' + (mine ? 'me' : '') + '" data-group-message-id="' + message.id + '">' +
                     (!mine ? '<span class="group-sender">' + escapeText(message.display_name) + '</span>' : '') +
-                    attachment + escapeText(message.body || '') + '<span class="meta">' +
-                    new Date(message.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) +
-                    '</span><div class="message-actions">' +
+                    attachment + (message.body ? '<span class="message-text">' + escapeText(message.body) + '</span>' : '') +
+                    '<div class="message-meta-row"><span class="message-status">' + escapeText(time) + '</span><div class="message-actions">' +
                     (canDelete ? '<button class="report-message" type="button" data-delete-group-message="' + message.id + '">Löschen</button>' : '') +
                     (!mine ? '<button class="report-message" type="button" data-report-group-message="' + message.id + '">Melden</button>' : '') +
-                    '</div></div>';
+                    '</div></div></div>';
             }).join('') : '<div class="news-empty">Schreibe die erste Nachricht in diese Gruppe.</div>';
             $('groupMessages').scrollTop = $('groupMessages').scrollHeight;
         }
@@ -2422,18 +2429,18 @@ function renderMessengerApp({ appVersion = '' } = {}) {
                         ? '<img class="message-image"' + (message.attachment.mime_type === 'image/gif' ? ' data-is-gif="true"' : '') + ' data-chat-image="true" tabindex="0" role="button" src="' + message.attachment.data_url + '" alt="' + escapeText(message.attachment.file_name) + '" title="Bild vergrößern">'
                         : '<a class="attachment-link" href="' + message.attachment.data_url + '" download="' + escapeText(message.attachment.file_name) + '">Datei: ' + escapeText(message.attachment.file_name) + '</a>')
                     : '';
-                const text = message.body ? escapeText(message.body) : '';
+                const text = message.body ? '<span class="message-text">' + escapeText(message.body) + '</span>' : '';
                 const reportNotice = message.report_notice
                     ? '<div class="report-notice"><strong>Meldung geprüft</strong>Diese Meldung wurde abgewiesen.' + (message.report_notice.admin_note ? '<br>' + escapeText(message.report_notice.admin_note) : '') + '</div>'
                     : '';
                 const canDelete = mine && (Date.now() - new Date(message.created_at).getTime()) <= 60000;
                 return divider + '<div class="bubble ' + (mine ? 'me' : '') + '" data-message-id="' + message.id + '">' +
-                    attachment + text + reportNotice + '<span class="meta">' + time + read + '</span>' +
-                    '<div class="message-actions">' +
+                    attachment + text + reportNotice +
+                    '<div class="message-meta-row"><span class="message-status">' + escapeText(time + read) + '</span><div class="message-actions">' +
                     (canDelete ? '<button class="report-message" type="button" data-delete-message="' + message.id + '">Löschen</button>' : '') +
                     '<button class="favorite-message' + (message.favorited_by_me ? ' active' : '') + '" type="button" data-favorite-message="' + message.id + '" data-favorite="' + Boolean(message.favorited_by_me) + '" aria-label="' + (message.favorited_by_me ? 'Aus Favoriten entfernen' : 'Zu Favoriten hinzufügen') + '">&#10084;</button>' +
                     (!mine ? '<button class="report-message" type="button" data-report-message="' + message.id + '">Melden</button>' : '') +
-                    '</div>' +
+                    '</div></div>' +
                     '</div>';
             }).join('');
             applyGifPreference($('messages'));
