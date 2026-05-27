@@ -175,7 +175,7 @@ function renderMessengerApp({ appVersion = '' } = {}) {
         .attachment-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .attachment-preview button { background: transparent; color: var(--danger); font-weight: 700; padding: 3px 6px; }
         .send-button { width: 48px; height: 48px; border-radius: 50%; display: grid; place-items: center; padding: 0; overflow: hidden; }
-        .send-button svg { width: 23px; height: 23px; fill: none; stroke: currentColor; stroke-width: 2.3; stroke-linecap: round; stroke-linejoin: round; transform: translateX(1px); }
+        .send-button svg { display: block; width: 23px; height: 23px; fill: none; stroke: currentColor; stroke-width: 2.3; stroke-linecap: round; stroke-linejoin: round; transform: none; }
         .composer-error { grid-column: 1 / -1; margin: 0; min-height: 0; }
         .sensitive-warning { grid-column: 1 / -1; display: grid; gap: 10px; border: 1px solid #f6cd8b; border-radius: 12px; padding: 12px; background: #fff8eb; color: #7a4c04; }
         .sensitive-warning strong { display: block; color: #693d00; }
@@ -483,7 +483,7 @@ function renderMessengerApp({ appVersion = '' } = {}) {
             </div>
             <div class="field register-only hidden">
                 <label for="birthDate">Geburtsdatum (JustChat ist ab 16 Jahren)</label>
-                <input id="birthDate" type="date" autocomplete="bday">
+                <input id="birthDate" type="text" inputmode="numeric" autocomplete="bday" placeholder="TT.MM.JJJJ" maxlength="10" pattern="[0-9]{2}\\.[0-9]{2}\\.[0-9]{4}">
             </div>
             <div class="field register-only hidden">
                 <label>Profilbild</label>
@@ -1122,7 +1122,7 @@ function renderMessengerApp({ appVersion = '' } = {}) {
             <p>Diese Angabe wird für die Altersprüfung benötigt und ist nicht für andere Nutzer sichtbar.</p>
             <div class="field">
                 <label for="requiredBirthDate">Dein Geburtsdatum</label>
-                <input id="requiredBirthDate" type="date" autocomplete="bday" required>
+                <input id="requiredBirthDate" type="text" inputmode="numeric" autocomplete="bday" placeholder="TT.MM.JJJJ" maxlength="10" pattern="[0-9]{2}\\.[0-9]{2}\\.[0-9]{4}" required>
             </div>
             <div id="birthDateGateError" class="error" role="alert"></div>
             <button class="primary" type="submit">Geburtsdatum bestätigen</button>
@@ -1285,9 +1285,31 @@ function renderMessengerApp({ appVersion = '' } = {}) {
             return cutoff.getFullYear() + '-' + month + '-' + day;
         }
 
+        function formatBirthDateInput(value) {
+            const digits = String(value || '').replace(/\D/g, '').slice(0, 8);
+            const day = digits.slice(0, 2);
+            const month = digits.slice(2, 4);
+            const year = digits.slice(4, 8);
+            return [day, month, year].filter(Boolean).join('.');
+        }
+
+        function birthDateForApi(value) {
+            const digits = String(value || '').replace(/\D/g, '');
+            if (digits.length !== 8) return '';
+            const day = digits.slice(0, 2);
+            const month = digits.slice(2, 4);
+            const year = digits.slice(4, 8);
+            return year + '-' + month + '-' + day;
+        }
+
         const maximumBirthDate = maximumBirthDateForMinimumAge();
         $('birthDate').max = maximumBirthDate;
         $('requiredBirthDate').max = maximumBirthDate;
+        ['birthDate', 'requiredBirthDate'].forEach((inputId) => {
+            $(inputId).addEventListener('input', (event) => {
+                event.target.value = formatBirthDateInput(event.target.value);
+            });
+        });
 
         function updateBirthDateGate() {
             const required = Boolean(state.me && !state.me.banned_at && !state.me.birth_date);
@@ -2948,7 +2970,7 @@ function renderMessengerApp({ appVersion = '' } = {}) {
             try {
                 const data = await api('/api/me/birth-date', {
                     method: 'PUT',
-                    body: JSON.stringify({ birthDate: $('requiredBirthDate').value }),
+                    body: JSON.stringify({ birthDate: birthDateForApi($('requiredBirthDate').value) }),
                 });
                 state.me = data.user;
                 updateBirthDateGate();
@@ -2975,7 +2997,7 @@ function renderMessengerApp({ appVersion = '' } = {}) {
                 passwordRepeat: $('passwordRepeat').value,
                 displayName: $('displayName').value,
                 email: $('email').value,
-                birthDate: $('birthDate').value,
+                birthDate: birthDateForApi($('birthDate').value),
                 avatarAssetId: state.selectedAvatarId,
                 twoFactorEnabled: $('register2fa').checked,
             };
