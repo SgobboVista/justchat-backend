@@ -234,6 +234,11 @@ function renderMessengerApp({ appVersion = '' } = {}) {
         .group-row-head strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .group-room { width: min(780px, 100%); min-height: min(680px, calc(100vh - 118px)); margin: 0 auto; display: grid; grid-template-rows: auto auto minmax(280px, 1fr) auto; overflow: hidden; border: 1px solid var(--line); border-radius: 14px; background: #fff; }
         .group-room-head { padding: 12px 14px; border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 10px; }
+        .group-info-button { min-width: 0; display: flex; align-items: center; gap: 11px; background: transparent; padding: 0; text-align: left; }
+        .group-info-button:hover .group-room-title strong { color: var(--accent); }
+        .group-avatar { width: 46px; height: 46px; flex: none; border-radius: 50%; object-fit: cover; display: grid; place-items: center; color: #fff; background: var(--accent); font-size: 19px; font-weight: 800; }
+        .group-avatar img { width: 100%; height: 100%; border-radius: inherit; object-fit: cover; }
+        .group-avatar.large { width: 92px; height: 92px; font-size: 34px; }
         .group-room-title { display: grid; gap: 3px; min-width: 0; }
         .group-room-title strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 18px; }
         .group-room-invite { margin-left: auto; }
@@ -247,6 +252,16 @@ function renderMessengerApp({ appVersion = '' } = {}) {
         .feature-view.group-room-open .group-room-head { min-height: 73px; padding: 14px 18px; background: var(--panel); }
         .feature-view.group-room-open .group-messages { padding: 18px; }
         .feature-view.group-room-open .group-composer { padding: 12px; gap: 10px; background: var(--panel); }
+        .group-info-card { display: grid; gap: 15px; }
+        .group-info-hero { display: grid; justify-items: center; gap: 8px; padding: 10px 0 14px; border-bottom: 1px solid var(--line); text-align: center; }
+        .group-info-hero h3 { margin: 0; font-size: 22px; }
+        .group-info-owner { margin: 0; color: var(--muted); font-size: 14px; }
+        .group-picture-actions { display: grid; gap: 9px; padding: 13px; border: 1px solid var(--line); border-radius: 10px; background: #f7fbfa; }
+        .group-picture-actions input { width: 100%; }
+        .group-members { display: grid; gap: 8px; }
+        .group-member { display: flex; justify-content: space-between; align-items: center; gap: 12px; border: 1px solid var(--line); border-radius: 9px; padding: 10px 12px; background: #fff; }
+        .group-member strong, .group-member span { display: block; }
+        .group-role { color: var(--accent); font-size: 12px; font-weight: 700; }
         .tab-notice { width: 10px; height: 10px; border-radius: 50%; background: #22c55e; position: absolute; top: 7px; left: calc(50% + 15px); box-shadow: 0 0 0 2px #fff; }
         .bottom-tabs {
             position: fixed;
@@ -601,10 +616,13 @@ function renderMessengerApp({ appVersion = '' } = {}) {
                 <div id="groupRoom" class="group-room hidden">
                     <div class="group-room-head">
                         <button id="backToGroups" class="ghost close-button" type="button" aria-label="Zurück zu Gruppen">&lsaquo;</button>
-                        <div class="group-room-title">
-                            <strong id="groupRoomName"></strong>
-                            <span id="groupRoomMembers" class="muted small"></span>
-                        </div>
+                        <button id="groupInfoButton" class="group-info-button" type="button" aria-label="Gruppeninfo anzeigen">
+                            <div id="groupRoomImage" class="group-avatar">G</div>
+                            <div class="group-room-title">
+                                <strong id="groupRoomName"></strong>
+                                <span id="groupRoomMembers" class="muted small"></span>
+                            </div>
+                        </button>
                         <button id="inviteToGroup" class="ghost group-room-invite" type="button">Einladen</button>
                     </div>
                     <form id="groupInviteForm" class="group-create group-invite hidden">
@@ -697,7 +715,7 @@ function renderMessengerApp({ appVersion = '' } = {}) {
                             <ul class="feature-list">
                                 <li><strong>Private Chats</strong><span>Nachrichten, Dateianhänge, Bilder und Lesestatus mit deinen Kontakten.</span></li>
                                 <li><strong>Kontakte und Privatsphäre</strong><span>Kontaktanfragen, Profilansicht, Blockieren sowie Sichtbarkeitseinstellungen.</span></li>
-                                <li><strong>Gruppen</strong><span>Gruppen erstellen, Kontakte einladen, Einladungen annehmen oder ablehnen und Gruppenchats führen.</span></li>
+                                <li><strong>Gruppen</strong><span>Gruppen erstellen, Kontakte einladen oder Einladungen beantworten, Gruppenchats führen sowie Gruppeninfo und Gruppenbild verwalten.</span></li>
                                 <li><strong>News von SgobboVista</strong><span>Updates an @alle mit Bildern oder Videos und optionalen Push-Benachrichtigungen.</span></li>
                                 <li><strong>Suche</strong><span>Kontakte und Nachrichten schnell innerhalb der App finden.</span></li>
                                 <li><strong>Profilanpassung</strong><span>Anzeigename, Info, Profilbild, Benachrichtigungston und GIF-Wiedergabe verwalten.</span></li>
@@ -1006,6 +1024,31 @@ function renderMessengerApp({ appVersion = '' } = {}) {
             <div id="addError" class="error"></div>
             <button class="primary" type="submit">Anfrage senden</button>
         </form>
+    </div>
+    <div id="groupInfoModal" class="modal hidden" role="dialog" aria-modal="true" aria-label="Gruppeninfo">
+        <div class="modal-card group-info-card">
+            <div class="modal-head">
+                <h2>Gruppeninfo</h2>
+                <button id="closeGroupInfo" class="ghost close-button" type="button" aria-label="Gruppeninfo schließen">&times;</button>
+            </div>
+            <div class="group-info-hero">
+                <div id="groupInfoImage" class="group-avatar large">G</div>
+                <h3 id="groupInfoName"></h3>
+                <p id="groupInfoOwner" class="group-info-owner"></p>
+                <p id="groupInfoCount" class="muted small"></p>
+            </div>
+            <div id="groupPictureActions" class="group-picture-actions hidden">
+                <strong>Gruppenbild ändern</strong>
+                <input id="groupPictureFile" type="file" accept="image/png,image/jpeg,image/webp,image/gif">
+                <button id="uploadGroupPicture" class="primary" type="button">Bild hochladen</button>
+                <p class="muted small">JPEG, PNG, WebP oder GIF, maximal 20 MB.</p>
+                <p id="groupPictureError" class="error"></p>
+            </div>
+            <div>
+                <strong>Mitglieder</strong>
+                <div id="groupMemberList" class="group-members" style="margin-top: 10px;"></div>
+            </div>
+        </div>
     </div>
     <div id="imageViewer" class="image-viewer hidden" role="dialog" aria-modal="true" aria-label="Bildansicht">
         <button id="closeImageViewer" class="image-viewer-close" type="button" aria-label="Bild schließen" title="Schließen">&#10005;</button>
@@ -1335,6 +1378,7 @@ function renderMessengerApp({ appVersion = '' } = {}) {
             $('chatPane').classList.add('hidden');
             $('accountPanel').classList.add('hidden');
             $('contactPanel').classList.add('hidden');
+            $('groupInfoModal').classList.add('hidden');
             $('featureView').classList.remove('group-room-open');
             $('groupsView').classList.add('hidden');
             $('groupRoom').classList.add('hidden');
@@ -1430,6 +1474,62 @@ function renderMessengerApp({ appVersion = '' } = {}) {
             $('groupMessages').scrollTop = $('groupMessages').scrollHeight;
         }
 
+        function renderGroupImage(slotId, group) {
+            const slot = $(slotId);
+            const initial = String(group && group.name || 'G').trim().slice(0, 1).toUpperCase() || 'G';
+            if (!group || !group.image_url) {
+                slot.textContent = initial;
+                return;
+            }
+            const updated = group.image_updated_at ? '&v=' + encodeURIComponent(new Date(group.image_updated_at).getTime()) : '';
+            slot.innerHTML = '<img src="' + group.image_url + '?token=' + encodeURIComponent(state.token) + updated + '" alt="">';
+        }
+
+        function renderGroupHeader(group) {
+            $('groupRoomName').textContent = group.name;
+            $('groupRoomMembers').textContent = group.member_count + ' Mitglieder';
+            renderGroupImage('groupRoomImage', group);
+        }
+
+        function readGroupPicture(file) {
+            if (!file) return Promise.reject(new Error('Bitte wähle ein Gruppenbild aus.'));
+            if (!['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(file.type)) {
+                return Promise.reject(new Error('Nur JPEG, PNG, WebP und GIF sind erlaubt.'));
+            }
+            if (file.size > 20 * 1024 * 1024) return Promise.reject(new Error('Bild muss kleiner als 20 MB sein.'));
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => resolve({
+                    fileName: file.name,
+                    mimeType: file.type,
+                    dataBase64: String(reader.result).slice(String(reader.result).indexOf(',') + 1),
+                });
+                reader.onerror = () => reject(new Error('Bild konnte nicht gelesen werden.'));
+                reader.readAsDataURL(file);
+            });
+        }
+
+        async function openGroupInfo() {
+            if (!state.activeGroup) return;
+            const data = await api('/api/groups/' + state.activeGroup.id + '/info');
+            state.activeGroup = Object.assign({}, state.activeGroup, data.group);
+            renderGroupHeader(state.activeGroup);
+            renderGroupImage('groupInfoImage', data.group);
+            $('groupInfoName').textContent = data.group.name;
+            $('groupInfoOwner').textContent = 'Besitzer: ' + data.group.owner_display_name +
+                (data.group.owner_username ? ' (@' + data.group.owner_username + ')' : '');
+            $('groupInfoCount').textContent = data.group.member_count + ' Mitglieder';
+            $('groupPictureActions').classList.toggle('hidden', Number(data.group.owner_user_id) !== Number(state.me.id));
+            $('groupPictureError').textContent = '';
+            $('groupMemberList').innerHTML = data.members.map((member) =>
+                '<div class="group-member"><div><strong>' + escapeText(member.display_name) + '</strong>' +
+                (member.username ? '<span class="muted small">@' + escapeText(member.username) + '</span>' : '') +
+                (member.role === 'owner' ? '<span class="group-role">Besitzer</span>' : '') +
+                '</div><span class="muted small">Dabei seit<br>' + escapeText(membershipText(member.joined_at)) + '</span></div>'
+            ).join('');
+            $('groupInfoModal').classList.remove('hidden');
+        }
+
         async function openGroup(groupId) {
             const data = await api('/api/groups/' + groupId + '/messages');
             if (!state.activeGroup || Number(state.activeGroup.id) !== Number(data.group.id)) {
@@ -1441,8 +1541,7 @@ function renderMessengerApp({ appVersion = '' } = {}) {
             $('groupRoom').classList.remove('hidden');
             $('groupInviteForm').classList.add('hidden');
             $('inviteToGroup').classList.toggle('hidden', Number(data.group.owner_user_id) !== Number(state.me.id));
-            $('groupRoomName').textContent = data.group.name;
-            $('groupRoomMembers').textContent = data.group.member_count + ' Mitglieder';
+            renderGroupHeader(data.group);
             $('groupComposerError').textContent = '';
             renderGroupMessages(data.messages || []);
         }
@@ -1451,7 +1550,7 @@ function renderMessengerApp({ appVersion = '' } = {}) {
             if (!state.activeGroup || Number(state.activeGroup.id) !== Number(groupId)) return;
             const data = await api('/api/groups/' + groupId + '/messages');
             state.activeGroup = data.group;
-            $('groupRoomMembers').textContent = data.group.member_count + ' Mitglieder';
+            renderGroupHeader(data.group);
             renderGroupMessages(data.messages || []);
         }
 
@@ -2209,6 +2308,7 @@ function renderMessengerApp({ appVersion = '' } = {}) {
             renderPendingAttachment();
             $('accountPanel').classList.add('hidden');
             $('contactPanel').classList.add('hidden');
+            $('groupInfoModal').classList.add('hidden');
             $('featureView').classList.remove('group-room-open');
             $('featureView').classList.add('hidden');
             $('chatPane').classList.add('hidden');
@@ -2245,6 +2345,7 @@ function renderMessengerApp({ appVersion = '' } = {}) {
             selectMainTab('chats');
             $('accountPanel').classList.add('hidden');
             $('contactPanel').classList.add('hidden');
+            $('groupInfoModal').classList.add('hidden');
             $('featureView').classList.remove('group-room-open');
             $('featureView').classList.add('hidden');
             $('chatEmpty').classList.add('hidden');
@@ -2326,8 +2427,13 @@ function renderMessengerApp({ appVersion = '' } = {}) {
             state.eventSource.addEventListener('news:deleted', async () => {
                 if (state.mainTab === 'news') await loadNews();
             });
-            state.eventSource.addEventListener('group:changed', async () => {
+            state.eventSource.addEventListener('group:changed', async (event) => {
+                const payload = JSON.parse(event.data);
                 await loadGroups();
+                if (state.activeGroup && Number(state.activeGroup.id) === Number(payload.groupId)) {
+                    await refreshOpenGroup(payload.groupId);
+                    if (!$('groupInfoModal').classList.contains('hidden')) await openGroupInfo();
+                }
             });
             state.eventSource.addEventListener('group:message', async (event) => {
                 const payload = JSON.parse(event.data);
@@ -2804,10 +2910,39 @@ function renderMessengerApp({ appVersion = '' } = {}) {
         });
         $('backToGroups').addEventListener('click', () => {
             state.activeGroup = null;
+            $('groupInfoModal').classList.add('hidden');
             $('featureView').classList.remove('group-room-open');
             $('groupRoom').classList.add('hidden');
             $('groupsView').classList.remove('hidden');
             loadGroups().catch(() => {});
+        });
+        $('groupInfoButton').addEventListener('click', () => {
+            openGroupInfo().catch((error) => {
+                $('groupComposerError').textContent = error.message;
+            });
+        });
+        $('closeGroupInfo').addEventListener('click', () => {
+            $('groupInfoModal').classList.add('hidden');
+        });
+        $('groupInfoModal').addEventListener('click', (event) => {
+            if (event.target === $('groupInfoModal')) $('groupInfoModal').classList.add('hidden');
+        });
+        $('uploadGroupPicture').addEventListener('click', async () => {
+            if (!state.activeGroup) return;
+            $('groupPictureError').textContent = '';
+            try {
+                const attachment = await readGroupPicture($('groupPictureFile').files[0]);
+                await api('/api/groups/' + state.activeGroup.id + '/image', {
+                    method: 'PUT',
+                    body: JSON.stringify({ attachment }),
+                });
+                $('groupPictureFile').value = '';
+                await refreshOpenGroup(state.activeGroup.id);
+                await openGroupInfo();
+                await loadGroups();
+            } catch (error) {
+                $('groupPictureError').textContent = error.message;
+            }
         });
         $('inviteToGroup').addEventListener('click', () => {
             showGroupInvite().catch((error) => {
@@ -2907,6 +3042,7 @@ function renderMessengerApp({ appVersion = '' } = {}) {
         });
         document.addEventListener('keydown', (event) => {
             if (event.key === 'Escape' && !$('imageViewer').classList.contains('hidden')) closeImageViewer();
+            if (event.key === 'Escape' && !$('groupInfoModal').classList.contains('hidden')) $('groupInfoModal').classList.add('hidden');
         });
         $('attachmentPreview').addEventListener('click', (event) => {
             if (!event.target.closest('#removeAttachment')) return;

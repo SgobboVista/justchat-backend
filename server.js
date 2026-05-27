@@ -722,6 +722,11 @@ async function initDatabase() {
             id bigserial primary key,
             name text not null,
             owner_user_id bigint not null references users(id) on delete cascade,
+            image_file_name text,
+            image_mime_type text,
+            image_size_bytes integer,
+            image_data bytea,
+            image_updated_at timestamptz,
             created_at timestamptz not null default now()
         );
 
@@ -846,6 +851,11 @@ async function initDatabase() {
         alter table conversations add column if not exists hidden_for_user_two boolean not null default false;
         alter table conversations add column if not exists deleted_for_user_one_at timestamptz;
         alter table conversations add column if not exists deleted_for_user_two_at timestamptz;
+        alter table chat_groups add column if not exists image_file_name text;
+        alter table chat_groups add column if not exists image_mime_type text;
+        alter table chat_groups add column if not exists image_size_bytes integer;
+        alter table chat_groups add column if not exists image_data bytea;
+        alter table chat_groups add column if not exists image_updated_at timestamptz;
         alter table news_posts add column if not exists image_file_name text;
         alter table news_posts add column if not exists image_mime_type text;
         alter table news_posts add column if not exists image_size_bytes integer;

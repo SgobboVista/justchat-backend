@@ -558,7 +558,8 @@ app.get('/api/groups/contacts', requireAuth, async (req, res, next) => {
 app.get('/api/groups', requireAuth, async (req, res, next) => {
     try {
         const result = await query(
-            `select g.id, g.name, g.owner_user_id, g.created_at,
+            `select g.id, g.name, g.owner_user_id, g.created_at, g.image_updated_at,
+                case when g.image_data is null then null else '/api/groups/' || g.id || '/image' end as image_url,
                 count(members.user_id)::int as member_count,
                 latest.body as last_message, latest.created_at as last_message_at
              from group_members mine
@@ -659,7 +660,8 @@ app.get('/api/groups/:id/messages', requireAuth, async (req, res, next) => {
         const groupId = parseId(req.params.id);
         if (!groupId) return res.status(400).json({ error: 'Ungültige Gruppe' });
         const groupResult = await query(
-            `select g.id, g.name, g.owner_user_id, g.created_at,
+            `select g.id, g.name, g.owner_user_id, g.created_at, g.image_updated_at,
+                case when g.image_data is null then null else '/api/groups/' || g.id || '/image' end as image_url,
                 count(all_members.user_id)::int as member_count
              from chat_groups g
              join group_members mine on mine.group_id = g.id and mine.user_id = $2
@@ -685,6 +687,99 @@ app.get('/api/groups/:id/messages', requireAuth, async (req, res, next) => {
             [groupId, req.user.id],
         );
         return res.json({ group: groupResult.rows[0], messages: messages.rows.reverse() });
+    } catch (error) {
+        return next(error);
+    }
+});
+
+app.get('/api/groups/:id/image', requireAuth, async (req, res, next) => {
+    try {
+        const groupId = parseId(req.params.id);
+        const result = await query(
+            `select g.image_mime_type, g.image_data
+             from chat_groups g
+             join group_members member on member.group_id = g.id and member.user_id = $2
+             where g.id = $1 and g.image_data is not null`,
+            [groupId, req.user.id],
+        );
+        if (!result.rows[0]) return res.status(404).send('Gruppenbild nicht gefunden');
+        res.type(result.rows[0].image_mime_type);
+        res.set('Cache-Control', 'private, max-age=3600');
+        return res.send(result.rows[0].image_data);
+    } catch (error) {
+        return next(error);
+    }
+});
+
+app.get('/api/groups/:id/info', requireAuth, async (req, res, next) => {
+    try {
+        const groupId = parseId(req.params.id);
+        if (!groupId) return res.status(400).json({ error: 'Ungültige Gruppe' });
+        const groupResult = await query(
+            `select g.id, g.name, g.owner_user_id, g.created_at, g.image_updated_at,
+                case when g.image_data is null then null else '/api/groups/' || g.id || '/image' end as image_url,
+                count(all_members.user_id)::int as member_count,
+                case when exists (
+                    select 1 from user_blocks b
+                    where (b.blocker_id = $2 and b.blocked_user_id = owner.id)
+                       or (b.blocker_id = owner.id and b.blocked_user_id = $2)
+                ) then 'Geblockt' else owner.display_name end as owner_display_name,
+                case when exists (
+                    select 1 from user_blocks b
+                    where (b.blocker_id = $2 and b.blocked_user_id = owner.id)
+                       or (b.blocker_id = owner.id and b.blocked_user_id = $2)
+                ) then null else owner.username end as owner_username
+             from chat_groups g
+             join group_members mine on mine.group_id = g.id and mine.user_id = $2
+             join group_members all_members on all_members.group_id = g.id
+             join users owner on owner.id = g.owner_user_id
+             where g.id = $1
+             group by g.id, owner.id`,
+            [groupId, req.user.id],
+        );
+        if (!groupResult.rows[0]) return res.status(404).json({ error: 'Gruppe nicht gefunden' });
+        const members = await query(
+            `select member.user_id, member.role, member.joined_at,
+                case when exists (
+                    select 1 from user_blocks b
+                    where (b.blocker_id = $2 and b.blocked_user_id = u.id)
+                       or (b.blocker_id = u.id and b.blocked_user_id = $2)
+                ) then 'Geblockt' else u.display_name end as display_name,
+                case when exists (
+                    select 1 from user_blocks b
+                    where (b.blocker_id = $2 and b.blocked_user_id = u.id)
+                       or (b.blocker_id = u.id and b.blocked_user_id = $2)
+                ) then null else u.username end as username
+             from group_members member
+             join users u on u.id = member.user_id
+             where member.group_id = $1
+             order by case when member.role = 'owner' then 0 else 1 end, lower(u.display_name)`,
+            [groupId, req.user.id],
+        );
+        return res.json({ group: groupResult.rows[0], members: members.rows });
+    } catch (error) {
+        return next(error);
+    }
+});
+
+app.put('/api/groups/:id/image', requireAuth, async (req, res, next) => {
+    try {
+        const groupId = parseId(req.params.id);
+        if (!groupId) return res.status(400).json({ error: 'Ungültige Gruppe' });
+        const owned = await query('select id from chat_groups where id = $1 and owner_user_id = $2', [groupId, req.user.id]);
+        if (!owned.rows[0]) return res.status(403).json({ error: 'Nur der Besitzer kann das Gruppenbild ändern' });
+        const image = await optimizeImageAttachment(req.body.attachment);
+        if (!image) return res.status(400).json({ error: 'Bitte wähle ein Gruppenbild aus' });
+        await query(
+            `update chat_groups
+             set image_file_name = $1, image_mime_type = $2, image_size_bytes = $3, image_data = $4,
+                image_updated_at = now()
+             where id = $5`,
+            [image.fileName, image.mimeType, image.sizeBytes, image.data, groupId],
+        );
+        const members = await query('select user_id from group_members where group_id = $1', [groupId]);
+        members.rows.forEach((member) => sendEvent(member.user_id, 'group:changed', { groupId }));
+        return res.json({ ok: true, imageUrl: '/api/groups/' + groupId + '/image' });
     } catch (error) {
         return next(error);
     }
