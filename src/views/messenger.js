@@ -278,6 +278,8 @@ function renderMessengerApp({ appVersion = '' } = {}) {
             background: var(--panel);
             box-shadow: 0 -1px 4px rgba(15, 23, 42, .03);
         }
+        .bottom-tabs.group-chat-hidden { display: none; }
+        .app.group-chat-open { padding-bottom: 0; }
         .bottom-tab {
             position: relative;
             min-width: 0;
@@ -615,7 +617,7 @@ function renderMessengerApp({ appVersion = '' } = {}) {
                 </div>
                 <div id="groupRoom" class="group-room hidden">
                     <div class="group-room-head">
-                        <button id="backToGroups" class="ghost close-button" type="button" aria-label="Zurück zu Gruppen">&lsaquo;</button>
+                        <button id="backToGroups" class="ghost close-button" type="button" aria-label="Gruppenchat schließen" title="Schließen">&times;</button>
                         <button id="groupInfoButton" class="group-info-button" type="button" aria-label="Gruppeninfo anzeigen">
                             <div id="groupRoomImage" class="group-avatar">G</div>
                             <div class="group-room-title">
@@ -1379,6 +1381,8 @@ function renderMessengerApp({ appVersion = '' } = {}) {
             $('accountPanel').classList.add('hidden');
             $('contactPanel').classList.add('hidden');
             $('groupInfoModal').classList.add('hidden');
+            $('bottomTabs').classList.remove('group-chat-hidden');
+            $('messenger').classList.remove('group-chat-open');
             $('featureView').classList.remove('group-room-open');
             $('groupsView').classList.add('hidden');
             $('groupRoom').classList.add('hidden');
@@ -1536,6 +1540,8 @@ function renderMessengerApp({ appVersion = '' } = {}) {
                 $('groupMessageInput').value = '';
             }
             state.activeGroup = data.group;
+            $('bottomTabs').classList.add('group-chat-hidden');
+            $('messenger').classList.add('group-chat-open');
             $('featureView').classList.add('group-room-open');
             $('groupsView').classList.add('hidden');
             $('groupRoom').classList.remove('hidden');
@@ -2309,6 +2315,8 @@ function renderMessengerApp({ appVersion = '' } = {}) {
             $('accountPanel').classList.add('hidden');
             $('contactPanel').classList.add('hidden');
             $('groupInfoModal').classList.add('hidden');
+            $('bottomTabs').classList.remove('group-chat-hidden');
+            $('messenger').classList.remove('group-chat-open');
             $('featureView').classList.remove('group-room-open');
             $('featureView').classList.add('hidden');
             $('chatPane').classList.add('hidden');
@@ -2346,6 +2354,8 @@ function renderMessengerApp({ appVersion = '' } = {}) {
             $('accountPanel').classList.add('hidden');
             $('contactPanel').classList.add('hidden');
             $('groupInfoModal').classList.add('hidden');
+            $('bottomTabs').classList.remove('group-chat-hidden');
+            $('messenger').classList.remove('group-chat-open');
             $('featureView').classList.remove('group-room-open');
             $('featureView').classList.add('hidden');
             $('chatEmpty').classList.add('hidden');
@@ -2911,6 +2921,8 @@ function renderMessengerApp({ appVersion = '' } = {}) {
         $('backToGroups').addEventListener('click', () => {
             state.activeGroup = null;
             $('groupInfoModal').classList.add('hidden');
+            $('bottomTabs').classList.remove('group-chat-hidden');
+            $('messenger').classList.remove('group-chat-open');
             $('featureView').classList.remove('group-room-open');
             $('groupRoom').classList.add('hidden');
             $('groupsView').classList.remove('hidden');
