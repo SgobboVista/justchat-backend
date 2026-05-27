@@ -313,7 +313,7 @@ function renderMessengerApp({ appVersion = '' } = {}) {
         }
         .bottom-tab svg { display: block; width: 64px; height: 37px; padding: 6px 20px; border-radius: 999px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; transition: background .16s ease, color .16s ease; }
         .bottom-tab.active { color: var(--text); font-weight: 800; }
-        .bottom-tab.active svg { color: var(--accent-strong); background: #d7eee9; }
+        .bottom-tab.active svg { background: #eef8f6; color: var(--accent); }        .bottom-tab.active svg { color: var(--accent-strong); background: #d7eee9; }
         .bottom-tab:hover svg { background: #eef8f6; }
         .bottom-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: 14px; }
         @keyframes homeFloat { to { transform: translate3d(22px, -18px, 0) scale(1.08); } }
@@ -488,9 +488,9 @@ function renderMessengerApp({ appVersion = '' } = {}) {
                 <label for="email">E-Mail</label>
                 <input id="email" type="email" autocomplete="email" maxlength="160">
             </div>
-            <div class="field register-only hidden">
-                <label for="birthDate">Geburtsdatum (JustChat ist ab 16 Jahren)</label>
-                <input id="birthDate" type="text" inputmode="numeric" autocomplete="bday" placeholder="TT.MM.JJJJ" maxlength="10">
+            <div class="field">
+                <label for="birthdate">GEBURTSDATUM</label>
+                <input type="date" id="birthdate" name="birthdate" required max="${new Date().toISOString().split('T')[0]}">
             </div>
             <div class="field register-only hidden">
                 <label>Profilbild</label>
