@@ -6,6 +6,7 @@ function renderMessengerApp({ appVersion = '' } = {}) {
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
     <meta name="theme-color" content="#0f766e">
     <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="default">
     <meta name="apple-mobile-web-app-title" content="JustChat">
     <link rel="manifest" href="/manifest.webmanifest">
@@ -1324,8 +1325,10 @@ function renderMessengerApp({ appVersion = '' } = {}) {
         }
 
         const maximumBirthDate = maximumBirthDateForMinimumAge();
-        $('birthDate').max = maximumBirthDate;
-        $('requiredBirthDate').max = maximumBirthDate;
+        const _birthDateEl = $('birthDate');
+        if (_birthDateEl) _birthDateEl.max = maximumBirthDate;
+        const _requiredBirthDateEl = $('requiredBirthDate');
+        if (_requiredBirthDateEl) _requiredBirthDateEl.max = maximumBirthDate;
 
         function updateBirthDateGate() {
             const required = Boolean(state.me && !state.me.banned_at && !state.me.birth_date);
