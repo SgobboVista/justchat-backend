@@ -169,6 +169,9 @@ function renderMessengerApp({ appVersion = '' } = {}) {
         .sensitive-actions { display: flex; flex-wrap: wrap; gap: 8px; }
         .sensitive-send { background: #946200; color: #fff; border-radius: 8px; padding: 9px 12px; font-weight: 700; }
         .sensitive-delete { background: #fff; color: var(--danger); border: 1px solid #f3c6c1; border-radius: 8px; padding: 9px 12px; font-weight: 700; }
+        .blocked-domain-warning { border-color: #f3c6c1; background: #fff3f2; color: #8c2720; }
+        .blocked-domain-warning strong { color: #7d1c17; }
+        .blocked-domain-warning a { color: #7d1c17; font-weight: 700; }
         .chat-home { position: relative; isolation: isolate; grid-row: 1 / -1; overflow: hidden; background: linear-gradient(145deg, #f7fbff 0%, #eaf5f3 48%, #edf7f4 100%); }
         .chat-home::before, .chat-home::after { content: ''; position: absolute; z-index: -1; border-radius: 50%; filter: blur(2px); animation: homeFloat 14s ease-in-out infinite alternate; }
         .chat-home::before { width: min(50vw, 470px); height: min(50vw, 470px); top: -150px; right: -100px; background: radial-gradient(circle, rgba(15, 118, 110, .16), rgba(15, 118, 110, 0) 68%); }
@@ -638,6 +641,16 @@ function renderMessengerApp({ appVersion = '' } = {}) {
                     </form>
                     <div id="groupMessages" class="group-messages"></div>
                     <form id="groupComposer" class="group-composer">
+                        <div id="groupBlockedDomainWarning" class="sensitive-warning blocked-domain-warning hidden" role="alert">
+                            <div>
+                                <strong>Nachricht blockiert</strong>
+                                <p id="groupBlockedDomainText">Diese Nachricht enth&auml;lt eine nicht erlaubte Domain und kann nicht gesendet werden.</p>
+                                <p>Data provided by <a href="https://github.com/SgobboVista/sgovi-banlists" target="_blank" rel="noopener">SgobboVista (sgovi-banlists)</a></p>
+                            </div>
+                            <div class="sensitive-actions">
+                                <button id="discardBlockedGroupMessage" class="sensitive-delete" type="button">Nachricht l&ouml;schen</button>
+                            </div>
+                        </div>
                         <textarea id="groupMessageInput" maxlength="4000" placeholder="Nachricht an die Gruppe"></textarea>
                         <button class="primary send-button" type="submit" aria-label="Senden" title="Senden">
                             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M22 2 11 13"></path><path d="m22 2-7 20-4-9-9-4z"></path></svg>
@@ -720,6 +733,7 @@ function renderMessengerApp({ appVersion = '' } = {}) {
                                 <li><strong>Gruppen</strong><span>Gruppen erstellen, Kontakte einladen oder Einladungen beantworten, Gruppenchats führen sowie Gruppeninfo und Gruppenbild verwalten.</span></li>
                                 <li><strong>News von SgobboVista</strong><span>Updates an @alle mit Bildern oder Videos und optionalen Push-Benachrichtigungen.</span></li>
                                 <li><strong>Suche</strong><span>Kontakte und Nachrichten schnell innerhalb der App finden.</span></li>
+                                <li><strong>Domain-Schutz</strong><span>Nachrichten mit gesperrten Domains aus den SgobboVista-Banlists werden vor dem Senden blockiert.</span></li>
                                 <li><strong>Profilanpassung</strong><span>Anzeigename, Info, Profilbild, Benachrichtigungston und GIF-Wiedergabe verwalten.</span></li>
                                 <li><strong>Sicherheit</strong><span>E-Mail-Bestätigung, Passwort-Wiederherstellung und optionale Zwei-Faktor-Anmeldung.</span></li>
                                 <li><strong>Installierbare WebApp</strong><span>JustChat als App-Verknüpfung auf dem Startbildschirm verwenden.</span></li>
@@ -786,6 +800,16 @@ function renderMessengerApp({ appVersion = '' } = {}) {
                         <div class="sensitive-actions">
                             <button id="sendSensitiveMessage" class="sensitive-send" type="button">Trotzdem senden</button>
                             <button id="discardSensitiveMessage" class="sensitive-delete" type="button">Abbrechen / Nachricht löschen</button>
+                        </div>
+                    </div>
+                    <div id="blockedDomainWarning" class="sensitive-warning blocked-domain-warning hidden" role="alert">
+                        <div>
+                            <strong>Nachricht blockiert</strong>
+                            <p id="blockedDomainText">Diese Nachricht enth&auml;lt eine nicht erlaubte Domain und kann nicht gesendet werden.</p>
+                            <p>Data provided by <a href="https://github.com/SgobboVista/sgovi-banlists" target="_blank" rel="noopener">SgobboVista (sgovi-banlists)</a></p>
+                        </div>
+                        <div class="sensitive-actions">
+                            <button id="discardBlockedDomainMessage" class="sensitive-delete" type="button">Nachricht l&ouml;schen</button>
                         </div>
                     </div>
                     <label class="file-button" title="Datei anhängen">
@@ -1074,6 +1098,8 @@ function renderMessengerApp({ appVersion = '' } = {}) {
             pendingAttachment: null,
             pendingAttachmentPreviewUrl: null,
             sensitiveMessageApproved: false,
+            blockedDomainDraft: false,
+            blockedGroupDomainDraft: false,
             searchMessageId: null,
             searchRequestId: 0,
             sounds: [],
@@ -1264,6 +1290,48 @@ function renderMessengerApp({ appVersion = '' } = {}) {
             state.sensitiveMessageApproved = false;
         }
 
+        function isBlockedDomainError(error) {
+            return Boolean(error && error.data && error.data.code === 'blocked_domain');
+        }
+
+        function blockedDomainText(domain) {
+            return domain
+                ? 'Die Domain "' + domain + '" ist gesperrt. Diese Nachricht kann nicht gesendet werden.'
+                : 'Diese Nachricht enthaelt eine nicht erlaubte Domain und kann nicht gesendet werden.';
+        }
+
+        function hideBlockedDomainWarning() {
+            state.blockedDomainDraft = false;
+            $('blockedDomainWarning').classList.add('hidden');
+            updateMessageControls();
+        }
+
+        function showBlockedDomainWarning(error) {
+            stopTyping();
+            hideSensitiveMessageWarning();
+            state.blockedDomainDraft = true;
+            $('blockedDomainText').textContent = blockedDomainText(error.data && error.data.blockedDomain);
+            $('blockedDomainWarning').classList.remove('hidden');
+            $('messageInput').disabled = true;
+            $('attachmentInput').disabled = true;
+            $('composer').querySelector('button[type="submit"]').disabled = true;
+        }
+
+        function hideBlockedGroupDomainWarning() {
+            state.blockedGroupDomainDraft = false;
+            $('groupBlockedDomainWarning').classList.add('hidden');
+            $('groupMessageInput').disabled = false;
+            $('groupComposer').querySelector('button[type="submit"]').disabled = false;
+        }
+
+        function showBlockedGroupDomainWarning(error) {
+            state.blockedGroupDomainDraft = true;
+            $('groupBlockedDomainText').textContent = blockedDomainText(error.data && error.data.blockedDomain);
+            $('groupBlockedDomainWarning').classList.remove('hidden');
+            $('groupMessageInput').disabled = true;
+            $('groupComposer').querySelector('button[type="submit"]').disabled = true;
+        }
+
         function loyaltyTier(entity) {
             const date = entity && (entity.member_since || entity.created_at);
             if (!date) return 'none';
@@ -1375,6 +1443,7 @@ function renderMessengerApp({ appVersion = '' } = {}) {
             setRemoteTyping(false);
             state.activeConversation = null;
             state.activeGroup = null;
+            hideBlockedGroupDomainWarning();
             selectMainTab(tab);
             $('chatEmpty').classList.add('hidden');
             $('chatPane').classList.add('hidden');
@@ -1538,6 +1607,7 @@ function renderMessengerApp({ appVersion = '' } = {}) {
             const data = await api('/api/groups/' + groupId + '/messages');
             if (!state.activeGroup || Number(state.activeGroup.id) !== Number(data.group.id)) {
                 $('groupMessageInput').value = '';
+                hideBlockedGroupDomainWarning();
             }
             state.activeGroup = data.group;
             $('bottomTabs').classList.add('group-chat-hidden');
@@ -1852,7 +1922,7 @@ function renderMessengerApp({ appVersion = '' } = {}) {
         }
 
         function updateMessageControls() {
-            const enabled = Boolean(canMessageActiveConversation());
+            const enabled = Boolean(canMessageActiveConversation()) && !state.blockedDomainDraft;
             $('messageInput').disabled = !enabled;
             $('attachmentInput').disabled = !enabled;
             $('composer').querySelector('button[type="submit"]').disabled = !enabled;
@@ -2310,6 +2380,7 @@ function renderMessengerApp({ appVersion = '' } = {}) {
             state.pendingAttachment = null;
             state.activeGroup = null;
             hideSensitiveMessageWarning();
+            hideBlockedDomainWarning();
             $('attachmentInput').value = '';
             renderPendingAttachment();
             $('accountPanel').classList.add('hidden');
@@ -2344,6 +2415,7 @@ function renderMessengerApp({ appVersion = '' } = {}) {
             if (!state.activeConversation || Number(state.activeConversation.id) !== Number(data.conversation.id)) {
                 state.pendingAttachment = null;
                 hideSensitiveMessageWarning();
+                hideBlockedDomainWarning();
                 $('attachmentInput').value = '';
                 renderPendingAttachment();
             }
@@ -2920,6 +2992,8 @@ function renderMessengerApp({ appVersion = '' } = {}) {
         });
         $('backToGroups').addEventListener('click', () => {
             state.activeGroup = null;
+            $('groupMessageInput').value = '';
+            hideBlockedGroupDomainWarning();
             $('groupInfoModal').classList.add('hidden');
             $('bottomTabs').classList.remove('group-chat-hidden');
             $('messenger').classList.remove('group-chat-open');
@@ -3018,8 +3092,18 @@ function renderMessengerApp({ appVersion = '' } = {}) {
                 await refreshOpenGroup(state.activeGroup.id);
                 await loadGroups();
             } catch (error) {
-                $('groupComposerError').textContent = error.message;
+                if (isBlockedDomainError(error)) {
+                    showBlockedGroupDomainWarning(error);
+                } else {
+                    $('groupComposerError').textContent = error.message;
+                }
             }
+        });
+        $('discardBlockedGroupMessage').addEventListener('click', () => {
+            $('groupMessageInput').value = '';
+            hideBlockedGroupDomainWarning();
+            $('groupComposerError').textContent = 'Nachricht wurde nicht gesendet und gelöscht.';
+            $('groupMessageInput').focus();
         });
         $('enableNewsPush').addEventListener('click', () => {
             $('newsPushStatus').textContent = '';
@@ -3074,6 +3158,16 @@ function renderMessengerApp({ appVersion = '' } = {}) {
             state.pendingAttachment = null;
             $('attachmentInput').value = '';
             renderPendingAttachment();
+            $('composerError').textContent = 'Nachricht wurde nicht gesendet und gelöscht.';
+            $('messageInput').focus();
+        });
+        $('discardBlockedDomainMessage').addEventListener('click', () => {
+            stopTyping();
+            $('messageInput').value = '';
+            state.pendingAttachment = null;
+            $('attachmentInput').value = '';
+            renderPendingAttachment();
+            hideBlockedDomainWarning();
             $('composerError').textContent = 'Nachricht wurde nicht gesendet und gelöscht.';
             $('messageInput').focus();
         });
@@ -3214,19 +3308,23 @@ function renderMessengerApp({ appVersion = '' } = {}) {
                 const attachment = await readSelectedAttachment();
                 if ((!body && !attachment) || !state.activeConversation) return;
                 hideSensitiveMessageWarning();
-                $('messageInput').value = '';
-                $('attachmentInput').value = '';
-                state.pendingAttachment = null;
-                renderPendingAttachment();
                 stopTyping();
                 await api('/api/conversations/' + state.activeConversation.id + '/messages', {
                     method: 'POST',
                     body: JSON.stringify({ body, attachment }),
                 });
+                $('messageInput').value = '';
+                $('attachmentInput').value = '';
+                state.pendingAttachment = null;
+                renderPendingAttachment();
                 await openConversation(state.activeConversation.id);
                 await loadConversations();
             } catch (error) {
-                $('composerError').textContent = error.message;
+                if (isBlockedDomainError(error)) {
+                    showBlockedDomainWarning(error);
+                } else {
+                    $('composerError').textContent = error.message;
+                }
             }
         });
 

@@ -3,7 +3,7 @@ function registerApiRoutes(app, dependencies) {
         requireAuth, query, optimizeImageAttachment, personalAvatarLimit, parseId, getUserById,
         getExistingConversation, normalizeUsername, cleanDisplayName, cleanEmail, validateCleanName,
         sendEvent, getBlockStatus, conversationPair, getConversationForUser, cleanMessage,
-        parseAttachment, addEventClient, PUSH_ENABLED,
+        findBlockedDomain, parseAttachment, addEventClient, PUSH_ENABLED,
     } = dependencies;
 app.get('/api/avatars', async (req, res, next) => {
     try {
@@ -887,6 +887,14 @@ app.post('/api/groups/:id/messages', requireAuth, async (req, res, next) => {
         const groupId = parseId(req.params.id);
         const body = cleanMessage(req.body.body);
         if (!groupId || !body) return res.status(400).json({ error: 'Nachricht ist leer' });
+        const blockedDomain = await findBlockedDomain(body);
+        if (blockedDomain) {
+            return res.status(400).json({
+                error: 'Diese Nachricht enthaelt eine gesperrte Domain.',
+                code: 'blocked_domain',
+                blockedDomain,
+            });
+        }
         const membership = await query(
             'select group_id from group_members where group_id = $1 and user_id = $2',
             [groupId, req.user.id],
@@ -1095,6 +1103,14 @@ app.get('/api/conversations/:id/messages', requireAuth, async (req, res, next) =
 app.post('/api/conversations/:id/messages', requireAuth, async (req, res, next) => {
     try {
         const body = cleanMessage(req.body.body);
+        const blockedDomain = body ? await findBlockedDomain(body) : null;
+        if (blockedDomain) {
+            return res.status(400).json({
+                error: 'Diese Nachricht enthaelt eine gesperrte Domain.',
+                code: 'blocked_domain',
+                blockedDomain,
+            });
+        }
         const attachmentMimeType = String(req.body.attachment && req.body.attachment.mimeType || '').toLowerCase();
         const attachment = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(attachmentMimeType)
             ? await optimizeImageAttachment(req.body.attachment)

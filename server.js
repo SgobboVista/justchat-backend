@@ -50,6 +50,25 @@ const MAX_IMAGE_INPUT_BYTES = 20 * 1024 * 1024;
 const MAX_IMAGE_WIDTH = 1920;
 const MAX_IMAGE_HEIGHT = 1080;
 const MAX_NEWS_VIDEO_BYTES = 25 * 1024 * 1024;
+const DOMAIN_BANLIST_SOURCE_URL = 'https://github.com/SgobboVista/sgovi-banlists';
+const DOMAIN_BANLIST_API_URL = 'https://api.github.com/repos/SgobboVista/sgovi-banlists/contents';
+const DOMAIN_BANLIST_RAW_BASE_URL = 'https://raw.githubusercontent.com/SgobboVista/sgovi-banlists/main/';
+const DOMAIN_BANLIST_REFRESH_MS = 6 * 60 * 60 * 1000;
+const DOMAIN_BANLIST_FETCH_TIMEOUT_MS = 10000;
+const DOMAIN_BANLIST_FALLBACK_FILES = [
+    'adult.txt', 'animal-cruelty.txt', 'censorship.txt', 'child-abuse.txt', 'copyright.txt',
+    'data-breach.txt', 'discrimination.txt', 'drugs.txt', 'duplicate.txt', 'extremism.txt',
+    'fake-news.txt', 'fake-products.txt', 'hacking.txt', 'hate-speech.txt', 'illegal.txt',
+    'malware-link.txt', 'malware.txt', 'misinformation.txt', 'obscure.txt', 'offline.txt',
+    'other.txt', 'outdated.txt', 'phishing.txt', 'privacy.txt', 'racism.txt', 'spam.txt',
+    'terrorism.txt', 'unethical.txt', 'violence.txt', 'weapons.txt', 'wrong-language.txt',
+    'youth-endangerment.txt',
+];
+const domainBanlistState = {
+    domains: new Set(),
+    loadedAt: 0,
+    loading: null,
+};
 let imageUpdateState = {
     configured: Boolean(IMAGE_UPDATE_WEBHOOK_URL),
     status: IMAGE_UPDATE_WEBHOOK_URL ? 'idle' : 'not_configured',
@@ -239,6 +258,104 @@ function cleanEmail(email) {
 
 function cleanMessage(body) {
     return String(body || '').trim().slice(0, 4000);
+}
+
+function normalizeBlockedDomain(value) {
+    return String(value || '')
+        .trim()
+        .toLowerCase()
+        .replace(/^https?:\/\//, '')
+        .replace(/^www\./, '')
+        .replace(/[./]+$/, '');
+}
+
+async function getDomainBanlistUrls() {
+    try {
+        const response = await fetch(DOMAIN_BANLIST_API_URL, {
+            signal: AbortSignal.timeout(DOMAIN_BANLIST_FETCH_TIMEOUT_MS),
+            headers: {
+                Accept: 'application/vnd.github+json',
+                'User-Agent': 'JustChat-domain-filter',
+            },
+        });
+        if (response.ok) {
+            const entries = await response.json();
+            const urls = entries
+                .filter((entry) => entry.type === 'file' && /\.txt$/i.test(entry.name) && entry.download_url)
+                .map((entry) => entry.download_url);
+            if (urls.length) return urls;
+        }
+    } catch (error) {
+        console.warn('Domain-Banlist-Dateiliste konnte nicht geladen werden:', error.message);
+    }
+    return DOMAIN_BANLIST_FALLBACK_FILES.map((file) => DOMAIN_BANLIST_RAW_BASE_URL + encodeURIComponent(file));
+}
+
+async function loadBlockedDomains() {
+    if (domainBanlistState.domains.size && Date.now() - domainBanlistState.loadedAt < DOMAIN_BANLIST_REFRESH_MS) {
+        return domainBanlistState.domains;
+    }
+    if (domainBanlistState.loading) return domainBanlistState.loading;
+
+    domainBanlistState.loading = (async () => {
+        const urls = await getDomainBanlistUrls();
+        const lists = await Promise.all(urls.map(async (url) => {
+            try {
+                const response = await fetch(url, {
+                    signal: AbortSignal.timeout(DOMAIN_BANLIST_FETCH_TIMEOUT_MS),
+                    headers: { 'User-Agent': 'JustChat-domain-filter' },
+                });
+                return response.ok ? response.text() : '';
+            } catch (error) {
+                console.warn('Domain-Banlist-Datei konnte nicht geladen werden:', url, error.message);
+                return '';
+            }
+        }));
+        const domains = new Set();
+        lists.forEach((content) => {
+            content.split(/\r?\n/).forEach((line) => {
+                const raw = line.trim();
+                if (!raw || raw.startsWith('#')) return;
+                const domain = normalizeBlockedDomain(raw.replace(/^\|\|/, '').replace(/\^.*$/, '').split(/\s+/)[0]);
+                if (/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9-]{2,63}$/i.test(domain)) {
+                    domains.add(domain);
+                }
+            });
+        });
+        if (domains.size) {
+            domainBanlistState.domains = domains;
+            domainBanlistState.loadedAt = Date.now();
+            console.log(`Domain-Banlist geladen: ${domains.size} Domains von ${DOMAIN_BANLIST_SOURCE_URL}`);
+        } else if (!domainBanlistState.domains.size) {
+            console.warn('Domain-Banlist enthaelt aktuell keine ladbaren Domains.');
+        }
+        return domainBanlistState.domains;
+    })().finally(() => {
+        domainBanlistState.loading = null;
+    });
+    return domainBanlistState.loading;
+}
+
+async function findBlockedDomain(body) {
+    const domains = await loadBlockedDomains();
+    if (!domains.size) return null;
+    const candidates = String(body || '').match(
+        /(?:https?:\/\/)?(?:www\.)?(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9-]{2,63}/gi,
+    ) || [];
+    for (const candidate of candidates) {
+        let hostname = '';
+        try {
+            hostname = new URL(/^https?:\/\//i.test(candidate) ? candidate : `https://${candidate}`).hostname;
+        } catch (error) {
+            continue;
+        }
+        const labels = normalizeBlockedDomain(hostname).split('.');
+        for (let index = 0; index < labels.length - 1; index += 1) {
+            const domain = labels.slice(index).join('.');
+            if (domains.has(domain)) return domain;
+        }
+    }
+    return null;
 }
 
 function getMailer() {
@@ -1133,7 +1250,7 @@ const routeDependencies = {
     requireAdminAuth, requireAuth, hasAdminSession, createAdminSessionToken,
     query, dispatchImageUpdate, parseAttachment, optimizeImageAttachment, parseNotificationSoundAttachment,
     parseId, createZipArchive, zipPathSegment, createToken, verifyPassword, hashPassword,
-    normalizeUsername, cleanDisplayName, validateCleanName, cleanEmail, cleanMessage,
+    normalizeUsername, cleanDisplayName, validateCleanName, cleanEmail, cleanMessage, findBlockedDomain,
     sendEmailVerificationCode, sendTwoFactorCode, sendPasswordResetCode, getUserById,
     addEventClient, sendEvent, getConversationForUser, getBlockStatus, getExistingConversation,
     personalAvatarLimit, conversationPair, getImageUpdateState, escapeHtml, sendMail, renderEmailTemplate,
@@ -1163,6 +1280,9 @@ waitForDatabase()
         }
         app.listen(PORT, '0.0.0.0', () => {
             console.log(`JustChat läuft auf Port ${PORT}`);
+            loadBlockedDomains().catch((error) => {
+                console.error('Domain-Banlist konnte nicht vorgeladen werden:', error.message);
+            });
         });
     })
     .catch((error) => {
