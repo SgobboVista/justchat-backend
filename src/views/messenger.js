@@ -489,8 +489,8 @@ function renderMessengerApp({ appVersion = '' } = {}) {
                 <input id="email" type="email" autocomplete="email" maxlength="160">
             </div>
             <div class="field">
-                <label for="birthdate">GEBURTSDATUM</label>
-                <input type="date" id="birthdate" name="birthdate" required max="${new Date().toISOString().split('T')[0]}">
+                <label for="birthDate">GEBURTSDATUM</label>
+                <input type="date" id="birthDate" name="birthdate" required max="${new Date().toISOString().split('T')[0]}">
             </div>
             <div class="field register-only hidden">
                 <label>Profilbild</label>
