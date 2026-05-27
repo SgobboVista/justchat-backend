@@ -2,13 +2,14 @@ function registerAuthRoutes(app, dependencies) {
     const {
         PUBLIC_BASE_URL, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, crypto, query, parseId,
         createToken, verifyPassword, hashPassword, normalizeUsername, cleanDisplayName,
-        validateCleanName, cleanEmail, sendEmailVerificationCode, sendTwoFactorCode,
-        sendPasswordResetCode, escapeHtml, sendMail, renderEmailTemplate,
+        validateCleanName, cleanEmail, parseBirthDate, isAtLeastAge, sendEmailVerificationCode, sendTwoFactorCode,
+        sendPasswordResetCode, escapeHtml, sendMail, renderEmailTemplate, getMailer,
     } = dependencies;
 app.post('/api/auth/register', async (req, res, next) => {
     try {
         const username = normalizeUsername(req.body.username);
         const email = cleanEmail(req.body.email);
+        const birthDate = parseBirthDate(req.body.birthDate);
         const password = String(req.body.password || '');
         const passwordRepeat = String(req.body.passwordRepeat || '');
         const displayName = cleanDisplayName(req.body.displayName, username);
@@ -31,6 +32,12 @@ app.post('/api/auth/register', async (req, res, next) => {
         if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
             return res.status(400).json({ error: 'Bitte gib eine gültige E-Mail-Adresse ein' });
         }
+        if (!birthDate) {
+            return res.status(400).json({ error: 'Bitte gib dein gültiges Geburtsdatum ein' });
+        }
+        if (!isAtLeastAge(birthDate)) {
+            return res.status(403).json({ error: 'JustChat ist erst ab 16 Jahren verfügbar' });
+        }
         if (!getMailer()) {
             return res.status(503).json({ error: 'Registrierung braucht vollständige SMTP-Konfiguration' });
         }
@@ -44,6 +51,9 @@ app.post('/api/auth/register', async (req, res, next) => {
                 && verifyPassword(password, existingUser.password_hash);
             if (!canResumeVerification) {
                 return res.status(409).json({ error: 'Benutzername oder E-Mail ist bereits vergeben' });
+            }
+            if (!existingUser.birth_date) {
+                await query('update users set birth_date = $1 where id = $2', [birthDate, existingUser.id]);
             }
             const delivery = await sendEmailVerificationCode(existingUser);
             return res.json({
@@ -62,10 +72,10 @@ app.post('/api/auth/register', async (req, res, next) => {
         }
 
         const result = await query(
-            `insert into users (username, display_name, email, avatar_asset_id, password_hash, avatar_color, two_factor_enabled, email_verification_required)
-             values ($1, $2, $3, $4, $5, $6, $7, true)
-             returning id, username, display_name, email, avatar_asset_id, about, avatar_color, two_factor_enabled, display_name_visibility, created_at, last_seen_at`,
-            [username, displayName, email, avatarAssetId, hashPassword(password), avatarColor, twoFactorEnabled],
+            `insert into users (username, display_name, email, birth_date, avatar_asset_id, password_hash, avatar_color, two_factor_enabled, email_verification_required)
+             values ($1, $2, $3, $4, $5, $6, $7, $8, true)
+             returning id, username, display_name, email, birth_date, avatar_asset_id, about, avatar_color, two_factor_enabled, display_name_visibility, created_at, last_seen_at`,
+            [username, displayName, email, birthDate, avatarAssetId, hashPassword(password), avatarColor, twoFactorEnabled],
         );
         const user = result.rows[0];
 

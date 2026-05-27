@@ -256,6 +256,23 @@ function cleanEmail(email) {
     return String(email || '').trim().toLowerCase();
 }
 
+function parseBirthDate(value) {
+    const birthDate = String(value || '').trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(birthDate)) return null;
+    const parsed = new Date(`${birthDate}T00:00:00Z`);
+    if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== birthDate) return null;
+    if (birthDate > new Date().toISOString().slice(0, 10)) return null;
+    return birthDate;
+}
+
+function isAtLeastAge(birthDate, minimumAge = 16) {
+    const date = parseBirthDate(birthDate);
+    if (!date) return false;
+    const today = new Date();
+    const cutoff = new Date(Date.UTC(today.getUTCFullYear() - minimumAge, today.getUTCMonth(), today.getUTCDate()));
+    return new Date(`${date}T00:00:00Z`) <= cutoff;
+}
+
 function cleanMessage(body) {
     return String(body || '').trim().slice(0, 4000);
 }
@@ -750,6 +767,7 @@ async function initDatabase() {
             username text not null unique,
             display_name text not null,
             email text,
+            birth_date date,
             google_id text,
             avatar_asset_id bigint,
             password_hash text not null,
@@ -953,6 +971,7 @@ async function initDatabase() {
         );
 
         alter table users add column if not exists email text;
+        alter table users add column if not exists birth_date date;
         alter table users add column if not exists google_id text;
         alter table users add column if not exists email_verified_at timestamptz;
         alter table users add column if not exists email_verification_required boolean not null default false;
@@ -1047,7 +1066,7 @@ async function waitForDatabase() {
 
 async function getUserById(userId) {
     const result = await query(
-        `select u.id, u.username, u.display_name, u.email, u.about, u.avatar_color, u.avatar_asset_id,
+        `select u.id, u.username, u.display_name, u.email, u.birth_date, u.about, u.avatar_color, u.avatar_asset_id,
             u.two_factor_enabled, u.display_name_visibility, u.username_history_visibility, u.notification_sound_asset_id, u.send_on_enter, u.gif_playback,
             u.created_at, u.last_seen_at,
             u.id in (select early_user.id from users early_user where not early_user.email_verification_required or early_user.email_verified_at is not null order by early_user.created_at, early_user.id limit 10) as first_account,
@@ -1075,6 +1094,12 @@ async function requireAuth(req, res, next) {
 
         req.user = user;
         await query('update users set last_seen_at = now() where id = $1', [user.id]);
+        if (!user.birth_date && !['/api/me', '/api/me/birth-date'].includes(req.path)) {
+            return res.status(403).json({
+                error: 'Bitte hinterlege zuerst dein Geburtsdatum. JustChat ist ab 16 Jahren verfügbar.',
+                code: 'birth_date_required',
+            });
+        }
         return next();
     } catch (error) {
         return next(error);
@@ -1250,11 +1275,11 @@ const routeDependencies = {
     requireAdminAuth, requireAuth, hasAdminSession, createAdminSessionToken,
     query, dispatchImageUpdate, parseAttachment, optimizeImageAttachment, parseNotificationSoundAttachment,
     parseId, createZipArchive, zipPathSegment, createToken, verifyPassword, hashPassword,
-    normalizeUsername, cleanDisplayName, validateCleanName, cleanEmail, cleanMessage, findBlockedDomain,
+    normalizeUsername, cleanDisplayName, validateCleanName, cleanEmail, parseBirthDate, isAtLeastAge, cleanMessage, findBlockedDomain,
     sendEmailVerificationCode, sendTwoFactorCode, sendPasswordResetCode, getUserById,
     addEventClient, sendEvent, getConversationForUser, getBlockStatus, getExistingConversation,
     personalAvatarLimit, conversationPair, getImageUpdateState, escapeHtml, sendMail, renderEmailTemplate,
-    parseNewsVideoAttachment, broadcastEvent, sendNewsPushNotification,
+    parseNewsVideoAttachment, broadcastEvent, sendNewsPushNotification, getMailer,
 };
 
 registerPageRoutes(app, routeDependencies);

@@ -3,7 +3,7 @@ function registerApiRoutes(app, dependencies) {
         requireAuth, query, optimizeImageAttachment, personalAvatarLimit, parseId, getUserById,
         getExistingConversation, normalizeUsername, cleanDisplayName, cleanEmail, validateCleanName,
         sendEvent, getBlockStatus, conversationPair, getConversationForUser, cleanMessage,
-        findBlockedDomain, parseAttachment, addEventClient, PUSH_ENABLED,
+        findBlockedDomain, parseAttachment, addEventClient, PUSH_ENABLED, parseBirthDate, isAtLeastAge, getMailer,
     } = dependencies;
 app.get('/api/avatars', async (req, res, next) => {
     try {
@@ -185,6 +185,26 @@ app.delete('/api/push-subscriptions', requireAuth, async (req, res, next) => {
 
 app.get('/api/me', requireAuth, (req, res) => {
     res.json({ user: req.user });
+});
+
+app.put('/api/me/birth-date', requireAuth, async (req, res, next) => {
+    try {
+        if (req.user.birth_date) {
+            return res.status(409).json({ error: 'Das Geburtsdatum wurde bereits hinterlegt' });
+        }
+        const birthDate = parseBirthDate(req.body.birthDate);
+        if (!birthDate) {
+            return res.status(400).json({ error: 'Bitte gib dein gültiges Geburtsdatum ein' });
+        }
+        if (!isAtLeastAge(birthDate)) {
+            return res.status(403).json({ error: 'JustChat ist erst ab 16 Jahren verfügbar' });
+        }
+        await query('update users set birth_date = $1 where id = $2 and birth_date is null', [birthDate, req.user.id]);
+        const user = await getUserById(req.user.id);
+        return res.json({ user });
+    } catch (error) {
+        return next(error);
+    }
 });
 
 app.get('/api/me/username-history', requireAuth, async (req, res, next) => {

@@ -346,6 +346,11 @@ function renderMessengerApp({ appVersion = '' } = {}) {
         .modal { position: fixed; inset: 0; background: rgba(15, 23, 42, .42); display: grid; place-items: center; padding: 18px; z-index: 20; }
         .modal-card { width: min(560px, 100%); max-height: min(760px, 100%); overflow-y: auto; -webkit-overflow-scrolling: touch; background: #fff; border-radius: 8px; border: 1px solid var(--line); padding: 20px; box-shadow: 0 24px 80px rgba(15, 23, 42, .22); }
         .modal-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 16px; }
+        .birth-gate { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 22px; background: linear-gradient(145deg, #ecf7f5, #f7fbff); }
+        .birth-gate-card { width: min(500px, 100%); display: grid; gap: 16px; padding: clamp(24px, 7vw, 38px); border: 1px solid #b8ded8; border-radius: 16px; background: #fff; box-shadow: 0 22px 65px rgba(15, 23, 42, .13); }
+        .birth-gate-card h2 { margin: 0; font-size: clamp(27px, 8vw, 34px); }
+        .birth-gate-card p { margin: 0; line-height: 1.55; color: var(--muted); }
+        .age-mark { width: max-content; padding: 8px 13px; border-radius: 999px; color: #fff; background: var(--accent); font-weight: 800; }
         .image-viewer { position: fixed; inset: 0; z-index: 70; display: grid; place-items: center; touch-action: none; padding: max(18px, env(safe-area-inset-top)) max(18px, env(safe-area-inset-right)) max(18px, env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left)); background: rgba(5, 12, 22, .9); }
         .image-viewer img { display: block; max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 8px; }
         .image-viewer-close { position: fixed; top: calc(14px + env(safe-area-inset-top)); right: calc(14px + env(safe-area-inset-right)); z-index: 72; width: 52px; height: 52px; border: 2px solid rgba(255, 255, 255, .88); border-radius: 50%; padding: 0; display: grid; place-items: center; color: #fff; background: rgba(9, 18, 32, .82); box-shadow: 0 6px 22px rgba(0, 0, 0, .35); font-size: 30px; line-height: 1; }
@@ -437,6 +442,10 @@ function renderMessengerApp({ appVersion = '' } = {}) {
             <div class="field register-only hidden">
                 <label for="email">E-Mail</label>
                 <input id="email" type="email" autocomplete="email" maxlength="160">
+            </div>
+            <div class="field register-only hidden">
+                <label for="birthDate">Geburtsdatum (JustChat ist ab 16 Jahren)</label>
+                <input id="birthDate" type="date" autocomplete="bday">
             </div>
             <div class="field register-only hidden">
                 <label>Profilbild</label>
@@ -734,6 +743,7 @@ function renderMessengerApp({ appVersion = '' } = {}) {
                                 <li><strong>News von SgobboVista</strong><span>Updates an @alle mit Bildern oder Videos und optionalen Push-Benachrichtigungen.</span></li>
                                 <li><strong>Suche</strong><span>Kontakte und Nachrichten schnell innerhalb der App finden.</span></li>
                                 <li><strong>Domain-Schutz</strong><span>Nachrichten mit gesperrten Domains aus den SgobboVista-Banlists werden vor dem Senden blockiert.</span></li>
+                                <li><strong>Altersgrenze</strong><span>JustChat ist ab 16 Jahren verfügbar und erfordert ein Geburtsdatum zur Prüfung.</span></li>
                                 <li><strong>Profilanpassung</strong><span>Anzeigename, Info, Profilbild, Benachrichtigungston und GIF-Wiedergabe verwalten.</span></li>
                                 <li><strong>Sicherheit</strong><span>E-Mail-Bestätigung, Passwort-Wiederherstellung und optionale Zwei-Faktor-Anmeldung.</span></li>
                                 <li><strong>Installierbare WebApp</strong><span>JustChat als App-Verknüpfung auf dem Startbildschirm verwenden.</span></li>
@@ -750,6 +760,7 @@ function renderMessengerApp({ appVersion = '' } = {}) {
                             <h3>Nutzervereinbarung</h3>
                             <ul>
                                 <li>Behandle andere Personen respektvoll und verwende JustChat nicht für Belästigung, Bedrohungen oder unerlaubte Inhalte.</li>
+                                <li>JustChat ist eine Plattform ab 16 Jahren. Bei der Registrierung muss ein zutreffendes Geburtsdatum angegeben werden.</li>
                                 <li>Du bist für Nachrichten und Medien verantwortlich, die du sendest oder hochlädst.</li>
                                 <li>Missbrauch, Manipulation oder unberechtigter Zugriff auf Konten ist nicht gestattet.</li>
                             </ul>
@@ -1037,6 +1048,21 @@ function renderMessengerApp({ appVersion = '' } = {}) {
         </nav>
     </div>
 
+    <div id="birthDateGate" class="birth-gate hidden" role="dialog" aria-modal="true" aria-labelledby="birthDateGateTitle">
+        <form id="birthDateGateForm" class="birth-gate-card">
+            <span class="age-mark">Ab 16 Jahren</span>
+            <h2 id="birthDateGateTitle">Geburtsdatum erforderlich</h2>
+            <p>JustChat ist eine Plattform ab 16 Jahren. Bitte trage dein Geburtsdatum ein, um die App weiter nutzen zu können.</p>
+            <p>Diese Angabe wird für die Altersprüfung benötigt und ist nicht für andere Nutzer sichtbar.</p>
+            <div class="field">
+                <label for="requiredBirthDate">Dein Geburtsdatum</label>
+                <input id="requiredBirthDate" type="date" autocomplete="bday" required>
+            </div>
+            <div id="birthDateGateError" class="error" role="alert"></div>
+            <button class="primary" type="submit">Geburtsdatum bestätigen</button>
+        </form>
+    </div>
+
     <div id="addModal" class="modal hidden">
         <form id="addForm" class="modal-card stack">
             <div class="modal-head">
@@ -1129,6 +1155,30 @@ function renderMessengerApp({ appVersion = '' } = {}) {
         };
 
         const $ = (id) => document.getElementById(id);
+
+        function maximumBirthDateForMinimumAge() {
+            const today = new Date();
+            const cutoff = new Date(today.getFullYear() - 16, today.getMonth(), today.getDate());
+            const month = String(cutoff.getMonth() + 1).padStart(2, '0');
+            const day = String(cutoff.getDate()).padStart(2, '0');
+            return cutoff.getFullYear() + '-' + month + '-' + day;
+        }
+
+        const maximumBirthDate = maximumBirthDateForMinimumAge();
+        $('birthDate').max = maximumBirthDate;
+        $('requiredBirthDate').max = maximumBirthDate;
+
+        function updateBirthDateGate() {
+            const required = Boolean(state.me && !state.me.birth_date);
+            $('birthDateGate').classList.toggle('hidden', !required);
+            if (required) {
+                $('requiredBirthDate').focus();
+            } else {
+                $('requiredBirthDate').value = '';
+                $('birthDateGateError').textContent = '';
+            }
+            return required;
+        }
 
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {
@@ -1764,9 +1814,10 @@ function renderMessengerApp({ appVersion = '' } = {}) {
             state.registerMode = registerMode;
             resetAuthPanels();
             document.querySelectorAll('.register-only').forEach((el) => el.classList.toggle('hidden', !registerMode));
+            $('birthDate').required = registerMode;
             $('authSubmit').textContent = registerMode ? 'Konto erstellen' : 'Anmelden';
             $('toggleAuth').textContent = registerMode ? 'Schon ein Konto? Anmelden' : 'Neues Konto erstellen';
-            $('authHint').textContent = registerMode ? 'Erstelle dein JustChat-Konto.' : 'Melde dich an, um deine Chats zu sehen.';
+            $('authHint').textContent = registerMode ? 'Erstelle dein JustChat-Konto. Die Plattform ist ab 16 Jahren.' : 'Melde dich an, um deine Chats zu sehen.';
             $('authError').textContent = '';
             if (registerMode) loadAvatars();
         }
@@ -2242,6 +2293,7 @@ function renderMessengerApp({ appVersion = '' } = {}) {
             $('meUsername').textContent = '@' + state.me.username;
             $('meAvatarSlot').innerHTML = avatarMarkup(state.me, 'meAvatar');
             applyGifPreference();
+            updateBirthDateGate();
         }
 
         const settingsCategoryNames = {
@@ -2540,6 +2592,7 @@ function renderMessengerApp({ appVersion = '' } = {}) {
             try {
                 await loadMe();
                 showApp();
+                if (!state.me.birth_date) return;
                 connectEvents();
                 showConnectionStatus(true);
             } catch (error) {
@@ -2570,6 +2623,22 @@ function renderMessengerApp({ appVersion = '' } = {}) {
             }).catch(() => showConnectionStatus(false));
         }
 
+        $('birthDateGateForm').addEventListener('submit', async (event) => {
+            event.preventDefault();
+            $('birthDateGateError').textContent = '';
+            try {
+                const data = await api('/api/me/birth-date', {
+                    method: 'PUT',
+                    body: JSON.stringify({ birthDate: $('requiredBirthDate').value }),
+                });
+                state.me = data.user;
+                updateBirthDateGate();
+                await boot();
+            } catch (error) {
+                $('birthDateGateError').textContent = error.message;
+            }
+        });
+
         $('authForm').addEventListener('submit', async (event) => {
             event.preventDefault();
             $('authError').textContent = '';
@@ -2587,6 +2656,7 @@ function renderMessengerApp({ appVersion = '' } = {}) {
                 passwordRepeat: $('passwordRepeat').value,
                 displayName: $('displayName').value,
                 email: $('email').value,
+                birthDate: $('birthDate').value,
                 avatarAssetId: state.selectedAvatarId,
                 twoFactorEnabled: $('register2fa').checked,
             };
