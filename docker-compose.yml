@@ -15,7 +15,9 @@ services:
       APP_NAME: JustChat
       ADMIN_USER: admin
       ADMIN_PASSWORD: "admin"
+      ADMIN_2FA_EMAIL: "kontakt@sgobbovista.de"
       AUTH_SECRET: "bitte-einen-langen-zufaelligen-wert-setzen"
+      MESSAGE_ENCRYPTION_KEY: "${MESSAGE_ENCRYPTION_KEY}"
       DATABASE_URL: "postgres://justchat:justchat_password@justchat-db:5432/justchat"
       DB_SSL: "false"
       SMTP_HOST: "webspace31.do.de"

@@ -18,6 +18,7 @@ const app = express();
 const PORT = process.env.PORT || 50070;
 const ADMIN_USER = process.env.ADMIN_USER || 'admin';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
+const ADMIN_2FA_EMAIL = process.env.ADMIN_2FA_EMAIL || 'kontakt@sgobbovista.de';
 const ADMIN_SESSION_COOKIE = 'justchat_admin_session';
 const DATABASE_URL = process.env.DATABASE_URL;
 const AUTH_SECRET = process.env.AUTH_SECRET || ADMIN_PASSWORD || 'change-this-secret';
@@ -52,6 +53,10 @@ const REPORT_RETENTION_DAYS = parseRetentionDays('REPORT_RETENTION_DAYS', 180);
 const OPEN_REPORT_RETENTION_DAYS = parseRetentionDays('OPEN_REPORT_RETENTION_DAYS', 365);
 const ADMIN_AUDIT_RETENTION_DAYS = parseRetentionDays('ADMIN_AUDIT_RETENTION_DAYS', 180);
 const AGE_VERIFICATION_PENDING_RETENTION_DAYS = parseRetentionDays('AGE_VERIFICATION_PENDING_RETENTION_DAYS', 7);
+const MESSAGE_ENCRYPTION_KEY_SOURCE = process.env.MESSAGE_ENCRYPTION_KEY || AUTH_SECRET;
+const MESSAGE_ENCRYPTION_KEY = crypto.createHash('sha256').update(String(MESSAGE_ENCRYPTION_KEY_SOURCE)).digest();
+const TEXT_ENCRYPTION_PREFIX = 'enc:v1:';
+const BINARY_ENCRYPTION_PREFIX = Buffer.from('JCENC1:');
 const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
 const MAX_IMAGE_INPUT_BYTES = 20 * 1024 * 1024;
 const MAX_IMAGE_WIDTH = 1920;
@@ -109,6 +114,61 @@ function parseRetentionDays(envName, fallbackDays) {
     const value = Number(process.env[envName] || fallbackDays);
     if (!Number.isFinite(value) || value < 1) return fallbackDays;
     return Math.floor(Math.min(value, 3650));
+}
+
+function encryptBuffer(buffer) {
+    const input = Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer || '');
+    if (!input.length) return input;
+    const iv = crypto.randomBytes(12);
+    const cipher = crypto.createCipheriv('aes-256-gcm', MESSAGE_ENCRYPTION_KEY, iv);
+    const encrypted = Buffer.concat([cipher.update(input), cipher.final()]);
+    const tag = cipher.getAuthTag();
+    return Buffer.concat([BINARY_ENCRYPTION_PREFIX, Buffer.from(Buffer.concat([iv, tag, encrypted]).toString('base64'))]);
+}
+
+function decryptBuffer(buffer) {
+    const input = Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer || '');
+    if (!input.length || input.length <= BINARY_ENCRYPTION_PREFIX.length) return input;
+    if (!input.subarray(0, BINARY_ENCRYPTION_PREFIX.length).equals(BINARY_ENCRYPTION_PREFIX)) return input;
+    const payload = Buffer.from(input.subarray(BINARY_ENCRYPTION_PREFIX.length).toString('utf8'), 'base64');
+    const iv = payload.subarray(0, 12);
+    const tag = payload.subarray(12, 28);
+    const encrypted = payload.subarray(28);
+    const decipher = crypto.createDecipheriv('aes-256-gcm', MESSAGE_ENCRYPTION_KEY, iv);
+    decipher.setAuthTag(tag);
+    return Buffer.concat([decipher.update(encrypted), decipher.final()]);
+}
+
+function encryptText(value) {
+    const text = String(value || '');
+    if (!text || text.startsWith(TEXT_ENCRYPTION_PREFIX)) return text;
+    return TEXT_ENCRYPTION_PREFIX + encryptBuffer(Buffer.from(text, 'utf8')).subarray(BINARY_ENCRYPTION_PREFIX.length).toString('utf8');
+}
+
+function decryptText(value) {
+    const text = String(value || '');
+    if (!text.startsWith(TEXT_ENCRYPTION_PREFIX)) return text;
+    return decryptBuffer(Buffer.concat([
+        BINARY_ENCRYPTION_PREFIX,
+        Buffer.from(text.slice(TEXT_ENCRYPTION_PREFIX.length), 'utf8'),
+    ])).toString('utf8');
+}
+
+function decryptMessageRows(rows) {
+    rows.forEach((row) => {
+        if (Object.prototype.hasOwnProperty.call(row, 'body')) row.body = decryptText(row.body);
+        if (Object.prototype.hasOwnProperty.call(row, 'message_body')) row.message_body = decryptText(row.message_body);
+    });
+    return rows;
+}
+
+function decryptAttachmentRows(rows) {
+    rows.forEach((row) => {
+        if (row.data) row.data = decryptBuffer(row.data);
+        if (row.data_base64 && !row.data) row.data = decryptBuffer(Buffer.from(row.data_base64, 'base64'));
+        if (row.data) row.data_base64 = row.data.toString('base64');
+    });
+    return rows;
 }
 
 function zipPathSegment(value) {
@@ -1095,6 +1155,15 @@ async function initDatabase() {
             created_at timestamptz not null default now()
         );
 
+        create table if not exists admin_login_codes (
+            id bigserial primary key,
+            admin_user text not null,
+            code_hash text not null,
+            expires_at timestamptz not null,
+            used_at timestamptz,
+            created_at timestamptz not null default now()
+        );
+
         create table if not exists username_history (
             id bigserial primary key,
             user_id bigint not null references users(id) on delete cascade,
@@ -1199,6 +1268,7 @@ async function initDatabase() {
         create index if not exists idx_content_reports_reviewed on content_reports(reviewed_at);
         create index if not exists idx_message_favorites_message on message_favorites(message_id);
         create index if not exists idx_admin_audit_logs_created on admin_audit_logs(created_at);
+        create index if not exists idx_admin_login_codes_user_expires on admin_login_codes(admin_user, expires_at desc);
         create index if not exists idx_age_verification_requests_status_created on age_verification_requests(status, created_at desc);
         create index if not exists idx_age_verification_requests_user_created on age_verification_requests(user_id, created_at desc);
     `);
@@ -1313,6 +1383,73 @@ async function purgeExpiredAgeVerificationDocuments() {
             `insert into admin_audit_logs (admin_user, action, ip_address)
              values ($1, $2, $3)`,
             ['system', `age_verification_expiry_cleanup_${expired.rowCount}`, null],
+        );
+    }
+}
+
+async function migratePlaintextMessagesToEncrypted(tableName) {
+    const table = tableName === 'group_messages' ? 'group_messages' : 'messages';
+    let migrated = 0;
+    for (;;) {
+        const result = await query(
+            `select id, body
+             from ${table}
+             where body <> '' and body not like $1
+             order by id
+             limit 500`,
+            [`${TEXT_ENCRYPTION_PREFIX}%`],
+        );
+        if (!result.rows.length) break;
+        for (const row of result.rows) {
+            await query(`update ${table} set body = $1 where id = $2`, [encryptText(row.body), row.id]);
+            migrated += 1;
+        }
+        if (result.rows.length < 500) break;
+    }
+    if (migrated > 0) {
+        await query(
+            `insert into admin_audit_logs (admin_user, action, ip_address)
+             values ($1, $2, $3)`,
+            ['system', `${table}_encryption_migration_${migrated}`, null],
+        );
+    }
+}
+
+async function migratePlaintextMessagesToEncryptedStorage() {
+    await migratePlaintextMessagesToEncrypted('messages');
+    await migratePlaintextMessagesToEncrypted('group_messages');
+    await migratePlaintextAttachmentsToEncrypted('message_attachments');
+    await migratePlaintextAttachmentsToEncrypted('group_message_attachments');
+}
+
+async function migratePlaintextAttachmentsToEncrypted(tableName) {
+    const table = tableName === 'group_message_attachments' ? 'group_message_attachments' : 'message_attachments';
+    let lastId = 0;
+    let migrated = 0;
+    for (;;) {
+        const result = await query(
+            `select id, data
+             from ${table}
+             where id > $1
+             order by id
+             limit 100`,
+            [lastId],
+        );
+        if (!result.rows.length) break;
+        for (const row of result.rows) {
+            lastId = Number(row.id);
+            const data = Buffer.isBuffer(row.data) ? row.data : Buffer.from(row.data || '');
+            if (data.subarray(0, BINARY_ENCRYPTION_PREFIX.length).equals(BINARY_ENCRYPTION_PREFIX)) continue;
+            await query(`update ${table} set data = $1 where id = $2`, [encryptBuffer(data), row.id]);
+            migrated += 1;
+        }
+        if (result.rows.length < 100) break;
+    }
+    if (migrated > 0) {
+        await query(
+            `insert into admin_audit_logs (admin_user, action, ip_address)
+             values ($1, $2, $3)`,
+            ['system', `${table}_encryption_migration_${migrated}`, null],
         );
     }
 }
@@ -1562,6 +1699,7 @@ registerPwaRoutes(app, { sharp });
 
 const routeDependencies = {
     ADMIN_PASSWORD, ADMIN_USER, ADMIN_SESSION_COOKIE, DATABASE_URL,
+    ADMIN_2FA_EMAIL,
     PUBLIC_BASE_URL, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, IMAGE_UPDATE_WEBHOOK_URL,
     VAPID_PUBLIC_KEY, PUSH_ENABLED,
     CHAT_RETENTION_DAYS, MESSAGE_RETENTION_DAYS, REPORT_RETENTION_DAYS,
@@ -1576,6 +1714,7 @@ const routeDependencies = {
     addEventClient, sendEvent, getConversationForUser, getBlockStatus, getExistingConversation,
     personalAvatarLimit, conversationPair, getImageUpdateState, escapeHtml, sendMail, renderEmailTemplate,
     parseNewsVideoAttachment, broadcastEvent, sendNewsPushNotification, getMailer,
+    encryptText, decryptText, encryptBuffer, decryptBuffer, decryptMessageRows, decryptAttachmentRows,
 };
 
 registerPageRoutes(app, routeDependencies);
@@ -1591,6 +1730,7 @@ app.use((error, req, res, next) => {
 waitForDatabase()
     .then(async () => {
         if (DATABASE_URL) {
+            await migratePlaintextMessagesToEncryptedStorage();
             await runRetentionCleanup();
             const archiveCleanupTimer = setInterval(() => {
                 runRetentionCleanup().catch((error) => {

@@ -2,11 +2,12 @@ function registerAdminRoutes(app, dependencies) {
     const {
         ADMIN_PASSWORD, ADMIN_USER, ADMIN_SESSION_COOKIE, CHAT_RETENTION_DAYS, MESSAGE_RETENTION_DAYS,
         REPORT_RETENTION_DAYS, OPEN_REPORT_RETENTION_DAYS, ADMIN_AUDIT_RETENTION_DAYS,
-        AGE_VERIFICATION_PENDING_RETENTION_DAYS, IMAGE_UPDATE_WEBHOOK_URL,
+        AGE_VERIFICATION_PENDING_RETENTION_DAYS, IMAGE_UPDATE_WEBHOOK_URL, ADMIN_2FA_EMAIL,
         getDashboardData, renderAdminLogin, renderDashboard, requireAdminAuth, hasAdminSession,
-        createAdminSessionToken, query, dispatchImageUpdate, getImageUpdateState,
+        createAdminSessionToken, query, dispatchImageUpdate, getImageUpdateState, hashPassword, verifyPassword,
         optimizeImageAttachment, parseNotificationSoundAttachment, parseId, createZipArchive, zipPathSegment,
         parseNewsVideoAttachment, broadcastEvent, sendNewsPushNotification, sendEvent,
+        crypto, sendMail, renderEmailTemplate, getMailer, decryptMessageRows, decryptAttachmentRows,
     } = dependencies;
 app.get('/admin', async (req, res) => {
     if (!ADMIN_PASSWORD) {
@@ -17,22 +18,74 @@ app.get('/admin', async (req, res) => {
     return res.send(renderDashboard(data));
 });
 
-app.post('/admin/login', (req, res) => {
-    if (!ADMIN_PASSWORD) {
-        return res.status(503).json({ error: 'Die Admin-Anmeldung ist nicht konfiguriert' });
-    }
-    const username = String(req.body.username || '');
-    const password = String(req.body.password || '');
-    if (username !== ADMIN_USER || password !== ADMIN_PASSWORD) {
-        return res.status(401).json({ error: 'Benutzername oder Passwort ist falsch' });
-    }
+function createAdminLoginCode() {
+    return String(crypto.randomInt(0, 1000000)).padStart(6, '0');
+}
+
+function setAdminSessionCookie(res) {
     res.cookie(ADMIN_SESSION_COOKIE, createAdminSessionToken(), {
         httpOnly: true,
         sameSite: 'strict',
         maxAge: 1000 * 60 * 60 * 12,
         path: '/admin',
     });
-    return res.json({ ok: true });
+}
+
+app.post('/admin/login', async (req, res, next) => {
+    if (!ADMIN_PASSWORD) {
+        return res.status(503).json({ error: 'Die Admin-Anmeldung ist nicht konfiguriert' });
+    }
+    try {
+        const username = String(req.body.username || '');
+        const password = String(req.body.password || '');
+        if (username !== ADMIN_USER || password !== ADMIN_PASSWORD) {
+            return res.status(401).json({ error: 'Benutzername oder Passwort ist falsch' });
+        }
+        if (!getMailer()) return res.status(503).json({ error: 'Admin-2FA braucht vollstaendige SMTP-Konfiguration' });
+        const code = createAdminLoginCode();
+        await query(
+            `insert into admin_login_codes (admin_user, code_hash, expires_at)
+             values ($1, $2, now() + interval '10 minutes')`,
+            [ADMIN_USER, hashPassword(code)],
+        );
+        await sendMail({
+            to: ADMIN_2FA_EMAIL,
+            subject: 'Dein JustChat Admin-Code',
+            text: `Dein Admin-Login-Code lautet: ${code}\n\nDer Code ist 10 Minuten gueltig.`,
+            html: renderEmailTemplate({
+                title: 'Admin-Login bestaetigen',
+                greeting: 'Hallo Admin,',
+                message: 'jemand meldet sich im JustChat-Adminbereich an. Verwende diesen Code nur, wenn du das bist.',
+                contentHtml: `<div style="font-size:28px;font-weight:800;letter-spacing:6px;">${code}</div>`,
+                note: 'Der Code ist 10 Minuten gueltig. Wenn du das nicht warst, aendere dein Admin-Passwort.',
+            }),
+        });
+        return res.json({ twoFactorRequired: true, email: ADMIN_2FA_EMAIL });
+    } catch (error) {
+        return next(error);
+    }
+});
+
+app.post('/admin/login/verify', async (req, res, next) => {
+    try {
+        const code = String(req.body.code || '').replace(/\D/g, '').slice(0, 6);
+        if (!/^\d{6}$/.test(code)) return res.status(400).json({ error: 'Bitte gib den 6-stelligen Code ein' });
+        const result = await query(
+            `select id, code_hash
+             from admin_login_codes
+             where admin_user = $1 and used_at is null and expires_at > now()
+             order by created_at desc
+             limit 5`,
+            [ADMIN_USER],
+        );
+        const match = result.rows.find((row) => verifyPassword(code, row.code_hash));
+        if (!match) return res.status(401).json({ error: 'Code ist falsch oder abgelaufen' });
+        await query('update admin_login_codes set used_at = now() where id = $1', [match.id]);
+        setAdminSessionCookie(res);
+        return res.json({ ok: true });
+    } catch (error) {
+        return next(error);
+    }
 });
 
 app.post('/admin/logout', (req, res) => {
@@ -187,6 +240,8 @@ app.get('/admin/api/overview', requireAdminAuth, async (req, res, next) => {
             warning = `News konnten nicht geladen werden: ${error.message}`;
         }
 
+        decryptMessageRows(reports.rows);
+        decryptMessageRows(groupReports.rows);
         return res.json({
             summary: summary.rows[0],
             users: users.rows,
@@ -224,7 +279,7 @@ app.get('/admin/api/reports/:id/attachment', requireAdminAuth, async (req, res, 
         res.type(result.rows[0].mime_type);
         res.set('Content-Disposition', `inline; filename="${zipPathSegment(result.rows[0].file_name)}"`);
         res.set('Cache-Control', 'private, no-store');
-        return res.send(result.rows[0].data);
+        return res.send(decryptAttachmentRows(result.rows)[0].data);
     } catch (error) {
         return next(error);
     }
@@ -245,7 +300,7 @@ app.get('/admin/api/group-reports/:id/attachment', requireAdminAuth, async (req,
         res.type(result.rows[0].mime_type);
         res.set('Content-Disposition', `inline; filename="${zipPathSegment(result.rows[0].file_name)}"`);
         res.set('Cache-Control', 'private, no-store');
-        return res.send(result.rows[0].data);
+        return res.send(decryptAttachmentRows(result.rows)[0].data);
     } catch (error) {
         return next(error);
     }
@@ -447,6 +502,8 @@ app.get('/admin/reports/:id/export', requireAdminAuth, async (req, res, next) =>
             'select id, message_id, file_name, mime_type, size_bytes, created_at, data from message_attachments where message_id in (select id from messages where conversation_id = $1) order by message_id, id',
             [report.conversation_id],
         );
+        decryptMessageRows(messages.rows);
+        decryptAttachmentRows(attachments.rows);
         const exportedAt = new Date().toISOString();
         const attachmentMetadata = attachments.rows.map((attachment) => ({
             id: attachment.id,
@@ -733,6 +790,8 @@ app.get('/admin/export', requireAdminAuth, async (req, res, next) => {
              order by m.conversation_id, a.message_id, a.id`,
             [userId],
         );
+        decryptMessageRows(messages.rows);
+        decryptAttachmentRows(attachments.rows);
         const exportedAt = new Date().toISOString();
         const attachmentMetadata = attachments.rows.map((attachment) => ({
             id: attachment.id,

@@ -186,8 +186,13 @@ function renderAdminLogin() {
                             </button>
                         </div>
                     </div>
-                    <p id="adminLoginError" class="login-error hidden" role="alert"></p>
-                    <button id="adminLoginButton" type="submit">Anmelden</button>
+                <p id="adminLoginError" class="login-error hidden" role="alert"></p>
+                <div id="adminCodePanel" class="field hidden">
+                    <label for="adminCode">2FA-Code aus E-Mail</label>
+                    <input id="adminCode" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="000000">
+                    <p id="adminCodeHint" class="muted"></p>
+                </div>
+                <button id="adminLoginButton" type="submit">Anmelden</button>
                 </form>
                 <p class="muted" style="margin-top: 18px;"><a href="/">Zur Web-App</a></p>
             </section>
@@ -196,6 +201,10 @@ function renderAdminLogin() {
             const form = document.getElementById('adminLoginForm');
             const error = document.getElementById('adminLoginError');
             const button = document.getElementById('adminLoginButton');
+            const codePanel = document.getElementById('adminCodePanel');
+            const codeInput = document.getElementById('adminCode');
+            const codeHint = document.getElementById('adminCodeHint');
+            let waitingForCode = false;
             const passwordToggle = document.querySelector('[data-password-toggle]');
             passwordToggle.addEventListener('click', () => {
                 const password = document.getElementById(passwordToggle.dataset.passwordToggle);
@@ -210,16 +219,27 @@ function renderAdminLogin() {
                 error.classList.add('hidden');
                 button.disabled = true;
                 try {
-                    const response = await fetch('/admin/login', {
+                    const response = await fetch(waitingForCode ? '/admin/login/verify' : '/admin/login', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
+                        body: waitingForCode ? JSON.stringify({
+                            code: codeInput.value,
+                        }) : JSON.stringify({
                             username: document.getElementById('adminUsername').value,
                             password: document.getElementById('adminPassword').value,
                         }),
                     });
                     const data = await response.json().catch(() => ({}));
                     if (!response.ok) throw new Error(data.error || 'Anmeldung fehlgeschlagen');
+                    if (data.twoFactorRequired) {
+                        waitingForCode = true;
+                        codePanel.classList.remove('hidden');
+                        codeHint.textContent = 'Code wurde an ' + (data.email || 'die Admin-Mailadresse') + ' gesendet.';
+                        button.textContent = 'Code bestätigen';
+                        button.disabled = false;
+                        codeInput.focus();
+                        return;
+                    }
                     window.location.replace('/admin');
                 } catch (submitError) {
                     error.textContent = submitError.message;

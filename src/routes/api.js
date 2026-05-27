@@ -4,6 +4,7 @@ function registerApiRoutes(app, dependencies) {
         getExistingConversation, normalizeUsername, cleanDisplayName, cleanEmail, validateCleanName,
         sendEvent, getBlockStatus, conversationPair, getConversationForUser, cleanMessage,
         findBlockedDomain, parseAttachment, parseNewsVideoAttachment, addEventClient, PUSH_ENABLED, parseBirthDate, isAtLeastAge, getMailer,
+        encryptText, decryptText, encryptBuffer, decryptMessageRows, decryptAttachmentRows,
     } = dependencies;
 const REPORT_CATEGORIES = new Set([
     'sexual_content', 'grooming', 'child_safety', 'harassment', 'threats',
@@ -411,13 +412,14 @@ app.get('/api/users', requireAuth, async (req, res, next) => {
                 on other_user.id = case when c.user_one_id = $1 then c.user_two_id else c.user_one_id end
              where $1 in (c.user_one_id, c.user_two_id)
                 and case when c.user_one_id = $1 then not c.hidden_for_user_one else not c.hidden_for_user_two end
-                and m.body <> ''
-                and lower(m.body) like $2
              order by m.created_at desc
-             limit 30`,
-            [req.user.id, `%${search}%`],
+             limit 200`,
+            [req.user.id],
         );
-        return res.json({ users: users.rows, messages: messages.rows });
+        const visibleMessages = decryptMessageRows(messages.rows)
+            .filter((message) => message.body && message.body.toLowerCase().includes(search))
+            .slice(0, 30);
+        return res.json({ users: users.rows, messages: visibleMessages });
     } catch (error) {
         return next(error);
     }
@@ -660,6 +662,9 @@ app.get('/api/groups', requireAuth, async (req, res, next) => {
              order by latest.created_at desc nulls last, g.created_at desc`,
             [req.user.id],
         );
+        result.rows.forEach((group) => {
+            if (group.last_message) group.last_message = decryptText(group.last_message);
+        });
         const invitations = await query(
             `select invitation.id, invitation.group_id, invitation.created_at,
                 g.name, g.owner_user_id, inviter.display_name as inviter_display_name, inviter.username as inviter_username
@@ -765,15 +770,15 @@ app.get('/api/groups/:id/messages', requireAuth, async (req, res, next) => {
              limit 200`,
             [groupId, req.user.id],
         );
-        const messageRows = messages.rows.reverse();
+        const messageRows = decryptMessageRows(messages.rows.reverse());
         if (messageRows.length) {
             const attachments = await query(
-                `select id, group_message_id, file_name, mime_type, size_bytes, encode(data, 'base64') as data_base64
+                `select id, group_message_id, file_name, mime_type, size_bytes, data
                  from group_message_attachments
                  where group_message_id = any($1::bigint[])`,
                 [messageRows.map((message) => message.id)],
             );
-            const byMessage = new Map(attachments.rows.map((attachment) => [String(attachment.group_message_id), {
+            const byMessage = new Map(decryptAttachmentRows(attachments.rows).map((attachment) => [String(attachment.group_message_id), {
                 id: attachment.id,
                 file_name: attachment.file_name,
                 mime_type: attachment.mime_type,
@@ -1051,22 +1056,23 @@ app.post('/api/groups/:id/messages', requireAuth, async (req, res, next) => {
             `insert into group_messages (group_id, sender_id, body)
              values ($1, $2, $3)
              returning id, group_id, sender_id, body, created_at`,
-            [groupId, req.user.id, body],
+            [groupId, req.user.id, encryptText(body)],
         );
         const message = inserted.rows[0];
+        message.body = decryptText(message.body);
         if (attachment) {
             const stored = await query(
                 `insert into group_message_attachments (group_message_id, file_name, mime_type, size_bytes, data)
                  values ($1, $2, $3, $4, $5)
                  returning id, file_name, mime_type, size_bytes, encode(data, 'base64') as data_base64`,
-                [message.id, attachment.fileName, attachment.mimeType, attachment.sizeBytes, attachment.data],
+                [message.id, attachment.fileName, attachment.mimeType, attachment.sizeBytes, encryptBuffer(attachment.data)],
             );
             message.attachment = {
                 id: stored.rows[0].id,
                 file_name: stored.rows[0].file_name,
                 mime_type: stored.rows[0].mime_type,
                 size_bytes: stored.rows[0].size_bytes,
-                data_url: `data:${stored.rows[0].mime_type};base64,${stored.rows[0].data_base64}`,
+                data_url: `data:${stored.rows[0].mime_type};base64,${attachment.data.toString('base64')}`,
             };
         } else {
             message.attachment = null;
@@ -1183,6 +1189,9 @@ app.get('/api/conversations', requireAuth, async (req, res, next) => {
              order by latest.created_at desc nulls last, c.created_at desc`,
             [req.user.id],
         );
+        result.rows.forEach((row) => {
+            if (row.last_message) row.last_message = decryptText(row.last_message);
+        });
         return res.json({ conversations: result.rows });
     } catch (error) {
         return next(error);
@@ -1270,17 +1279,17 @@ app.get('/api/conversations/:id/messages', requireAuth, async (req, res, next) =
                  order by created_at asc`,
                 [conversation.id, req.user.id],
             );
-        const messageRows = messages.rows;
+        const messageRows = decryptMessageRows(messages.rows);
         const messageIds = messageRows.map((message) => message.id);
 
         if (messageIds.length > 0) {
             const attachments = await query(
-                `select id, message_id, file_name, mime_type, size_bytes, encode(data, 'base64') as data_base64
+                `select id, message_id, file_name, mime_type, size_bytes, data
                  from message_attachments
                  where message_id = any($1::bigint[])`,
                 [messageIds],
             );
-            const attachmentsByMessage = new Map(attachments.rows.map((attachment) => [
+            const attachmentsByMessage = new Map(decryptAttachmentRows(attachments.rows).map((attachment) => [
                 String(attachment.message_id),
                 {
                     id: attachment.id,
@@ -1382,16 +1391,17 @@ app.post('/api/conversations/:id/messages', requireAuth, async (req, res, next) 
             `insert into messages (conversation_id, sender_id, body)
              values ($1, $2, $3)
              returning id, conversation_id, sender_id, body, created_at, read_at`,
-            [conversation.id, req.user.id, body],
+            [conversation.id, req.user.id, encryptText(body)],
         );
         const message = result.rows[0];
+        message.body = decryptText(message.body);
 
         if (attachment) {
             const attachmentResult = await query(
                 `insert into message_attachments (message_id, file_name, mime_type, size_bytes, data)
                  values ($1, $2, $3, $4, $5)
                  returning id, file_name, mime_type, size_bytes, encode(data, 'base64') as data_base64`,
-                [message.id, attachment.fileName, attachment.mimeType, attachment.sizeBytes, attachment.data],
+                [message.id, attachment.fileName, attachment.mimeType, attachment.sizeBytes, encryptBuffer(attachment.data)],
             );
             const storedAttachment = attachmentResult.rows[0];
             message.attachment = {
@@ -1399,7 +1409,7 @@ app.post('/api/conversations/:id/messages', requireAuth, async (req, res, next) 
                 file_name: storedAttachment.file_name,
                 mime_type: storedAttachment.mime_type,
                 size_bytes: storedAttachment.size_bytes,
-                data_url: `data:${storedAttachment.mime_type};base64,${storedAttachment.data_base64}`,
+                data_url: `data:${storedAttachment.mime_type};base64,${attachment.data.toString('base64')}`,
             };
         } else {
             message.attachment = null;
@@ -1506,7 +1516,7 @@ app.get('/api/conversations/:id/library', requireAuth, async (req, res, next) =>
         const media = await query(
             `select attachment.id, attachment.message_id, attachment.file_name, attachment.mime_type,
                 attachment.size_bytes, attachment.created_at, message.sender_id,
-                encode(attachment.data, 'base64') as data_base64
+                attachment.data
              from message_attachments attachment
              join messages message on message.id = attachment.message_id
              where message.conversation_id = $1
@@ -1522,8 +1532,8 @@ app.get('/api/conversations/:id/library', requireAuth, async (req, res, next) =>
             [conversation.id],
         );
         return res.json({
-            favorites: favorites.rows,
-            media: media.rows.map((attachment) => ({
+            favorites: decryptMessageRows(favorites.rows),
+            media: decryptAttachmentRows(media.rows).map((attachment) => ({
                 ...attachment,
                 data_url: `data:${attachment.mime_type};base64,${attachment.data_base64}`,
             })),
