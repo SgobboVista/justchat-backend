@@ -233,6 +233,7 @@ function renderAdminLogin() {
 
 function renderDashboard(data) {
     const dbStatus = statusClass(data.database.online);
+    const retention = data.retention || {};
 
     return renderAdminLayout(`
         <header>
@@ -381,7 +382,7 @@ function renderDashboard(data) {
             </section>
         </section>
 
-        <div class="notice">Hinweis: Von Nutzern entfernte Chats werden mindestens 30 Tage serverseitig aufbewahrt. ZIP-Archive enthalten private Chatdaten und Originaldateien; sie dürfen nur für einen berechtigten Zweck und mit passender rechtlicher Grundlage herausgegeben werden.</div>
+        <div class="notice">Hinweis: Beidseitig entfernte private Chats werden maximal ${escapeHtml(retention.chatDays || 30)} Tage serverseitig aufbewahrt, sofern keine Meldung oder Favorisierung entgegensteht. Nicht favorisierte Chat- und Gruppeninhalte werden maximal ${escapeHtml(retention.messageDays || 365)} Tage gespeichert; offene Meldungen maximal ${escapeHtml(retention.openReportDays || 365)} Tage, geprüfte Meldungen und Admin-Auditdaten maximal ${escapeHtml(retention.reviewedReportDays || 180)} bzw. ${escapeHtml(retention.auditDays || 180)} Tage. ZIP-Archive enthalten private Chatdaten und Originaldateien; sie dürfen nur für einen berechtigten Zweck und mit passender rechtlicher Grundlage herausgegeben werden.</div>
 
         <script data-cfasync="false">
             const state = { users: [], avatars: [], sounds: [], news: [], reports: [], audit: [], imageUpdate: null, activeTab: 'overview', userSearch: '', exportUserId: '' };

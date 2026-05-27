@@ -1,6 +1,7 @@
 function registerAdminRoutes(app, dependencies) {
     const {
-        ADMIN_PASSWORD, ADMIN_USER, ADMIN_SESSION_COOKIE, CHAT_RETENTION_DAYS, IMAGE_UPDATE_WEBHOOK_URL,
+        ADMIN_PASSWORD, ADMIN_USER, ADMIN_SESSION_COOKIE, CHAT_RETENTION_DAYS, MESSAGE_RETENTION_DAYS,
+        REPORT_RETENTION_DAYS, OPEN_REPORT_RETENTION_DAYS, ADMIN_AUDIT_RETENTION_DAYS, IMAGE_UPDATE_WEBHOOK_URL,
         getDashboardData, renderAdminLogin, renderDashboard, requireAdminAuth, hasAdminSession,
         createAdminSessionToken, query, dispatchImageUpdate, getImageUpdateState,
         optimizeImageAttachment, parseNotificationSoundAttachment, parseId, createZipArchive, zipPathSegment,
@@ -661,7 +662,7 @@ app.get('/admin/export', requireAdminAuth, async (req, res, next) => {
         const manifest = {
             exported_at: exportedAt,
             purpose: 'Archivexport für berechtigte Sicherheits-, Rechts- oder Behördenanfragen',
-            retention_policy: `Von Nutzern entfernte Chats werden mindestens ${CHAT_RETENTION_DAYS} Tage aufbewahrt. Beidseitig entfernte Chats dürfen danach bereinigt werden.`,
+            retention_policy: `Beidseitig entfernte private Chats werden maximal ${CHAT_RETENTION_DAYS} Tage nach letzter Entfernung aufbewahrt, sofern keine Meldung oder Favorisierung entgegensteht. Nicht favorisierte Chat- und Gruppeninhalte werden maximal ${MESSAGE_RETENTION_DAYS} Tage aufbewahrt. Offene Meldungen werden maximal ${OPEN_REPORT_RETENTION_DAYS} Tage, abgeschlossene Meldungen maximal ${REPORT_RETENTION_DAYS} Tage nach Prüfung gespeichert. Admin-Auditdaten werden maximal ${ADMIN_AUDIT_RETENTION_DAYS} Tage gespeichert.`,
             selected_user_id: userId || null,
             users: users.rows,
             conversations: conversations.rows,

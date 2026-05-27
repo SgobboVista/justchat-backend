@@ -782,6 +782,7 @@ function renderMessengerApp({ appVersion = '' } = {}) {
                                 <li><strong>Bild-Schutz</strong><span>Zu sendende Chatbilder werden automatisch auf Nackt- und sexuelle Inhalte geprüft und bei Erkennung blockiert.</span></li>
                                 <li><strong>Meldesystem</strong><span>Nachrichten, Dateien und Medien melden; Moderationsmaßnahmen werden im betroffenen Chat sichtbar angezeigt.</span></li>
                                 <li><strong>Favoriten und Medienarchiv</strong><span>Nachrichten oder Dateien mit Herz dauerhaft behalten und Medien je Chat nach Art und Datum anzeigen.</span></li>
+                                <li><strong>DSGVO-Aufbewahrung</strong><span>Chats, Meldungen und Admin-Auditdaten werden nach festen Maximalfristen automatisch bereinigt.</span></li>
                                 <li><strong>Altersgrenze</strong><span>JustChat ist ab 16 Jahren verfügbar und erfordert ein Geburtsdatum zur Prüfung.</span></li>
                                 <li><strong>Profilanpassung</strong><span>Anzeigename, Info, Profilbild, Benachrichtigungston und GIF-Wiedergabe verwalten.</span></li>
                                 <li><strong>Sicherheit</strong><span>E-Mail-Bestätigung, Passwort-Wiederherstellung und optionale Zwei-Faktor-Anmeldung.</span></li>
@@ -792,6 +793,9 @@ function renderMessengerApp({ appVersion = '' } = {}) {
                         <section class="settings-section more-copy hidden" data-more-panel="privacy">
                             <h3>Datenschutzbestimmungen</h3>
                             <p>JustChat verarbeitet Kontodaten, Profilinformationen, Kontakte, Nachrichten, Gruppendaten und von dir hochgeladene Dateien, damit die Chat-Funktionen bereitgestellt werden können.</p>
+                            <p>Nachrichten, Dateien und Medien in privaten Chats und Gruppen werden nur so lange gespeichert, wie sie für die Bereitstellung, Sicherheit oder Moderation erforderlich sind. Nicht favorisierte Inhalte werden automatisch nach maximal 365 Tagen gelöscht.</p>
+                            <p>Beidseitig entfernte private Chats werden maximal 30 Tage serverseitig aufbewahrt, sofern keine Meldung oder Favorisierung entgegensteht. Inhalte mit Herz bleiben erhalten, bis du die Favorisierung entfernst oder dein Konto nach den geltenden Regeln gelöscht wird.</p>
+                            <p>Meldungen und Moderationsnachweise werden nur für Prüfung, Schutzmaßnahmen und berechtigte Rechtszwecke genutzt: offene Meldungen maximal 365 Tage, abgeschlossene Meldungen maximal 180 Tage nach Prüfung. Admin-Auditdaten wie Verwaltungsaktionen und IP-Hinweise werden maximal 180 Tage gespeichert.</p>
                             <p>Push-Benachrichtigungen werden nur genutzt, wenn du sie aktivierst. Blockierungen und Sichtbarkeitseinstellungen helfen dir, deine Privatsphäre selbst zu steuern.</p>
                             <p>Bitte teile in Chats nur Inhalte, die du mit den jeweiligen Empfängern teilen möchtest.</p>
                         </section>

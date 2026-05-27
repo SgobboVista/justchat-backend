@@ -46,8 +46,11 @@ const startedAt = new Date();
 let pool;
 let mailer;
 const eventClients = new Map();
-const CHAT_RETENTION_DAYS = 30;
-const MESSAGE_RETENTION_DAYS = 365;
+const CHAT_RETENTION_DAYS = parseRetentionDays('CHAT_RETENTION_DAYS', 30);
+const MESSAGE_RETENTION_DAYS = parseRetentionDays('MESSAGE_RETENTION_DAYS', 365);
+const REPORT_RETENTION_DAYS = parseRetentionDays('REPORT_RETENTION_DAYS', 180);
+const OPEN_REPORT_RETENTION_DAYS = parseRetentionDays('OPEN_REPORT_RETENTION_DAYS', 365);
+const ADMIN_AUDIT_RETENTION_DAYS = parseRetentionDays('ADMIN_AUDIT_RETENTION_DAYS', 180);
 const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
 const MAX_IMAGE_INPUT_BYTES = 20 * 1024 * 1024;
 const MAX_IMAGE_WIDTH = 1920;
@@ -99,6 +102,12 @@ function escapeHtml(value) {
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#39;');
+}
+
+function parseRetentionDays(envName, fallbackDays) {
+    const value = Number(process.env[envName] || fallbackDays);
+    if (!Number.isFinite(value) || value < 1) return fallbackDays;
+    return Math.floor(Math.min(value, 3650));
 }
 
 function zipPathSegment(value) {
@@ -1150,6 +1159,7 @@ async function initDatabase() {
         create index if not exists idx_group_message_attachments_message
             on group_message_attachments(group_message_id);
         create index if not exists idx_group_content_reports_status_created on group_content_reports(status, created_at desc);
+        create index if not exists idx_group_content_reports_reviewed on group_content_reports(reviewed_at);
         create index if not exists idx_group_invitations_invitee_status
             on group_invitations(invitee_user_id, status, created_at desc);
         create index if not exists idx_conversations_user_one
@@ -1167,7 +1177,9 @@ async function initDatabase() {
         create index if not exists idx_news_posts_created on news_posts(created_at desc);
         create index if not exists idx_push_subscriptions_user on push_subscriptions(user_id);
         create index if not exists idx_content_reports_status_created on content_reports(status, created_at desc);
+        create index if not exists idx_content_reports_reviewed on content_reports(reviewed_at);
         create index if not exists idx_message_favorites_message on message_favorites(message_id);
+        create index if not exists idx_admin_audit_logs_created on admin_audit_logs(created_at);
     `);
 }
 
@@ -1209,6 +1221,64 @@ async function purgeExpiredMessages() {
             ['system', `message_expiry_cleanup_${deleted.rowCount}`, null],
         );
     }
+}
+
+async function purgeExpiredGroupMessages() {
+    const deleted = await query(
+        `delete from group_messages message
+         where message.created_at < now() - interval '${MESSAGE_RETENTION_DAYS} days'
+            and not exists (select 1 from group_content_reports report where report.group_message_id = message.id)
+         returning id`,
+    );
+    if (deleted.rowCount > 0) {
+        await query(
+            `insert into admin_audit_logs (admin_user, action, ip_address)
+             values ($1, $2, $3)`,
+            ['system', `group_message_expiry_cleanup_${deleted.rowCount}`, null],
+        );
+    }
+}
+
+async function purgeExpiredReports() {
+    const privateReports = await query(
+        `delete from content_reports
+         where (reviewed_at is not null and reviewed_at < now() - interval '${REPORT_RETENTION_DAYS} days')
+            or (reviewed_at is null and created_at < now() - interval '${OPEN_REPORT_RETENTION_DAYS} days')
+         returning id`,
+    );
+    const groupReports = await query(
+        `delete from group_content_reports
+         where (reviewed_at is not null and reviewed_at < now() - interval '${REPORT_RETENTION_DAYS} days')
+            or (reviewed_at is null and created_at < now() - interval '${OPEN_REPORT_RETENTION_DAYS} days')
+         returning id`,
+    );
+    const removedCount = privateReports.rowCount + groupReports.rowCount;
+    if (removedCount > 0) {
+        await query(
+            `insert into admin_audit_logs (admin_user, action, ip_address)
+             values ($1, $2, $3)`,
+            ['system', `report_expiry_cleanup_${removedCount}`, null],
+        );
+    }
+}
+
+async function purgeExpiredAdminAuditLogs() {
+    const deleted = await query(
+        `delete from admin_audit_logs
+         where created_at < now() - interval '${ADMIN_AUDIT_RETENTION_DAYS} days'
+         returning id`,
+    );
+    if (deleted.rowCount > 0) {
+        console.log(`Admin-Audit-Bereinigung: ${deleted.rowCount} Eintraege geloescht`);
+    }
+}
+
+async function runRetentionCleanup() {
+    await purgeExpiredReports();
+    await purgeExpiredArchivedConversations();
+    await purgeExpiredMessages();
+    await purgeExpiredGroupMessages();
+    await purgeExpiredAdminAuditLogs();
 }
 
 async function waitForDatabase() {
@@ -1393,6 +1463,13 @@ async function getDashboardData() {
         authConfigured: Boolean(ADMIN_PASSWORD),
         onlineEventClients: Array.from(eventClients.values()).reduce((sum, clients) => sum + clients.size, 0),
         imageUpdate: imageUpdateState,
+        retention: {
+            chatDays: CHAT_RETENTION_DAYS,
+            messageDays: MESSAGE_RETENTION_DAYS,
+            openReportDays: OPEN_REPORT_RETENTION_DAYS,
+            reviewedReportDays: REPORT_RETENTION_DAYS,
+            auditDays: ADMIN_AUDIT_RETENTION_DAYS,
+        },
     };
 
     if (dbPool) {
@@ -1441,7 +1518,8 @@ const routeDependencies = {
     ADMIN_PASSWORD, ADMIN_USER, ADMIN_SESSION_COOKIE, DATABASE_URL,
     PUBLIC_BASE_URL, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, IMAGE_UPDATE_WEBHOOK_URL,
     VAPID_PUBLIC_KEY, PUSH_ENABLED,
-    CHAT_RETENTION_DAYS, MESSAGE_RETENTION_DAYS,
+    CHAT_RETENTION_DAYS, MESSAGE_RETENTION_DAYS, REPORT_RETENTION_DAYS,
+    OPEN_REPORT_RETENTION_DAYS, ADMIN_AUDIT_RETENTION_DAYS,
     APP_VERSION,
     crypto, getDashboardData, renderAdminLayout, renderAdminLogin, renderDashboard, renderMessengerApp,
     requireAdminAuth, requireAuth, hasAdminSession, createAdminSessionToken,
@@ -1467,14 +1545,10 @@ app.use((error, req, res, next) => {
 waitForDatabase()
     .then(async () => {
         if (DATABASE_URL) {
-            await purgeExpiredArchivedConversations();
-            await purgeExpiredMessages();
+            await runRetentionCleanup();
             const archiveCleanupTimer = setInterval(() => {
-                purgeExpiredArchivedConversations().catch((error) => {
-                    console.error('Archiv-Bereinigung fehlgeschlagen:', error.message);
-                });
-                purgeExpiredMessages().catch((error) => {
-                    console.error('Nachrichten-Bereinigung fehlgeschlagen:', error.message);
+                runRetentionCleanup().catch((error) => {
+                    console.error('DSGVO-Aufbewahrungsbereinigung fehlgeschlagen:', error.message);
                 });
             }, 60 * 60 * 1000);
             archiveCleanupTimer.unref();
