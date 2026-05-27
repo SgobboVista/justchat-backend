@@ -1309,14 +1309,6 @@ function renderMessengerApp({ appVersion = '' } = {}) {
             return cutoff.getFullYear() + '-' + month + '-' + day;
         }
 
-        function formatBirthDateInput(value) {
-            const digits = String(value || '').replace(/\D/g, '').slice(0, 8);
-            const day = digits.slice(0, 2);
-            const month = digits.slice(2, 4);
-            const year = digits.slice(4, 8);
-            return [day, month, year].filter(Boolean).join('.');
-        }
-
         function birthDateForApi(value) {
             const digits = String(value || '').replace(/\D/g, '');
             if (digits.length !== 8) return '';
@@ -1327,17 +1319,13 @@ function renderMessengerApp({ appVersion = '' } = {}) {
         }
 
         function isCompleteBirthDateInput(value) {
-            return /^\d{2}\.\d{2}\.\d{4}$/.test(String(value || '').trim());
+            const trimmed = String(value || '').trim();
+            return /^\d{2}\.\d{2}\.\d{4}$/.test(trimmed) || /^\d{8}$/.test(trimmed);
         }
 
         const maximumBirthDate = maximumBirthDateForMinimumAge();
         $('birthDate').max = maximumBirthDate;
         $('requiredBirthDate').max = maximumBirthDate;
-        ['birthDate', 'requiredBirthDate'].forEach((inputId) => {
-            $(inputId).addEventListener('input', (event) => {
-                event.target.value = formatBirthDateInput(event.target.value);
-            });
-        });
 
         function updateBirthDateGate() {
             const required = Boolean(state.me && !state.me.banned_at && !state.me.birth_date);
