@@ -1311,8 +1311,12 @@ function renderMessengerApp({ appVersion = '' } = {}) {
         }
 
         function birthDateForApi(value) {
-            const digits = String(value || '').replace(/\D/g, '');
+            const s = String(value || '').trim();
+            // Accept ISO format directly (YYYY-MM-DD)
+            if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+            const digits = s.replace(/\D/g, '');
             if (digits.length !== 8) return '';
+            // Default: assume DDMMYYYY (e.g. TT.MM.JJJJ or 01011990)
             const day = digits.slice(0, 2);
             const month = digits.slice(2, 4);
             const year = digits.slice(4, 8);
@@ -1321,7 +1325,9 @@ function renderMessengerApp({ appVersion = '' } = {}) {
 
         function isCompleteBirthDateInput(value) {
             const trimmed = String(value || '').trim();
-            return /^\d{2}\.\d{2}\.\d{4}$/.test(trimmed) || /^\d{8}$/.test(trimmed);
+            return /^\d{2}\.\d{2}\.\d{4}$/.test(trimmed)
+                || /^\d{8}$/.test(trimmed)
+                || /^\d{4}-\d{2}-\d{2}$/.test(trimmed);
         }
 
         const maximumBirthDate = maximumBirthDateForMinimumAge();
@@ -1331,7 +1337,7 @@ function renderMessengerApp({ appVersion = '' } = {}) {
         if (_requiredBirthDateEl) _requiredBirthDateEl.max = maximumBirthDate;
 
         function updateBirthDateGate() {
-            const required = Boolean(state.me && !state.me.banned_at && !state.me.birth_date);
+            const required = Boolean(state.registerMode && state.me && !state.me.banned_at && !state.me.birth_date);
             $('birthDateGate').classList.toggle('hidden', !required);
             if (required) {
                 $('requiredBirthDate').focus();
