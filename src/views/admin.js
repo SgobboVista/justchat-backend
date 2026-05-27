@@ -47,6 +47,17 @@ function renderAdminLayout(content) {
         .two { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(320px, .85fr); gap: 16px; align-items: start; }
         .panel, .metric { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 20px; }
         .panel { margin-top: 16px; }
+        .admin-tabs { position: sticky; top: 0; z-index: 5; display: flex; gap: 8px; margin-bottom: 18px; padding: 8px; overflow-x: auto; scrollbar-width: thin; background: rgba(244, 247, 251, .96); border: 1px solid var(--line); border-radius: 12px; backdrop-filter: blur(8px); }
+        .admin-tab { flex: none; min-height: 46px; padding: 11px 15px; border-radius: 9px; background: transparent; color: var(--muted); white-space: nowrap; }
+        .admin-tab:hover { background: #edf3ff; color: var(--accent); }
+        .admin-tab.active { color: #fff; background: var(--accent); }
+        .tab-count { min-width: 20px; min-height: 20px; display: inline-grid; place-items: center; border-radius: 999px; padding: 0 6px; color: var(--error); background: #fee4e2; font-size: 12px; }
+        .admin-tab.active .tab-count { color: var(--accent); background: #fff; }
+        .tab-panel { display: none; }
+        .tab-panel.active { display: block; }
+        .tab-panel > .panel:first-child, .tab-panel > .grid:first-child, .tab-panel > .two:first-child { margin-top: 0; }
+        .dashboard-panels { margin-top: 16px; }
+        .dashboard-panels .panel { margin-top: 0; }
         .metric span { display: block; color: var(--muted); font-size: 13px; margin-bottom: 10px; }
         .metric strong { display: block; font-size: 24px; line-height: 1.15; overflow-wrap: anywhere; }
         .status { display: inline-flex; align-items: center; border-radius: 999px; border: 1px solid currentColor; padding: 6px 10px; font-size: 13px; font-weight: 700; }
@@ -79,6 +90,8 @@ function renderAdminLayout(content) {
         .password-toggle .eye-slash { display: none; }
         .password-toggle.visible .eye-slash { display: block; }
         table { width: 100%; border-collapse: collapse; }
+        .table-scroll { overflow: auto; margin-top: 16px; -webkit-overflow-scrolling: touch; }
+        .table-scroll table { min-width: 580px; }
         th, td { padding: 10px 8px; border-bottom: 1px solid #edf1f6; text-align: left; vertical-align: middle; }
         th { color: var(--muted); font-size: 12px; text-transform: uppercase; }
         .avatar-preview { width: 42px; height: 42px; border-radius: 50%; object-fit: cover; background: #eef2f7; border: 1px solid var(--line); }
@@ -121,15 +134,23 @@ function renderAdminLayout(content) {
         .hidden { display: none !important; }
         @media (max-width: 820px) {
             header { align-items: flex-start; flex-direction: column; }
+            header .toolbar { width: 100%; }
             .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
             .two { grid-template-columns: 1fr; }
             dl { grid-template-columns: 1fr; }
             .report-actions { grid-template-columns: 1fr; }
+            .admin-tabs { margin-left: -4px; margin-right: -4px; }
         }
         @media (max-width: 520px) {
             .grid { grid-template-columns: 1fr; }
             main { width: min(100% - 24px, 1120px); padding: 20px 0; }
             .panel, .metric { padding: 16px; }
+            header .toolbar .button, header .toolbar button { flex: 1 1 calc(50% - 5px); }
+            header .toolbar .status { flex: 1 1 100%; justify-content: center; }
+            .admin-tab { min-height: 44px; padding: 10px 13px; }
+            .panel .toolbar { display: grid; grid-template-columns: 1fr; }
+            .panel .toolbar > * { width: 100%; }
+            .news-head { align-items: flex-start; flex-direction: column; }
         }
     </style>
 </head>
@@ -225,34 +246,23 @@ function renderDashboard(data) {
             </div>
         </header>
         <p id="adminLoadError" class="load-error hidden" role="alert"></p>
-        <section class="grid" aria-label="Server Kennzahlen">
-            <div class="metric"><span>Nutzer</span><strong id="statUsers">-</strong></div>
-            <div class="metric"><span>Chats</span><strong id="statConversations">-</strong></div>
-            <div class="metric"><span>Nachrichten</span><strong id="statMessages">-</strong></div>
-            <div class="metric"><span>Live-Verbindungen</span><strong>${escapeHtml(data.onlineEventClients)}</strong></div>
-        </section>
-        <div class="two">
-            <section class="panel">
-                <h2>Nutzer</h2>
-                <div class="field">
-                    <label for="userFilter">Nutzer für Export auswählen</label>
-                    <select id="userFilter">
-                        <option value="">Alle Nutzer</option>
-                    </select>
-                </div>
-                <div class="toolbar">
-                    <a id="downloadExport" class="button" href="/admin/export">ZIP-Archiv herunterladen</a>
-                    <button id="downloadSelected" class="secondary" type="button">Auswahl als ZIP</button>
-                </div>
-                <div style="overflow:auto; margin-top: 16px;">
-                    <table>
-                        <thead><tr><th>Avatar</th><th>Nutzer</th><th>E-Mail</th><th>Chats</th><th>Nachrichten</th></tr></thead>
-                        <tbody id="userRows"></tbody>
-                    </table>
-                </div>
-            </section>
+        <nav id="adminTabs" class="admin-tabs" role="tablist" aria-label="Adminbereiche">
+            <button class="admin-tab active" type="button" role="tab" aria-selected="true" aria-controls="tabOverview" data-admin-tab="overview">Übersicht</button>
+            <button class="admin-tab" type="button" role="tab" aria-selected="false" aria-controls="tabUsers" data-admin-tab="users">Nutzer</button>
+            <button class="admin-tab" type="button" role="tab" aria-selected="false" aria-controls="tabReports" data-admin-tab="reports">Meldungen <span id="reportTabCount" class="tab-count hidden">0</span></button>
+            <button class="admin-tab" type="button" role="tab" aria-selected="false" aria-controls="tabNews" data-admin-tab="news">News</button>
+            <button class="admin-tab" type="button" role="tab" aria-selected="false" aria-controls="tabMedia" data-admin-tab="media">Medien</button>
+            <button class="admin-tab" type="button" role="tab" aria-selected="false" aria-controls="tabAudit" data-admin-tab="audit">Audit</button>
+        </nav>
 
-            <aside>
+        <section id="tabOverview" class="tab-panel active" role="tabpanel" data-admin-panel="overview">
+            <section class="grid" aria-label="Server Kennzahlen">
+                <div class="metric"><span>Nutzer</span><strong id="statUsers">-</strong></div>
+                <div class="metric"><span>Chats</span><strong id="statConversations">-</strong></div>
+                <div class="metric"><span>Nachrichten</span><strong id="statMessages">-</strong></div>
+                <div class="metric"><span>Live-Verbindungen</span><strong>${escapeHtml(data.onlineEventClients)}</strong></div>
+            </section>
+            <div class="two dashboard-panels">
                 <section class="panel">
                     <h2>System</h2>
                     <dl>
@@ -265,7 +275,6 @@ function renderDashboard(data) {
                         <dt>Datenbank</dt><dd>${escapeHtml(data.database.message)}</dd>
                     </dl>
                 </section>
-
                 <section class="panel">
                     <h2>Container-Image</h2>
                     <p class="muted">Fordert im Hintergrund ein neues <code>latest</code>-Image über den eingerichteten Deployment-Webhook an.</p>
@@ -278,69 +287,98 @@ function renderDashboard(data) {
                         <button id="updateButton" class="secondary" type="button">Status neu laden</button>
                     </div>
                 </section>
-            </aside>
-        </div>
-
-        <section class="panel">
-            <h2>Inhaltsmeldungen</h2>
-            <p class="muted">Gemeldete Nachrichten, Dateien und Medien prüfen. Für schwere Fälle kannst du den gesamten betroffenen Chat als Beweis-ZIP sichern und anschließend selbst an zuständige Behörden weitergeben.</p>
-            <div id="reportList" class="report-list"></div>
+            </div>
         </section>
 
-        <section class="panel">
-            <h2>News an @alle</h2>
-            <p class="muted">Veröffentliche ein Update als <strong>SgobboVista</strong>. Nutzer sehen es im News-Tab und erhalten bei aktiviertem Push eine Benachrichtigung.</p>
-            <div class="news-compose">
-                <textarea id="newsBody" maxlength="4000" placeholder="Was gibt es Neues?"></textarea>
-                <div class="toolbar">
-                    <input id="newsImage" type="file" accept="image/png,image/jpeg,image/webp,image/gif">
-                    <input id="newsVideo" type="file" accept="video/mp4,video/webm,video/quicktime">
-                    <button id="publishNews" type="button">News veröffentlichen</button>
+        <section id="tabUsers" class="tab-panel" role="tabpanel" data-admin-panel="users" hidden>
+            <section class="panel">
+                <h2>Nutzer</h2>
+                <div class="field">
+                    <label for="userFilter">Nutzer für Export auswählen</label>
+                    <select id="userFilter">
+                        <option value="">Alle Nutzer</option>
+                    </select>
                 </div>
-                <p class="muted">Optionales Bild: JPEG, PNG, WebP oder GIF, maximal 20 MB. Optionales Video: MP4, WebM oder MOV, maximal 25 MB.</p>
-            </div>
-            <details class="news-archive">
-                <summary id="newsArchiveSummary">Veröffentlichte News verwalten</summary>
-                <div id="newsList" class="news-list"></div>
-            </details>
+                <div class="toolbar">
+                    <a id="downloadExport" class="button" href="/admin/export">ZIP-Archiv herunterladen</a>
+                    <button id="downloadSelected" class="secondary" type="button">Auswahl als ZIP</button>
+                </div>
+                <div class="table-scroll">
+                    <table>
+                        <thead><tr><th>Avatar</th><th>Nutzer</th><th>E-Mail</th><th>Chats</th><th>Nachrichten</th></tr></thead>
+                        <tbody id="userRows"></tbody>
+                    </table>
+                </div>
+            </section>
         </section>
 
-        <section class="panel">
-            <h2>Profilbilder</h2>
-            <p class="muted">Hier lädst du erlaubte Profilbilder hoch. Nutzer können nur diese Bilder auswählen, keine eigenen Uploads.</p>
-            <div class="toolbar" style="margin-top: 12px;">
-                <input id="avatarName" placeholder="Name des Profilbilds">
-                <input id="avatarFile" type="file" accept="image/png,image/jpeg,image/webp,image/gif">
-                <button id="uploadAvatar" type="button">Profilbild hochladen</button>
-            </div>
-            <div id="avatarGrid" class="avatar-grid" style="margin-top: 16px;"></div>
+        <section id="tabReports" class="tab-panel" role="tabpanel" data-admin-panel="reports" hidden>
+            <section class="panel">
+                <h2>Inhaltsmeldungen</h2>
+                <p class="muted">Gemeldete Nachrichten, Dateien und Medien prüfen. Für schwere Fälle kannst du den gesamten betroffenen Chat als Beweis-ZIP sichern und anschließend selbst an zuständige Behörden weitergeben.</p>
+                <div id="reportList" class="report-list"></div>
+            </section>
         </section>
 
-        <section class="panel">
-            <h2>Benachrichtigungstöne</h2>
-            <p class="muted">Lade die Töne hoch, die Nutzer in ihren Einstellungen auswählen dürfen.</p>
-            <div class="toolbar" style="margin-top: 12px;">
-                <input id="soundName" placeholder="Name des Tons">
-                <input id="soundFile" type="file" accept="audio/mpeg,audio/ogg,audio/wav,audio/webm,audio/mp4,audio/aac,audio/x-m4a">
-                <button id="uploadSound" type="button">Ton hochladen</button>
-            </div>
-            <div id="soundGrid" class="sound-grid" style="margin-top: 16px;"></div>
+        <section id="tabNews" class="tab-panel" role="tabpanel" data-admin-panel="news" hidden>
+            <section class="panel">
+                <h2>News an @alle</h2>
+                <p class="muted">Veröffentliche ein Update als <strong>SgobboVista</strong>. Nutzer sehen es im News-Tab und erhalten bei aktiviertem Push eine Benachrichtigung.</p>
+                <div class="news-compose">
+                    <textarea id="newsBody" maxlength="4000" placeholder="Was gibt es Neues?"></textarea>
+                    <div class="toolbar">
+                        <input id="newsImage" type="file" accept="image/png,image/jpeg,image/webp,image/gif">
+                        <input id="newsVideo" type="file" accept="video/mp4,video/webm,video/quicktime">
+                        <button id="publishNews" type="button">News veröffentlichen</button>
+                    </div>
+                    <p class="muted">Optionales Bild: JPEG, PNG, WebP oder GIF, maximal 20 MB. Optionales Video: MP4, WebM oder MOV, maximal 25 MB.</p>
+                </div>
+                <details class="news-archive">
+                    <summary id="newsArchiveSummary">Veröffentlichte News verwalten</summary>
+                    <div id="newsList" class="news-list"></div>
+                </details>
+            </section>
         </section>
 
-        <section class="panel">
-            <h2>Audit</h2>
-            <div style="overflow:auto;">
-                <table>
-                    <thead><tr><th>Zeit</th><th>Admin</th><th>Aktion</th><th>IP</th></tr></thead>
-                    <tbody id="auditRows"></tbody>
-                </table>
-            </div>
+        <section id="tabMedia" class="tab-panel" role="tabpanel" data-admin-panel="media" hidden>
+            <section class="panel">
+                <h2>Profilbilder</h2>
+                <p class="muted">Hier lädst du erlaubte Profilbilder hoch. Nutzer können nur diese Bilder auswählen, keine eigenen Uploads.</p>
+                <div class="toolbar" style="margin-top: 12px;">
+                    <input id="avatarName" placeholder="Name des Profilbilds">
+                    <input id="avatarFile" type="file" accept="image/png,image/jpeg,image/webp,image/gif">
+                    <button id="uploadAvatar" type="button">Profilbild hochladen</button>
+                </div>
+                <div id="avatarGrid" class="avatar-grid" style="margin-top: 16px;"></div>
+            </section>
+            <section class="panel">
+                <h2>Benachrichtigungstöne</h2>
+                <p class="muted">Lade die Töne hoch, die Nutzer in ihren Einstellungen auswählen dürfen.</p>
+                <div class="toolbar" style="margin-top: 12px;">
+                    <input id="soundName" placeholder="Name des Tons">
+                    <input id="soundFile" type="file" accept="audio/mpeg,audio/ogg,audio/wav,audio/webm,audio/mp4,audio/aac,audio/x-m4a">
+                    <button id="uploadSound" type="button">Ton hochladen</button>
+                </div>
+                <div id="soundGrid" class="sound-grid" style="margin-top: 16px;"></div>
+            </section>
+        </section>
+
+        <section id="tabAudit" class="tab-panel" role="tabpanel" data-admin-panel="audit" hidden>
+            <section class="panel">
+                <h2>Audit</h2>
+                <div class="table-scroll" style="margin-top:0;">
+                    <table>
+                        <thead><tr><th>Zeit</th><th>Admin</th><th>Aktion</th><th>IP</th></tr></thead>
+                        <tbody id="auditRows"></tbody>
+                    </table>
+                </div>
+            </section>
         </section>
 
         <div class="notice">Hinweis: Von Nutzern entfernte Chats werden mindestens 30 Tage serverseitig aufbewahrt. ZIP-Archive enthalten private Chatdaten und Originaldateien; sie dürfen nur für einen berechtigten Zweck und mit passender rechtlicher Grundlage herausgegeben werden.</div>
 
         <script data-cfasync="false">
-            const state = { users: [], avatars: [], sounds: [], news: [], reports: [], audit: [], imageUpdate: null };
+            const state = { users: [], avatars: [], sounds: [], news: [], reports: [], audit: [], imageUpdate: null, activeTab: 'overview' };
             const el = (id) => document.getElementById(id);
             const escapeText = (value) => String(value == null ? '' : value).replace(/[&<>"']/g, (char) => ({
                 '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
@@ -363,6 +401,24 @@ function renderDashboard(data) {
                 illegal_content: 'Illegale Inhalte',
                 other: 'Sonstiges',
             };
+
+            function selectAdminTab(tabName, remember = true) {
+                const tabs = ['overview', 'users', 'reports', 'news', 'media', 'audit'];
+                const selected = tabs.includes(tabName) ? tabName : 'overview';
+                state.activeTab = selected;
+                document.querySelectorAll('[data-admin-tab]').forEach((button) => {
+                    const active = button.dataset.adminTab === selected;
+                    button.classList.toggle('active', active);
+                    button.setAttribute('aria-selected', String(active));
+                    button.tabIndex = active ? 0 : -1;
+                });
+                document.querySelectorAll('[data-admin-panel]').forEach((panel) => {
+                    const active = panel.dataset.adminPanel === selected;
+                    panel.classList.toggle('active', active);
+                    panel.hidden = !active;
+                });
+                if (remember) localStorage.setItem('justchat_admin_tab', selected);
+            }
 
             async function readFileBase64(file) {
                 if (!file) throw new Error('Bitte ein Bild auswählen');
@@ -470,6 +526,9 @@ function renderDashboard(data) {
                         '<div class="report-actions"><select data-report-action="' + report.id + '"><option value="lock_chat">Chat sperren + Hinweis</option><option value="unlock_chat">Chat freigeben + Hinweis</option><option value="ban_user">Nutzer bannen + Chat sperren</option><option value="unban_user">Bann aufheben</option><option value="police_evidence">Für Behördenmeldung sichern</option><option value="dismiss">Meldung abweisen</option></select>' +
                         '<textarea data-report-note="' + report.id + '" maxlength="1000" placeholder="Begründung / Hinweis für Betroffene"></textarea><button type="button" data-apply-report="' + report.id + '">Maßnahme ausführen</button></div></article>';
                 }).join('') : '<p class="muted">Keine Meldungen vorhanden.</p>';
+                const openReportCount = state.reports.filter((report) => report.status === 'open').length;
+                el('reportTabCount').textContent = openReportCount;
+                el('reportTabCount').classList.toggle('hidden', !openReportCount);
                 el('auditRows').innerHTML = state.audit.map((row) =>
                     '<tr><td>' + new Date(row.created_at).toLocaleString() + '</td><td>' + escapeText(row.admin_user) + '</td><td>' + escapeText(row.action) + '</td><td><span class="sensitive-value" tabindex="0" title="Zum Anzeigen berühren oder darüberfahren">' + escapeText(row.ip_address || '-') + '</span></td></tr>'
                 ).join('');
@@ -513,6 +572,24 @@ function renderDashboard(data) {
 
             el('refreshButton').addEventListener('click', loadAdmin);
             el('updateButton').addEventListener('click', loadAdmin);
+            el('adminTabs').addEventListener('click', (event) => {
+                const tab = event.target.closest('[data-admin-tab]');
+                if (tab) selectAdminTab(tab.dataset.adminTab);
+            });
+            el('adminTabs').addEventListener('keydown', (event) => {
+                if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+                const tabs = Array.from(document.querySelectorAll('[data-admin-tab]'));
+                const currentIndex = tabs.indexOf(document.activeElement);
+                if (currentIndex < 0) return;
+                event.preventDefault();
+                let nextIndex = currentIndex;
+                if (event.key === 'ArrowLeft') nextIndex = (currentIndex + tabs.length - 1) % tabs.length;
+                if (event.key === 'ArrowRight') nextIndex = (currentIndex + 1) % tabs.length;
+                if (event.key === 'Home') nextIndex = 0;
+                if (event.key === 'End') nextIndex = tabs.length - 1;
+                selectAdminTab(tabs[nextIndex].dataset.adminTab);
+                tabs[nextIndex].focus();
+            });
             el('logoutButton').addEventListener('click', async () => {
                 await fetch('/admin/logout', { method: 'POST' });
                 window.location.replace('/admin');
@@ -641,6 +718,7 @@ function renderDashboard(data) {
                 }
             });
 
+            selectAdminTab(localStorage.getItem('justchat_admin_tab') || 'overview', false);
             loadAdmin();
         </script>
     `);
