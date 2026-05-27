@@ -333,6 +333,13 @@ function renderMessengerApp({ appVersion = '' } = {}) {
         .settings-category-title { display: block; color: var(--text); font-weight: 700; }
         .settings-category-description { display: block; margin-top: 4px; color: var(--muted); font-size: 13px; font-weight: 400; }
         .settings-category-arrow { color: var(--muted); font-size: 23px; }
+        .verification-card { display: grid; gap: 10px; border: 1px solid #b8ded8; border-radius: 12px; padding: 14px; background: #f0fbf8; }
+        .verification-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+        .verification-head strong { display: block; font-size: 17px; }
+        .verification-badge { display: inline-flex; align-items: center; width: max-content; border-radius: 999px; padding: 6px 10px; color: #0f5132; background: #d1fae5; font-size: 12px; font-weight: 800; }
+        .verification-badge.pending { color: #7a4f01; background: #fffaeb; }
+        .verification-badge.rejected, .verification-badge.expired { color: var(--danger); background: #fff3f2; }
+        .verification-upload { display: grid; gap: 8px; }
         .settings-section { border: 1px solid var(--line); border-radius: 10px; padding: 16px; display: grid; gap: 12px; background: #fff; }
         .settings-section h3 { margin: 0; font-size: 17px; }
         .settings-actions { display: grid; gap: 10px; }
@@ -791,6 +798,7 @@ function renderMessengerApp({ appVersion = '' } = {}) {
                                 <li><strong>Favoriten und Medienarchiv</strong><span>Nachrichten oder Dateien mit Herz dauerhaft behalten und Medien je Chat nach Art und Datum anzeigen.</span></li>
                                 <li><strong>DSGVO-Aufbewahrung</strong><span>Chats, Meldungen und Admin-Auditdaten werden nach festen Maximalfristen automatisch bereinigt.</span></li>
                                 <li><strong>Altersgrenze</strong><span>JustChat ist ab 16 Jahren verfügbar und erfordert ein Geburtsdatum zur Prüfung.</span></li>
+                                <li><strong>Manuelle Altersverifizierung</strong><span>Ausweisbild einreichen, Admin prüft, aktive Dokumentdaten werden nach Entscheidung direkt gelöscht.</span></li>
                                 <li><strong>Profilanpassung</strong><span>Anzeigename, Info, Profilbild, Benachrichtigungston und GIF-Wiedergabe verwalten.</span></li>
                                 <li><strong>Sicherheit</strong><span>E-Mail-Bestätigung, Passwort-Wiederherstellung und optionale Zwei-Faktor-Anmeldung.</span></li>
                                 <li><strong>Installierbare WebApp</strong><span>JustChat als App-Verknüpfung auf dem Startbildschirm verwenden.</span></li>
@@ -803,6 +811,7 @@ function renderMessengerApp({ appVersion = '' } = {}) {
                             <p>Nachrichten, Dateien und Medien in privaten Chats und Gruppen werden nur so lange gespeichert, wie sie für die Bereitstellung, Sicherheit oder Moderation erforderlich sind. Nicht favorisierte Inhalte werden automatisch nach maximal 365 Tagen gelöscht.</p>
                             <p>Beidseitig entfernte private Chats werden maximal 30 Tage serverseitig aufbewahrt, sofern keine Meldung oder Favorisierung entgegensteht. Inhalte mit Herz bleiben erhalten, bis du die Favorisierung entfernst oder dein Konto nach den geltenden Regeln gelöscht wird.</p>
                             <p>Meldungen und Moderationsnachweise werden nur für Prüfung, Schutzmaßnahmen und berechtigte Rechtszwecke genutzt: offene Meldungen maximal 365 Tage, abgeschlossene Meldungen maximal 180 Tage nach Prüfung. Admin-Auditdaten wie Verwaltungsaktionen und IP-Hinweise werden maximal 180 Tage gespeichert.</p>
+                            <p>Für die optionale Altersverifizierung wird ein Ausweisbild nur zur manuellen Prüfung verwendet. Nach Freigabe oder Ablehnung werden die aktiven Dokumentdaten sofort gelöscht; gespeichert bleibt nur der Verifizierungsstatus und der Prüfzeitpunkt. Offene Prüfanfragen werden spätestens nach 7 Tagen automatisch bereinigt.</p>
                             <p>Push-Benachrichtigungen werden nur genutzt, wenn du sie aktivierst. Blockierungen und Sichtbarkeitseinstellungen helfen dir, deine Privatsphäre selbst zu steuern.</p>
                             <p>Bitte teile in Chats nur Inhalte, die du mit den jeweiligen Empfängern teilen möchtest.</p>
                         </section>
@@ -929,6 +938,20 @@ function renderMessengerApp({ appVersion = '' } = {}) {
                     </div>
                     <section class="settings-section hidden" data-settings-panel="profile">
                         <h3>Profil</h3>
+                        <div class="verification-card">
+                            <div class="verification-head">
+                                <div>
+                                    <strong>Verifizieren für Vorteile</strong>
+                                    <p id="ageVerificationText" class="muted small">Bestätige dein Alter manuell, wenn dein Geburtsdatum zum Ausweis passt.</p>
+                                </div>
+                                <span id="ageVerificationBadge" class="verification-badge pending">Nicht verifiziert</span>
+                            </div>
+                            <div id="ageVerificationUpload" class="verification-upload">
+                                <input id="ageVerificationFile" type="file" accept="image/jpeg,image/png,image/webp">
+                                <button id="submitAgeVerification" class="ghost" type="button">Zur Prüfung senden</button>
+                            </div>
+                            <p class="muted small">Datenschutz: Das Ausweisbild wird nur für diese manuelle Altersprüfung verwendet. Nach Verifizieren oder Ablehnen löscht der Server die aktiven Dokumentdaten direkt; offene Anfragen werden automatisch nach 7 Tagen bereinigt.</p>
+                        </div>
                         <div class="field">
                             <label for="profileUsername">Benutzername</label>
                             <input id="profileUsername" maxlength="32">
@@ -1263,6 +1286,7 @@ function renderMessengerApp({ appVersion = '' } = {}) {
             emailVerificationResendUntil: 0,
             profileAvatarImage: null,
             profileAvatarFile: null,
+            ageVerification: null,
             installPrompt: null,
             mainTab: 'chats',
             news: [],
@@ -2608,6 +2632,65 @@ function renderMessengerApp({ appVersion = '' } = {}) {
             });
         }
 
+        function readAgeVerificationAttachment(file) {
+            if (!file) return Promise.reject(new Error('Bitte lade ein Ausweisbild hoch.'));
+            if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
+                return Promise.reject(new Error('Bitte lade ein JPEG-, PNG- oder WebP-Bild hoch.'));
+            }
+            if (file.size > 10 * 1024 * 1024) return Promise.reject(new Error('Ausweisbild muss kleiner als 10 MB sein.'));
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => {
+                    const dataUrl = String(reader.result);
+                    resolve({
+                        fileName: file.name,
+                        mimeType: file.type,
+                        dataBase64: dataUrl.slice(dataUrl.indexOf(',') + 1),
+                    });
+                };
+                reader.onerror = () => reject(new Error('Ausweisbild konnte nicht gelesen werden.'));
+                reader.readAsDataURL(file);
+            });
+        }
+
+        function renderAgeVerification() {
+            const verification = state.ageVerification || {};
+            const request = verification.request || null;
+            const verified = Boolean(verification.verifiedAt || (state.me && state.me.age_verified_at));
+            let badge = 'Nicht verifiziert';
+            let badgeClass = '';
+            let text = 'Lade ein Ausweisbild hoch. Der Admin prüft nur, ob dein Geburtsdatum zum Ausweis passt.';
+            let uploadHidden = false;
+            if (verified) {
+                badge = 'Verifiziert';
+                badgeClass = '';
+                text = 'Dein Alter wurde verifiziert. Das hochgeladene Ausweisbild wurde nach der Prüfung aus den aktiven Dokumentdaten gelöscht.';
+                uploadHidden = true;
+            } else if (request && request.status === 'pending') {
+                badge = 'Prüfung offen';
+                badgeClass = 'pending';
+                text = 'Deine Altersprüfung wartet auf manuelle Freischaltung. Du kannst eine neue Datei senden, falls du dich vertan hast.';
+            } else if (request && request.status === 'rejected') {
+                badge = 'Abgelehnt';
+                badgeClass = 'rejected';
+                text = request.admin_note || 'Die Prüfung wurde abgelehnt. Du kannst ein neues Ausweisbild senden.';
+            } else if (request && request.status === 'expired') {
+                badge = 'Abgelaufen';
+                badgeClass = 'expired';
+                text = 'Die alte Anfrage wurde datenschutzkonform gelöscht. Du kannst eine neue Prüfung starten.';
+            }
+            $('ageVerificationBadge').className = 'verification-badge' + (badgeClass ? ' ' + badgeClass : '');
+            $('ageVerificationBadge').textContent = badge;
+            $('ageVerificationText').textContent = text;
+            $('ageVerificationUpload').classList.toggle('hidden', uploadHidden);
+        }
+
+        async function loadAgeVerification() {
+            const data = await api('/api/me/age-verification');
+            state.ageVerification = data;
+            renderAgeVerification();
+        }
+
         async function loadMe() {
             const data = await api('/api/me');
             state.me = data.user;
@@ -2703,6 +2786,12 @@ function renderMessengerApp({ appVersion = '' } = {}) {
             renderProfileAvatarPicker();
             $('profileError').textContent = '';
             $('profileNotice').textContent = '';
+            state.ageVerification = {
+                verifiedAt: state.me.age_verified_at,
+                verifiedBy: state.me.age_verified_by,
+                request: null,
+            };
+            renderAgeVerification();
             $('featureView').classList.add('hidden');
             $('chatEmpty').classList.add('hidden');
             $('chatPane').classList.add('hidden');
@@ -2710,7 +2799,7 @@ function renderMessengerApp({ appVersion = '' } = {}) {
             $('accountPanel').classList.remove('hidden');
             $('sidebar').classList.add('chat-open');
             $('chat').classList.add('chat-open');
-            Promise.all([loadProfileAvatars(), loadNotificationSounds(), loadBlockedUsers(), loadUsernameHistory()])
+            Promise.all([loadProfileAvatars(), loadNotificationSounds(), loadBlockedUsers(), loadUsernameHistory(), loadAgeVerification()])
                 .then(() => {
                     state.profileAvatarId = state.me.avatar_asset_id;
                     renderProfileAvatarPicker();
@@ -2876,6 +2965,10 @@ function renderMessengerApp({ appVersion = '' } = {}) {
                 if (state.activeConversation && Number(state.activeConversation.id) === Number(payload.conversationId)) {
                     await refreshOpenMessages(payload.conversationId);
                 }
+            });
+            state.eventSource.addEventListener('profile:changed', async () => {
+                await loadMe();
+                if (!$('accountPanel').classList.contains('hidden')) await loadAgeVerification();
             });
             state.eventSource.addEventListener('contact:changed', async (event) => {
                 const payload = JSON.parse(event.data);
@@ -3192,6 +3285,27 @@ function renderMessengerApp({ appVersion = '' } = {}) {
         $('avatarZoom').addEventListener('input', drawAvatarCrop);
         $('avatarPositionX').addEventListener('input', drawAvatarCrop);
         $('avatarPositionY').addEventListener('input', drawAvatarCrop);
+        $('submitAgeVerification').addEventListener('click', async () => {
+            $('profileError').textContent = '';
+            $('profileNotice').textContent = '';
+            try {
+                const attachment = await readAgeVerificationAttachment($('ageVerificationFile').files[0]);
+                const data = await api('/api/me/age-verification', {
+                    method: 'POST',
+                    body: JSON.stringify({ attachment }),
+                });
+                state.ageVerification = {
+                    verifiedAt: state.me && state.me.age_verified_at,
+                    verifiedBy: state.me && state.me.age_verified_by,
+                    request: data.request,
+                };
+                $('ageVerificationFile').value = '';
+                renderAgeVerification();
+                $('profileNotice').textContent = 'Ausweisbild wurde zur Altersprüfung eingereicht.';
+            } catch (error) {
+                $('profileError').textContent = error.message;
+            }
+        });
         $('uploadProfileAvatar').addEventListener('click', async () => {
             $('profileError').textContent = '';
             $('profileNotice').textContent = '';

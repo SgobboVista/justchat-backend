@@ -32,6 +32,7 @@ services:
       REPORT_RETENTION_DAYS: "180"
       OPEN_REPORT_RETENTION_DAYS: "365"
       ADMIN_AUDIT_RETENTION_DAYS: "180"
+      AGE_VERIFICATION_PENDING_RETENTION_DAYS: "7"
       IMAGE_UPDATE_WEBHOOK_URL: "http://justchat-image-updater:8080/v1/update"
       IMAGE_UPDATE_WEBHOOK_METHOD: "GET"
       IMAGE_UPDATE_WEBHOOK_TOKEN: "${IMAGE_UPDATE_WEBHOOK_TOKEN:-bitte-einen-langen-geheimen-update-token-setzen}"

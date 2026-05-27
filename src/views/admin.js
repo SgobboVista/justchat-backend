@@ -253,6 +253,7 @@ function renderDashboard(data) {
             <button class="admin-tab active" type="button" role="tab" aria-selected="true" aria-controls="tabOverview" data-admin-tab="overview">Übersicht</button>
             <button class="admin-tab" type="button" role="tab" aria-selected="false" aria-controls="tabUsers" data-admin-tab="users">Nutzer</button>
             <button class="admin-tab" type="button" role="tab" aria-selected="false" aria-controls="tabReports" data-admin-tab="reports">Meldungen <span id="reportTabCount" class="tab-count hidden">0</span></button>
+            <button class="admin-tab" type="button" role="tab" aria-selected="false" aria-controls="tabAge" data-admin-tab="age">Alter <span id="ageVerificationTabCount" class="tab-count hidden">0</span></button>
             <button class="admin-tab" type="button" role="tab" aria-selected="false" aria-controls="tabNews" data-admin-tab="news">News</button>
             <button class="admin-tab" type="button" role="tab" aria-selected="false" aria-controls="tabMedia" data-admin-tab="media">Medien</button>
             <button class="admin-tab" type="button" role="tab" aria-selected="false" aria-controls="tabAudit" data-admin-tab="audit">Audit</button>
@@ -327,6 +328,14 @@ function renderDashboard(data) {
             </section>
         </section>
 
+        <section id="tabAge" class="tab-panel" role="tabpanel" data-admin-panel="age" hidden>
+            <section class="panel">
+                <h2>Altersverifizierung</h2>
+                <p class="muted">Prüfe, ob das Geburtsdatum zum Ausweisdokument passt. Nach „Verifizieren“ oder „Ablehnen“ werden die hochgeladenen aktiven Dokumentdaten sofort gelöscht; erhalten bleibt nur der Prüfstatus.</p>
+                <div id="ageVerificationList" class="report-list"></div>
+            </section>
+        </section>
+
         <section id="tabNews" class="tab-panel" role="tabpanel" data-admin-panel="news" hidden>
             <section class="panel">
                 <h2>News an @alle</h2>
@@ -385,7 +394,7 @@ function renderDashboard(data) {
         <div class="notice">Hinweis: Beidseitig entfernte private Chats werden maximal ${escapeHtml(retention.chatDays || 30)} Tage serverseitig aufbewahrt, sofern keine Meldung oder Favorisierung entgegensteht. Nicht favorisierte Chat- und Gruppeninhalte werden maximal ${escapeHtml(retention.messageDays || 365)} Tage gespeichert; offene Meldungen maximal ${escapeHtml(retention.openReportDays || 365)} Tage, geprüfte Meldungen und Admin-Auditdaten maximal ${escapeHtml(retention.reviewedReportDays || 180)} bzw. ${escapeHtml(retention.auditDays || 180)} Tage. ZIP-Archive enthalten private Chatdaten und Originaldateien; sie dürfen nur für einen berechtigten Zweck und mit passender rechtlicher Grundlage herausgegeben werden.</div>
 
         <script data-cfasync="false">
-            const state = { users: [], avatars: [], sounds: [], news: [], reports: [], audit: [], imageUpdate: null, activeTab: 'overview', userSearch: '', exportUserId: '' };
+            const state = { users: [], avatars: [], sounds: [], news: [], reports: [], ageVerifications: [], audit: [], imageUpdate: null, activeTab: 'overview', userSearch: '', exportUserId: '' };
             const el = (id) => document.getElementById(id);
             const escapeText = (value) => String(value == null ? '' : value).replace(/[&<>"']/g, (char) => ({
                 '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
@@ -410,7 +419,7 @@ function renderDashboard(data) {
             };
 
             function selectAdminTab(tabName, remember = true) {
-                const tabs = ['overview', 'users', 'reports', 'news', 'media', 'audit'];
+                const tabs = ['overview', 'users', 'reports', 'age', 'news', 'media', 'audit'];
                 const selected = tabs.includes(tabName) ? tabName : 'overview';
                 state.activeTab = selected;
                 document.querySelectorAll('[data-admin-tab]').forEach((button) => {
@@ -505,7 +514,7 @@ function renderDashboard(data) {
                     const avatar = user.avatar_url
                         ? '<img class="avatar-preview" src="' + user.avatar_url + '" alt="">'
                         : '<div class="avatar-preview" style="display:grid;place-items:center;background:' + user.avatar_color + ';color:#fff;font-weight:800;">' + initials(user.display_name) + '</div>';
-                    return '<tr><td>' + avatar + '</td><td><strong>' + escapeText(user.display_name) + '</strong><br><span class="muted">@' + escapeText(user.username) + '</span>' + (user.banned_at ? '<br><span class="status error">Gesperrt</span>' : '') + '</td><td><span class="sensitive-value" tabindex="0" title="Zum Anzeigen berühren oder darüberfahren">' + escapeText(user.email || '-') + '</span></td><td>' + user.conversation_count + '</td><td>' + user.message_count + '</td><td><div class="moderation-counts"><span>Gemeldet: ' + user.reports_made_count + '</span><span>Gegen ihn/sie: ' + user.reports_received_count + '</span><span>Maßnahmen: ' + user.report_action_count + '</span></div></td></tr>';
+                    return '<tr><td>' + avatar + '</td><td><strong>' + escapeText(user.display_name) + '</strong><br><span class="muted">@' + escapeText(user.username) + '</span>' + (user.age_verified_at ? '<br><span class="status ok">Alter verifiziert</span>' : '') + (user.banned_at ? '<br><span class="status error">Gesperrt</span>' : '') + '</td><td><span class="sensitive-value" tabindex="0" title="Zum Anzeigen berühren oder darüberfahren">' + escapeText(user.email || '-') + '</span></td><td>' + user.conversation_count + '</td><td>' + user.message_count + '</td><td><div class="moderation-counts"><span>Gemeldet: ' + user.reports_made_count + '</span><span>Gegen ihn/sie: ' + user.reports_received_count + '</span><span>Maßnahmen: ' + user.report_action_count + '</span></div></td></tr>';
                 }).join('') : '<tr><td colspan="6" class="muted">Keine Nutzer gefunden.</td></tr>';
                 el('avatarGrid').innerHTML = state.avatars.length ? state.avatars.map((avatar) =>
                     '<div class="avatar-card asset-card"><img src="' + avatar.data_url + '" alt=""><strong>' + escapeText(avatar.name) + '</strong><span class="muted">' + Math.round(avatar.size_bytes / 1024) + ' KB</span><button class="danger" type="button" data-delete-avatar="' + avatar.id + '">Löschen</button></div>'
@@ -546,6 +555,20 @@ function renderDashboard(data) {
                 const openReportCount = state.reports.filter((report) => report.status === 'open').length;
                 el('reportTabCount').textContent = openReportCount;
                 el('reportTabCount').classList.toggle('hidden', !openReportCount);
+                el('ageVerificationList').innerHTML = state.ageVerifications.length ? state.ageVerifications.map((request) => {
+                    const birthDate = request.birth_date ? new Date(request.birth_date).toLocaleDateString('de-DE') : '-';
+                    const documentLink = request.document_available
+                        ? '<div class="report-file"><img src="/admin/api/age-verifications/' + request.id + '/document" alt="Ausweisdokument zur Altersprüfung"></div>'
+                        : '<p class="muted">Dokumentdaten wurden bereits gelöscht.</p>';
+                    return '<article class="report-card"><div class="report-head"><div><strong>Prüfanfrage #' + request.id + '</strong>' +
+                        '<p class="muted">' + escapeText(request.display_name) + ' (@' + escapeText(request.username) + ') - Geburtstag laut Konto: ' + escapeText(birthDate) + ' - eingereicht ' + new Date(request.created_at).toLocaleString() + '</p>' +
+                        '<p class="muted">E-Mail: <span class="sensitive-value" tabindex="0" title="Zum Anzeigen berühren oder darüberfahren">' + escapeText(request.email || '-') + '</span></p></div>' +
+                        '<span class="status warn">Offen</span></div>' + documentLink +
+                        '<div class="report-actions"><select data-age-action="' + request.id + '"><option value="approve">Alter verifizieren</option><option value="reject">Ablehnen und Dokument löschen</option></select>' +
+                        '<textarea data-age-note="' + request.id + '" maxlength="1000" placeholder="Optionaler interner Hinweis / Ablehnungsgrund"></textarea><button type="button" data-apply-age-verification="' + request.id + '">Entscheidung speichern</button></div></article>';
+                }).join('') : '<p class="muted">Keine offenen Altersprüfungen.</p>';
+                el('ageVerificationTabCount').textContent = state.ageVerifications.length;
+                el('ageVerificationTabCount').classList.toggle('hidden', !state.ageVerifications.length);
                 el('auditRows').innerHTML = state.audit.map((row) =>
                     '<tr><td>' + new Date(row.created_at).toLocaleString() + '</td><td>' + escapeText(row.admin_user) + '</td><td>' + escapeText(row.action) + '</td><td><span class="sensitive-value" tabindex="0" title="Zum Anzeigen berühren oder darüberfahren">' + escapeText(row.ip_address || '-') + '</span></td></tr>'
                 ).join('');
@@ -574,6 +597,7 @@ function renderDashboard(data) {
                     state.sounds = data.sounds;
                     state.news = data.news || [];
                     state.reports = data.reports || [];
+                    state.ageVerifications = data.ageVerifications || [];
                     state.audit = data.audit;
                     state.imageUpdate = data.imageUpdate;
                     render();
@@ -663,6 +687,23 @@ function renderDashboard(data) {
                 if (!confirm('Diese Moderationsmaßnahme wirklich durchführen?')) return;
                 try {
                     await adminApi(button.dataset.actionBase + reportId + '/action', {
+                        method: 'POST',
+                        body: JSON.stringify({ action, note }),
+                    });
+                    await loadAdmin();
+                } catch (error) {
+                    alert(error.message);
+                }
+            });
+            el('ageVerificationList').addEventListener('click', async (event) => {
+                const button = event.target.closest('[data-apply-age-verification]');
+                if (!button) return;
+                const requestId = button.dataset.applyAgeVerification;
+                const action = document.querySelector('[data-age-action="' + requestId + '"]').value;
+                const note = document.querySelector('[data-age-note="' + requestId + '"]').value;
+                if (!confirm('Diese Altersprüfung abschließen? Das Ausweisbild wird dabei sofort gelöscht.')) return;
+                try {
+                    await adminApi('/admin/api/age-verifications/' + requestId + '/action', {
                         method: 'POST',
                         body: JSON.stringify({ action, note }),
                     });

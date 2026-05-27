@@ -1,7 +1,8 @@
 function registerAdminRoutes(app, dependencies) {
     const {
         ADMIN_PASSWORD, ADMIN_USER, ADMIN_SESSION_COOKIE, CHAT_RETENTION_DAYS, MESSAGE_RETENTION_DAYS,
-        REPORT_RETENTION_DAYS, OPEN_REPORT_RETENTION_DAYS, ADMIN_AUDIT_RETENTION_DAYS, IMAGE_UPDATE_WEBHOOK_URL,
+        REPORT_RETENTION_DAYS, OPEN_REPORT_RETENTION_DAYS, ADMIN_AUDIT_RETENTION_DAYS,
+        AGE_VERIFICATION_PENDING_RETENTION_DAYS, IMAGE_UPDATE_WEBHOOK_URL,
         getDashboardData, renderAdminLogin, renderDashboard, requireAdminAuth, hasAdminSession,
         createAdminSessionToken, query, dispatchImageUpdate, getImageUpdateState,
         optimizeImageAttachment, parseNotificationSoundAttachment, parseId, createZipArchive, zipPathSegment,
@@ -49,7 +50,8 @@ app.get('/admin/api/overview', requireAdminAuth, async (req, res, next) => {
                 (select count(*)::int from message_attachments) as attachments
         `);
         const users = await query(`
-            select u.id, u.username, u.display_name, u.email, u.avatar_color, u.avatar_asset_id, u.banned_at, u.ban_reason,
+            select u.id, u.username, u.display_name, u.email, u.avatar_color, u.avatar_asset_id,
+                u.age_verified_at, u.banned_at, u.ban_reason,
                 case when aa.id is null then null else 'data:' || aa.mime_type || ';base64,' || encode(aa.data, 'base64') end as avatar_url,
                 count(distinct c.id)::int as conversation_count,
                 count(distinct m.id)::int as message_count,
@@ -157,6 +159,18 @@ app.get('/admin/api/overview', requireAdminAuth, async (req, res, next) => {
             order by case when report.status = 'open' then 0 else 1 end, report.created_at desc
             limit 100
         `);
+        const ageVerifications = await query(`
+            select request.id, request.status, request.document_file_name, request.document_mime_type,
+                request.document_size_bytes, request.created_at, request.reviewed_at,
+                request.document_data is not null as document_available,
+                app_user.id as user_id, app_user.username, app_user.display_name, app_user.email,
+                app_user.birth_date, app_user.age_verified_at
+            from age_verification_requests request
+            join users app_user on app_user.id = request.user_id
+            where request.status = 'pending'
+            order by request.created_at asc
+            limit 100
+        `);
         let news = { rows: [] };
         let warning = '';
         try {
@@ -185,6 +199,8 @@ app.get('/admin/api/overview', requireAdminAuth, async (req, res, next) => {
                 if (a.status !== 'open' && b.status === 'open') return 1;
                 return new Date(b.created_at) - new Date(a.created_at);
             }).slice(0, 150),
+            ageVerifications: ageVerifications.rows,
+            ageVerificationRetentionDays: AGE_VERIFICATION_PENDING_RETENTION_DAYS,
             imageUpdate: getImageUpdateState(),
             warning,
         });
@@ -230,6 +246,85 @@ app.get('/admin/api/group-reports/:id/attachment', requireAdminAuth, async (req,
         res.set('Content-Disposition', `inline; filename="${zipPathSegment(result.rows[0].file_name)}"`);
         res.set('Cache-Control', 'private, no-store');
         return res.send(result.rows[0].data);
+    } catch (error) {
+        return next(error);
+    }
+});
+
+app.get('/admin/api/age-verifications/:id/document', requireAdminAuth, async (req, res, next) => {
+    try {
+        const requestId = parseId(req.params.id);
+        const result = await query(
+            `select document_file_name, document_mime_type, document_data
+             from age_verification_requests
+             where id = $1 and status = 'pending' and document_data is not null`,
+            [requestId],
+        );
+        if (!result.rows[0]) return res.status(404).send('Ausweisdokument nicht gefunden oder bereits geloescht');
+        res.type(result.rows[0].document_mime_type);
+        res.set('Content-Disposition', `inline; filename="${zipPathSegment(result.rows[0].document_file_name || 'ausweis')}"`);
+        res.set('Cache-Control', 'private, no-store');
+        return res.send(result.rows[0].document_data);
+    } catch (error) {
+        return next(error);
+    }
+});
+
+app.post('/admin/api/age-verifications/:id/action', requireAdminAuth, async (req, res, next) => {
+    try {
+        const requestId = parseId(req.params.id);
+        const action = String(req.body.action || '').trim();
+        const note = String(req.body.note || '').trim().slice(0, 1000);
+        if (!requestId || !['approve', 'reject'].includes(action)) return res.status(400).json({ error: 'Ungueltige Pruefentscheidung' });
+        if (action === 'reject' && !note) return res.status(400).json({ error: 'Bitte schreibe einen kurzen Grund fuer die Ablehnung' });
+        const requestResult = await query(
+            `select user_id
+             from age_verification_requests
+             where id = $1 and status = 'pending'`,
+            [requestId],
+        );
+        const verification = requestResult.rows[0];
+        if (!verification) return res.status(404).json({ error: 'Pruefanfrage nicht gefunden oder bereits bearbeitet' });
+        if (action === 'approve') {
+            await query(
+                `with cleaned as (
+                    update age_verification_requests
+                    set status = 'approved',
+                        admin_note = $1,
+                        reviewed_at = now(),
+                        document_file_name = null,
+                        document_mime_type = null,
+                        document_size_bytes = null,
+                        document_data = null
+                    where id = $2 and status = 'pending'
+                    returning user_id
+                 )
+                 update users
+                 set age_verified_at = now(), age_verified_by = $3
+                 where id in (select user_id from cleaned)`,
+                [note, requestId, ADMIN_USER],
+            );
+        } else {
+            await query(
+                `update age_verification_requests
+                 set status = 'rejected',
+                     admin_note = $1,
+                     reviewed_at = now(),
+                     document_file_name = null,
+                     document_mime_type = null,
+                     document_size_bytes = null,
+                     document_data = null
+                 where id = $2 and status = 'pending'`,
+                [note, requestId],
+            );
+        }
+        await query(
+            `insert into admin_audit_logs (admin_user, action, ip_address)
+             values ($1, $2, $3)`,
+            [ADMIN_USER, `age_verification_${requestId}_${action}_document_deleted`, req.ip],
+        );
+        sendEvent(verification.user_id, 'profile:changed', { reason: 'age_verification' });
+        return res.json({ ok: true });
     } catch (error) {
         return next(error);
     }

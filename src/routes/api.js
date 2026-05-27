@@ -191,6 +191,60 @@ app.get('/api/me', requireAuth, (req, res) => {
     res.json({ user: req.user });
 });
 
+app.get('/api/me/age-verification', requireAuth, async (req, res, next) => {
+    try {
+        const latest = await query(
+            `select id, status, admin_note, created_at, reviewed_at,
+                document_data is not null as document_available
+             from age_verification_requests
+             where user_id = $1
+             order by created_at desc
+             limit 1`,
+            [req.user.id],
+        );
+        return res.json({
+            verifiedAt: req.user.age_verified_at,
+            verifiedBy: req.user.age_verified_by,
+            request: latest.rows[0] || null,
+        });
+    } catch (error) {
+        return next(error);
+    }
+});
+
+app.post('/api/me/age-verification', requireAuth, async (req, res, next) => {
+    try {
+        if (req.user.age_verified_at) return res.status(409).json({ error: 'Dein Alter wurde bereits verifiziert.' });
+        const attachment = parseAttachment(req.body.attachment, 10 * 1024 * 1024);
+        if (!attachment) return res.status(400).json({ error: 'Bitte lade ein Foto deines Ausweisdokuments hoch.' });
+        if (!['image/jpeg', 'image/png', 'image/webp'].includes(attachment.mimeType)) {
+            return res.status(400).json({ error: 'Bitte lade ein JPEG-, PNG- oder WebP-Bild hoch.' });
+        }
+        await query(
+            `update age_verification_requests
+             set status = 'canceled',
+                 document_file_name = null,
+                 document_mime_type = null,
+                 document_size_bytes = null,
+                 document_data = null,
+                 admin_note = 'Durch neue Einreichung ersetzt.',
+                 reviewed_at = now()
+             where user_id = $1 and status = 'pending'`,
+            [req.user.id],
+        );
+        const result = await query(
+            `insert into age_verification_requests
+                (user_id, document_file_name, document_mime_type, document_size_bytes, document_data)
+             values ($1, $2, $3, $4, $5)
+             returning id, status, admin_note, created_at, reviewed_at, document_data is not null as document_available`,
+            [req.user.id, attachment.fileName, attachment.mimeType, attachment.sizeBytes, attachment.data],
+        );
+        return res.status(201).json({ request: result.rows[0] });
+    } catch (error) {
+        return next(error);
+    }
+});
+
 app.put('/api/me/birth-date', requireAuth, async (req, res, next) => {
     try {
         if (req.user.birth_date) {

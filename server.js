@@ -51,6 +51,7 @@ const MESSAGE_RETENTION_DAYS = parseRetentionDays('MESSAGE_RETENTION_DAYS', 365)
 const REPORT_RETENTION_DAYS = parseRetentionDays('REPORT_RETENTION_DAYS', 180);
 const OPEN_REPORT_RETENTION_DAYS = parseRetentionDays('OPEN_REPORT_RETENTION_DAYS', 365);
 const ADMIN_AUDIT_RETENTION_DAYS = parseRetentionDays('ADMIN_AUDIT_RETENTION_DAYS', 180);
+const AGE_VERIFICATION_PENDING_RETENTION_DAYS = parseRetentionDays('AGE_VERIFICATION_PENDING_RETENTION_DAYS', 7);
 const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
 const MAX_IMAGE_INPUT_BYTES = 20 * 1024 * 1024;
 const MAX_IMAGE_WIDTH = 1920;
@@ -854,10 +855,26 @@ async function initDatabase() {
             gif_playback text not null default 'none',
             about text not null default '',
             avatar_color text not null default '#2563eb',
+            age_verified_at timestamptz,
+            age_verified_by text,
             banned_at timestamptz,
             ban_reason text,
             created_at timestamptz not null default now(),
             last_seen_at timestamptz
+        );
+
+        create table if not exists age_verification_requests (
+            id bigserial primary key,
+            user_id bigint not null references users(id) on delete cascade,
+            status text not null default 'pending',
+            document_file_name text,
+            document_mime_type text,
+            document_size_bytes integer,
+            document_data bytea,
+            admin_note text not null default '',
+            created_at timestamptz not null default now(),
+            reviewed_at timestamptz,
+            check(status in ('pending', 'approved', 'rejected', 'expired', 'canceled'))
         );
 
         create table if not exists avatar_assets (
@@ -1122,6 +1139,8 @@ async function initDatabase() {
         alter table users add column if not exists notification_sound_asset_id bigint references notification_sound_assets(id);
         alter table users add column if not exists send_on_enter boolean not null default false;
         alter table users add column if not exists gif_playback text not null default 'none';
+        alter table users add column if not exists age_verified_at timestamptz;
+        alter table users add column if not exists age_verified_by text;
         alter table users add column if not exists banned_at timestamptz;
         alter table users add column if not exists ban_reason text;
         alter table avatar_assets add column if not exists owner_user_id bigint references users(id) on delete cascade;
@@ -1180,6 +1199,8 @@ async function initDatabase() {
         create index if not exists idx_content_reports_reviewed on content_reports(reviewed_at);
         create index if not exists idx_message_favorites_message on message_favorites(message_id);
         create index if not exists idx_admin_audit_logs_created on admin_audit_logs(created_at);
+        create index if not exists idx_age_verification_requests_status_created on age_verification_requests(status, created_at desc);
+        create index if not exists idx_age_verification_requests_user_created on age_verification_requests(user_id, created_at desc);
     `);
 }
 
@@ -1273,11 +1294,35 @@ async function purgeExpiredAdminAuditLogs() {
     }
 }
 
+async function purgeExpiredAgeVerificationDocuments() {
+    const expired = await query(
+        `update age_verification_requests
+         set status = 'expired',
+             document_file_name = null,
+             document_mime_type = null,
+             document_size_bytes = null,
+             document_data = null,
+             admin_note = 'Automatisch geloescht: Prueffrist abgelaufen.',
+             reviewed_at = now()
+         where status = 'pending'
+            and created_at < now() - interval '${AGE_VERIFICATION_PENDING_RETENTION_DAYS} days'
+         returning id`,
+    );
+    if (expired.rowCount > 0) {
+        await query(
+            `insert into admin_audit_logs (admin_user, action, ip_address)
+             values ($1, $2, $3)`,
+            ['system', `age_verification_expiry_cleanup_${expired.rowCount}`, null],
+        );
+    }
+}
+
 async function runRetentionCleanup() {
     await purgeExpiredReports();
     await purgeExpiredArchivedConversations();
     await purgeExpiredMessages();
     await purgeExpiredGroupMessages();
+    await purgeExpiredAgeVerificationDocuments();
     await purgeExpiredAdminAuditLogs();
 }
 
@@ -1304,6 +1349,7 @@ async function getUserById(userId) {
     const result = await query(
         `select u.id, u.username, u.display_name, u.email, u.birth_date, u.about, u.avatar_color, u.avatar_asset_id,
             u.two_factor_enabled, u.display_name_visibility, u.username_history_visibility, u.notification_sound_asset_id, u.send_on_enter, u.gif_playback,
+            u.age_verified_at, u.age_verified_by,
             u.banned_at, u.ban_reason, u.created_at, u.last_seen_at,
             u.id in (select early_user.id from users early_user where not early_user.email_verification_required or early_user.email_verified_at is not null order by early_user.created_at, early_user.id limit 10) as first_account,
             case when aa.id is null then null else 'data:' || aa.mime_type || ';base64,' || encode(aa.data, 'base64') end as avatar_url
@@ -1519,7 +1565,7 @@ const routeDependencies = {
     PUBLIC_BASE_URL, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, IMAGE_UPDATE_WEBHOOK_URL,
     VAPID_PUBLIC_KEY, PUSH_ENABLED,
     CHAT_RETENTION_DAYS, MESSAGE_RETENTION_DAYS, REPORT_RETENTION_DAYS,
-    OPEN_REPORT_RETENTION_DAYS, ADMIN_AUDIT_RETENTION_DAYS,
+    OPEN_REPORT_RETENTION_DAYS, ADMIN_AUDIT_RETENTION_DAYS, AGE_VERIFICATION_PENDING_RETENTION_DAYS,
     APP_VERSION,
     crypto, getDashboardData, renderAdminLayout, renderAdminLogin, renderDashboard, renderMessengerApp,
     requireAdminAuth, requireAuth, hasAdminSession, createAdminSessionToken,
