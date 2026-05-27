@@ -150,6 +150,8 @@ function renderMessengerApp({ appVersion = '' } = {}) {
         .message-actions { display: flex; justify-content: flex-end; margin-top: 6px; }
         .report-message { padding: 3px 7px; border-radius: 6px; color: var(--muted); background: transparent; font-size: 11px; font-weight: 700; }
         .report-message:hover { color: var(--danger); background: #fff3f2; }
+        .favorite-message { padding: 3px 8px; border-radius: 999px; color: #94a3b8; background: transparent; font-size: 17px; line-height: 1; }
+        .favorite-message:hover, .favorite-message.active { color: #e11d48; background: #fff1f4; }
         .attachment-link { display: flex; align-items: center; gap: 8px; color: var(--accent); font-weight: 700; text-decoration: none; padding: 9px 10px; margin-bottom: 6px; border-radius: 8px; background: rgba(15, 118, 110, .08); }
         .meta { display: block; color: var(--muted); font-size: 11px; margin-top: 5px; text-align: right; }
         .composer { width: 100%; min-width: 0; background: var(--panel); border-top: 1px solid var(--line); padding: 12px; display: grid; grid-template-columns: 48px minmax(0, 1fr) 48px; gap: 10px; align-items: end; }
@@ -336,6 +338,21 @@ function renderMessengerApp({ appVersion = '' } = {}) {
         .contact-detail.wide { grid-column: 1 / -1; }
         .contact-detail label { display: block; margin-bottom: 6px; color: var(--muted); font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
         .contact-about { color: var(--text); font-size: 15px; line-height: 1.45; }
+        .contact-library { display: grid; gap: 16px; margin: 18px 20px 0; }
+        .contact-library h3 { margin: 0 0 9px; font-size: 16px; }
+        .favorite-list, .media-library { display: grid; gap: 8px; }
+        .favorite-item { width: 100%; display: grid; gap: 4px; padding: 10px; border: 1px solid var(--line); border-radius: 9px; background: #f8fcfb; text-align: left; }
+        .favorite-item strong { color: #e11d48; font-size: 13px; }
+        .favorite-item span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .media-section { display: grid; gap: 8px; }
+        .media-section h4 { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
+        .media-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+        .media-item { display: grid; gap: 5px; min-width: 0; padding: 7px; border: 1px solid var(--line); border-radius: 9px; background: #f8fcfb; color: var(--text); text-decoration: none; font-size: 11px; }
+        .media-item img { width: 100%; height: 82px; border-radius: 6px; object-fit: cover; background: #e9f0f4; }
+        .media-item video { width: 100%; height: 82px; border-radius: 6px; background: #e9f0f4; }
+        .media-item audio { width: 100%; height: 38px; }
+        .media-item span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .media-download { color: var(--accent); font-weight: 700; }
         .contact-actions { display: grid; gap: 10px; margin: 18px 20px 20px; padding: 14px; border-radius: 12px; border: 1px solid #fee2df; background: #fff9f8; }
         .contact-actions .muted { margin: 0; }
         .contact-actions #contactBlockInfo:empty, .contact-actions #contactError:empty { display: none; }
@@ -404,6 +421,7 @@ function renderMessengerApp({ appVersion = '' } = {}) {
             .settings-view { padding: calc(16px + env(safe-area-inset-top)) 12px calc(16px + env(safe-area-inset-bottom)); }
             .contact-details { grid-template-columns: 1fr; }
             .contact-action-buttons { grid-template-columns: 1fr; }
+            .media-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
             .home-card { padding: 28px 22px; border-radius: 20px; }
             .home-list-button { display: block; }
             .feature-view { padding: calc(24px + env(safe-area-inset-top)) 18px 20px; }
@@ -749,6 +767,7 @@ function renderMessengerApp({ appVersion = '' } = {}) {
                                 <li><strong>Domain-Schutz</strong><span>Nachrichten mit gesperrten Domains aus den SgobboVista-Banlists werden vor dem Senden blockiert.</span></li>
                                 <li><strong>Bild-Schutz</strong><span>Zu sendende Chatbilder werden automatisch auf Nackt- und sexuelle Inhalte geprüft und bei Erkennung blockiert.</span></li>
                                 <li><strong>Meldesystem</strong><span>Nachrichten, Dateien und Medien melden; Moderationsmaßnahmen werden im betroffenen Chat sichtbar angezeigt.</span></li>
+                                <li><strong>Favoriten und Medienarchiv</strong><span>Nachrichten oder Dateien mit Herz dauerhaft behalten und Medien je Chat nach Art und Datum anzeigen.</span></li>
                                 <li><strong>Altersgrenze</strong><span>JustChat ist ab 16 Jahren verfügbar und erfordert ein Geburtsdatum zur Prüfung.</span></li>
                                 <li><strong>Profilanpassung</strong><span>Anzeigename, Info, Profilbild, Benachrichtigungston und GIF-Wiedergabe verwalten.</span></li>
                                 <li><strong>Sicherheit</strong><span>E-Mail-Bestätigung, Passwort-Wiederherstellung und optionale Zwei-Faktor-Anmeldung.</span></li>
@@ -1022,6 +1041,17 @@ function renderMessengerApp({ appVersion = '' } = {}) {
                             <div id="contactUsernameHistory" class="history-list"><span class="muted small">Keine sichtbaren früheren Namen.</span></div>
                         </div>
                     </div>
+                    <div class="contact-library">
+                        <section>
+                            <h3>Favoriten &#10084;</h3>
+                            <div id="contactFavorites" class="favorite-list"><span class="muted small">Keine Favoriten in diesem Chat.</span></div>
+                        </section>
+                        <section>
+                            <h3>Medien und Dateien</h3>
+                            <p class="muted small">Nach Art sortiert, jeweils neueste zuerst.</p>
+                            <div id="contactMedia" class="media-library"><span class="muted small">Keine Medien in diesem Chat.</span></div>
+                        </section>
+                    </div>
                     <div class="contact-actions">
                         <p id="contactBlockInfo" class="muted small"></p>
                         <div id="contactError" class="error"></div>
@@ -1029,7 +1059,7 @@ function renderMessengerApp({ appVersion = '' } = {}) {
                             <button id="toggleBlock" class="danger-button" type="button">Person blockieren</button>
                             <button id="deleteChat" class="danger-button" type="button">Chat bei mir löschen</button>
                         </div>
-                        <p class="muted small">Gelöschte Chats werden serverseitig für mindestens 30 Tage gesichert.</p>
+                        <p class="muted small">Nicht favorisierte Nachrichten und Medien werden nach einem Jahr gelöscht. Inhalte mit Herz bleiben erhalten.</p>
                     </div>
                 </div>
             </div>
@@ -2113,6 +2143,63 @@ function renderMessengerApp({ appVersion = '' } = {}) {
             }
         }
 
+        function mediaCategory(mimeType) {
+            const type = String(mimeType || '');
+            if (type.startsWith('image/')) return { key: 'images', label: 'Bilder' };
+            if (type.startsWith('video/')) return { key: 'videos', label: 'Videos' };
+            if (type.startsWith('audio/')) return { key: 'audio', label: 'Audio' };
+            if (type === 'application/pdf' || type.startsWith('text/')) return { key: 'documents', label: 'Dokumente' };
+            return { key: 'files', label: 'Weitere Dateien' };
+        }
+
+        function renderContactLibrary(library) {
+            const favorites = library.favorites || [];
+            $('contactFavorites').innerHTML = favorites.length ? favorites.map((message) => {
+                const author = Number(message.sender_id) === Number(state.me.id) ? 'Du' : state.activeConversation.display_name;
+                const content = message.body || (message.file_name ? 'Datei: ' + message.file_name : 'Nachricht');
+                const date = new Date(message.created_at).toLocaleDateString();
+                return '<button class="favorite-item" type="button" data-library-message="' + message.id + '">' +
+                    '<strong>&#10084; ' + escapeText(author) + ' - ' + escapeText(date) + '</strong><span>' + escapeText(content) + '</span></button>';
+            }).join('') : '<span class="muted small">Keine Favoriten in diesem Chat.</span>';
+
+            const mediaGroups = {};
+            (library.media || []).forEach((attachment) => {
+                const category = mediaCategory(attachment.mime_type);
+                if (!mediaGroups[category.key]) mediaGroups[category.key] = { label: category.label, items: [] };
+                mediaGroups[category.key].items.push(attachment);
+            });
+            $('contactMedia').innerHTML = Object.values(mediaGroups).map((group) =>
+                '<section class="media-section"><h4>' + escapeText(group.label) + '</h4><div class="media-grid">' +
+                group.items.map((attachment) => {
+                    const date = new Date(attachment.created_at).toLocaleDateString();
+                    const type = String(attachment.mime_type || '');
+                    const preview = type.startsWith('image/')
+                        ? '<img data-library-image="true" tabindex="0" role="button" src="' + attachment.data_url + '" alt="' + escapeText(attachment.file_name) + '">'
+                        : type.startsWith('video/')
+                            ? '<video controls preload="metadata" src="' + attachment.data_url + '"></video>'
+                            : type.startsWith('audio/')
+                                ? '<audio controls preload="metadata" src="' + attachment.data_url + '"></audio>'
+                                : '<strong>' + escapeText(group.label.slice(0, -1) || 'Datei') + '</strong>';
+                    return '<div class="media-item">' + preview + '<span>' + escapeText(attachment.file_name) + '</span><span class="muted">' +
+                        escapeText(date) + '</span><a class="media-download" href="' + attachment.data_url + '" download="' +
+                        escapeText(attachment.file_name) + '">Herunterladen</a></div>';
+                }).join('') + '</div></section>'
+            ).join('') || '<span class="muted small">Keine Medien in diesem Chat.</span>';
+        }
+
+        async function loadContactLibrary() {
+            if (!state.activeConversation) return;
+            $('contactFavorites').innerHTML = '<span class="muted small">Wird geladen...</span>';
+            $('contactMedia').innerHTML = '<span class="muted small">Wird geladen...</span>';
+            try {
+                const library = await api('/api/conversations/' + state.activeConversation.id + '/library');
+                renderContactLibrary(library);
+            } catch (error) {
+                $('contactFavorites').innerHTML = '<span class="muted small">Favoriten nicht verfügbar.</span>';
+                $('contactMedia').innerHTML = '<span class="muted small">Medien nicht verfügbar.</span>';
+            }
+        }
+
         function renderContactProfile() {
             const contact = state.activeConversation;
             if (!contact) return;
@@ -2138,6 +2225,7 @@ function renderMessengerApp({ appVersion = '' } = {}) {
             $('toggleBlock').textContent = contact.blocked_by_me ? 'Blockierung aufheben' : 'Person blockieren';
             $('deleteChat').textContent = (contact.blocked_by_me || contact.blocked_me) ? 'Kontakt archivieren' : 'Chat bei mir löschen';
             $('contactError').textContent = '';
+            loadContactLibrary();
         }
 
         function renderConversationList() {
@@ -2271,7 +2359,10 @@ function renderMessengerApp({ appVersion = '' } = {}) {
                 const text = message.body ? escapeText(message.body) : '';
                 return divider + '<div class="bubble ' + (mine ? 'me' : '') + '" data-message-id="' + message.id + '">' +
                     attachment + text + '<span class="meta">' + time + read + '</span>' +
-                    (!mine ? '<div class="message-actions"><button class="report-message" type="button" data-report-message="' + message.id + '">Melden</button></div>' : '') +
+                    '<div class="message-actions">' +
+                    '<button class="favorite-message' + (message.favorited_by_me ? ' active' : '') + '" type="button" data-favorite-message="' + message.id + '" data-favorite="' + Boolean(message.favorited_by_me) + '" aria-label="' + (message.favorited_by_me ? 'Aus Favoriten entfernen' : 'Zu Favoriten hinzufügen') + '">&#10084;</button>' +
+                    (!mine ? '<button class="report-message" type="button" data-report-message="' + message.id + '">Melden</button>' : '') +
+                    '</div>' +
                     '</div>';
             }).join('');
             applyGifPreference($('messages'));
@@ -2600,6 +2691,13 @@ function renderMessengerApp({ appVersion = '' } = {}) {
                 const payload = JSON.parse(event.data);
                 await refreshOpenMessages(payload.conversationId);
             });
+            state.eventSource.addEventListener('message:favorite', async (event) => {
+                const payload = JSON.parse(event.data);
+                if (state.activeConversation && Number(state.activeConversation.id) === Number(payload.conversationId)) {
+                    await refreshOpenMessages(payload.conversationId);
+                    if (!$('contactPanel').classList.contains('hidden')) await loadContactLibrary();
+                }
+            });
             state.eventSource.addEventListener('conversation:deleted', async (event) => {
                 const payload = JSON.parse(event.data);
                 await loadConversations();
@@ -2823,6 +2921,25 @@ function renderMessengerApp({ appVersion = '' } = {}) {
             $('chatPane').classList.add('hidden');
             $('accountPanel').classList.add('hidden');
             $('contactPanel').classList.remove('hidden');
+        });
+        $('contactPanel').addEventListener('click', async (event) => {
+            const selectedMessage = event.target.closest('[data-library-message]');
+            if (selectedMessage && state.activeConversation) {
+                $('contactPanel').classList.add('hidden');
+                await openConversation(state.activeConversation.id, selectedMessage.dataset.libraryMessage);
+                return;
+            }
+            const libraryImage = event.target.closest('[data-library-image]');
+            if (libraryImage) {
+                event.preventDefault();
+                openImageViewer(libraryImage);
+            }
+        });
+        $('contactPanel').addEventListener('keydown', (event) => {
+            const libraryImage = event.target.closest('[data-library-image]');
+            if (!libraryImage || (event.key !== 'Enter' && event.key !== ' ')) return;
+            event.preventDefault();
+            openImageViewer(libraryImage);
         });
         $('closeContact').addEventListener('click', async () => {
             $('contactPanel').classList.add('hidden');
@@ -3276,7 +3393,20 @@ function renderMessengerApp({ appVersion = '' } = {}) {
             $('composer').requestSubmit();
         });
         $('attachmentInput').addEventListener('change', (event) => chooseAttachment(event.target.files[0]));
-        $('messages').addEventListener('click', (event) => {
+        $('messages').addEventListener('click', async (event) => {
+            const favoriteButton = event.target.closest('[data-favorite-message]');
+            if (favoriteButton && state.activeConversation) {
+                try {
+                    await api('/api/conversations/' + state.activeConversation.id + '/messages/' + favoriteButton.dataset.favoriteMessage + '/favorite', {
+                        method: favoriteButton.dataset.favorite === 'true' ? 'DELETE' : 'PUT',
+                        body: '{}',
+                    });
+                    await refreshOpenMessages(state.activeConversation.id);
+                } catch (error) {
+                    $('composerError').textContent = error.message;
+                }
+                return;
+            }
             const reportButton = event.target.closest('[data-report-message]');
             if (reportButton) {
                 state.reportMessageId = reportButton.dataset.reportMessage;

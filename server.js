@@ -47,6 +47,7 @@ let pool;
 let mailer;
 const eventClients = new Map();
 const CHAT_RETENTION_DAYS = 30;
+const MESSAGE_RETENTION_DAYS = 365;
 const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
 const MAX_IMAGE_INPUT_BYTES = 20 * 1024 * 1024;
 const MAX_IMAGE_WIDTH = 1920;
@@ -921,6 +922,13 @@ async function initDatabase() {
             created_at timestamptz not null default now()
         );
 
+        create table if not exists message_favorites (
+            user_id bigint not null references users(id) on delete cascade,
+            message_id bigint not null references messages(id) on delete cascade,
+            created_at timestamptz not null default now(),
+            primary key (user_id, message_id)
+        );
+
         create table if not exists content_reports (
             id bigserial primary key,
             reporter_user_id bigint not null references users(id) on delete cascade,
@@ -1117,6 +1125,7 @@ async function initDatabase() {
         create index if not exists idx_news_posts_created on news_posts(created_at desc);
         create index if not exists idx_push_subscriptions_user on push_subscriptions(user_id);
         create index if not exists idx_content_reports_status_created on content_reports(status, created_at desc);
+        create index if not exists idx_message_favorites_message on message_favorites(message_id);
     `);
 }
 
@@ -1127,6 +1136,11 @@ async function purgeExpiredArchivedConversations() {
             and deleted_for_user_one_at < now() - interval '${CHAT_RETENTION_DAYS} days'
             and deleted_for_user_two_at < now() - interval '${CHAT_RETENTION_DAYS} days'
             and not exists (select 1 from content_reports report where report.conversation_id = conversations.id)
+            and not exists (
+                select 1 from message_favorites favorite
+                join messages message on message.id = favorite.message_id
+                where message.conversation_id = conversations.id
+            )
          returning id`,
     );
     if (deleted.rowCount > 0) {
@@ -1134,6 +1148,23 @@ async function purgeExpiredArchivedConversations() {
             `insert into admin_audit_logs (admin_user, action, ip_address)
              values ($1, $2, $3)`,
             ['system', `archive_expiry_cleanup_${deleted.rowCount}`, null],
+        );
+    }
+}
+
+async function purgeExpiredMessages() {
+    const deleted = await query(
+        `delete from messages message
+         where message.created_at < now() - interval '${MESSAGE_RETENTION_DAYS} days'
+            and not exists (select 1 from message_favorites favorite where favorite.message_id = message.id)
+            and not exists (select 1 from content_reports report where report.message_id = message.id)
+         returning id`,
+    );
+    if (deleted.rowCount > 0) {
+        await query(
+            `insert into admin_audit_logs (admin_user, action, ip_address)
+             values ($1, $2, $3)`,
+            ['system', `message_expiry_cleanup_${deleted.rowCount}`, null],
         );
     }
 }
@@ -1368,7 +1399,7 @@ const routeDependencies = {
     ADMIN_PASSWORD, ADMIN_USER, ADMIN_SESSION_COOKIE, DATABASE_URL,
     PUBLIC_BASE_URL, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, IMAGE_UPDATE_WEBHOOK_URL,
     VAPID_PUBLIC_KEY, PUSH_ENABLED,
-    CHAT_RETENTION_DAYS,
+    CHAT_RETENTION_DAYS, MESSAGE_RETENTION_DAYS,
     APP_VERSION,
     crypto, getDashboardData, renderAdminLayout, renderAdminLogin, renderDashboard, renderMessengerApp,
     requireAdminAuth, requireAuth, hasAdminSession, createAdminSessionToken,
@@ -1395,9 +1426,13 @@ waitForDatabase()
     .then(async () => {
         if (DATABASE_URL) {
             await purgeExpiredArchivedConversations();
+            await purgeExpiredMessages();
             const archiveCleanupTimer = setInterval(() => {
                 purgeExpiredArchivedConversations().catch((error) => {
                     console.error('Archiv-Bereinigung fehlgeschlagen:', error.message);
+                });
+                purgeExpiredMessages().catch((error) => {
+                    console.error('Nachrichten-Bereinigung fehlgeschlagen:', error.message);
                 });
             }, 60 * 60 * 1000);
             archiveCleanupTimer.unref();

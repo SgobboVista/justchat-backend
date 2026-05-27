@@ -1057,7 +1057,8 @@ app.get('/api/conversations/:id/messages', requireAuth, async (req, res, next) =
                 `with focused as (
                     select created_at from messages where id = $2 and conversation_id = $1
                  ), nearby as (
-                    select id, conversation_id, sender_id, body, created_at, read_at
+                    select id, conversation_id, sender_id, body, created_at, read_at,
+                        exists(select 1 from message_favorites where message_id = messages.id and user_id = $3) as favorited_by_me
                     from messages
                     where conversation_id = $1
                        and created_at <= coalesce((select created_at from focused), now())
@@ -1065,18 +1066,19 @@ app.get('/api/conversations/:id/messages', requireAuth, async (req, res, next) =
                     limit 100
                  )
                  select * from nearby order by created_at asc`,
-                [conversation.id, focusMessageId],
+                [conversation.id, focusMessageId, req.user.id],
             )
             : await query(
                 `select * from (
-                    select id, conversation_id, sender_id, body, created_at, read_at
+                    select id, conversation_id, sender_id, body, created_at, read_at,
+                        exists(select 1 from message_favorites where message_id = messages.id and user_id = $2) as favorited_by_me
                     from messages
                     where conversation_id = $1
                     order by created_at desc
                     limit 200
                  ) recent
                  order by created_at asc`,
-                [conversation.id],
+                [conversation.id, req.user.id],
             );
         const messageRows = messages.rows;
         const messageIds = messageRows.map((message) => message.id);
@@ -1237,6 +1239,88 @@ app.post('/api/conversations/:id/messages/:messageId/report', requireAuth, async
         );
         if (!result.rows[0]) return res.status(409).json({ error: 'Diese Nachricht wurde von dir bereits gemeldet' });
         return res.status(201).json({ ok: true, reportId: result.rows[0].id });
+    } catch (error) {
+        return next(error);
+    }
+});
+
+app.put('/api/conversations/:id/messages/:messageId/favorite', requireAuth, async (req, res, next) => {
+    try {
+        const conversation = await getConversationForUser(req.params.id, req.user.id);
+        const messageId = parseId(req.params.messageId);
+        if (!conversation || !messageId) return res.status(404).json({ error: 'Nachricht nicht gefunden' });
+        const message = await query('select id from messages where id = $1 and conversation_id = $2', [messageId, conversation.id]);
+        if (!message.rows[0]) return res.status(404).json({ error: 'Nachricht nicht gefunden' });
+        await query(
+            `insert into message_favorites (user_id, message_id)
+             values ($1, $2)
+             on conflict (user_id, message_id) do nothing`,
+            [req.user.id, messageId],
+        );
+        sendEvent(req.user.id, 'message:favorite', { conversationId: conversation.id });
+        return res.json({ ok: true, favorite: true });
+    } catch (error) {
+        return next(error);
+    }
+});
+
+app.delete('/api/conversations/:id/messages/:messageId/favorite', requireAuth, async (req, res, next) => {
+    try {
+        const conversation = await getConversationForUser(req.params.id, req.user.id);
+        const messageId = parseId(req.params.messageId);
+        if (!conversation || !messageId) return res.status(404).json({ error: 'Nachricht nicht gefunden' });
+        await query(
+            `delete from message_favorites
+             where user_id = $1 and message_id = $2
+                and exists(select 1 from messages where id = $2 and conversation_id = $3)`,
+            [req.user.id, messageId, conversation.id],
+        );
+        sendEvent(req.user.id, 'message:favorite', { conversationId: conversation.id });
+        return res.json({ ok: true, favorite: false });
+    } catch (error) {
+        return next(error);
+    }
+});
+
+app.get('/api/conversations/:id/library', requireAuth, async (req, res, next) => {
+    try {
+        const conversation = await getConversationForUser(req.params.id, req.user.id);
+        if (!conversation) return res.status(404).json({ error: 'Chat nicht gefunden' });
+        const favorites = await query(
+            `select message.id, message.sender_id, message.body, message.created_at,
+                attachment.file_name, attachment.mime_type
+             from message_favorites favorite
+             join messages message on message.id = favorite.message_id
+             left join message_attachments attachment on attachment.message_id = message.id
+             where favorite.user_id = $1 and message.conversation_id = $2
+             order by message.created_at desc`,
+            [req.user.id, conversation.id],
+        );
+        const media = await query(
+            `select attachment.id, attachment.message_id, attachment.file_name, attachment.mime_type,
+                attachment.size_bytes, attachment.created_at, message.sender_id,
+                encode(attachment.data, 'base64') as data_base64
+             from message_attachments attachment
+             join messages message on message.id = attachment.message_id
+             where message.conversation_id = $1
+             order by
+                case
+                    when attachment.mime_type like 'image/%' then 1
+                    when attachment.mime_type like 'video/%' then 2
+                    when attachment.mime_type like 'audio/%' then 3
+                    when attachment.mime_type in ('application/pdf', 'text/plain') then 4
+                    else 5
+                end,
+                attachment.created_at desc`,
+            [conversation.id],
+        );
+        return res.json({
+            favorites: favorites.rows,
+            media: media.rows.map((attachment) => ({
+                ...attachment,
+                data_url: `data:${attachment.mime_type};base64,${attachment.data_base64}`,
+            })),
+        });
     } catch (error) {
         return next(error);
     }
