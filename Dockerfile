@@ -19,6 +19,7 @@ ENV APP_VERSION="${APP_VERSION}"
 
 COPY package.json ./
 RUN npm install --omit=dev
+RUN node -e "const tf = require('@tensorflow/tfjs-node'); const nsfwjs = require('nsfwjs'); tf.enableProdMode(); nsfwjs.load('MobileNetV2').then(() => console.log('NSFW model ready')).catch((error) => { console.error(error); process.exit(1); });"
 
 COPY . .
 
