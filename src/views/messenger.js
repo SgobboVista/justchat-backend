@@ -491,7 +491,7 @@ function renderMessengerApp({ appVersion = '' } = {}) {
             </div>
             <div class="field register-only hidden">
                 <label for="birthDate">Geburtsdatum (JustChat ist ab 16 Jahren)</label>
-                <input id="birthDate" type="text" inputmode="numeric" autocomplete="bday" placeholder="TT.MM.JJJJ" maxlength="10">
+                <input id="birthDate" type="text" inputmode="numeric" autocomplete="bday" placeholder="TTMMJJJJ, z.B. 25052010" maxlength="8">
             </div>
             <div class="field register-only hidden">
                 <label>Profilbild</label>
@@ -1146,7 +1146,7 @@ function renderMessengerApp({ appVersion = '' } = {}) {
             <p>Diese Angabe wird für die Altersprüfung benötigt und ist nicht für andere Nutzer sichtbar.</p>
             <div class="field">
                 <label for="requiredBirthDate">Dein Geburtsdatum</label>
-                <input id="requiredBirthDate" type="text" inputmode="numeric" autocomplete="bday" placeholder="TT.MM.JJJJ" maxlength="10" required>
+                <input id="requiredBirthDate" type="text" inputmode="numeric" autocomplete="bday" placeholder="TTMMJJJJ, z.B. 25052010" maxlength="8" required>
             </div>
             <div id="birthDateGateError" class="error" role="alert"></div>
             <button class="primary" type="submit">Geburtsdatum bestätigen</button>
@@ -1321,18 +1321,10 @@ function renderMessengerApp({ appVersion = '' } = {}) {
             return year + '-' + month + '-' + day;
         }
 
-        function formatBirthDateInput(value) {
-            const digits = String(value || '').replace(/\D/g, '').slice(0, 8);
-            const day = digits.slice(0, 2);
-            const month = digits.slice(2, 4);
-            const year = digits.slice(4, 8);
-            return [day, month, year].filter(Boolean).join('.');
-        }
-
         function isCompleteBirthDateInput(value) {
             const trimmed = String(value || '').trim();
-            return /^\d{2}\.\d{2}\.\d{4}$/.test(trimmed)
-                || /^\d{8}$/.test(trimmed)
+            return /^\d{8}$/.test(trimmed)
+                || /^\d{2}\.\d{2}\.\d{4}$/.test(trimmed)
                 || /^\d{4}-\d{2}-\d{2}$/.test(trimmed);
         }
 
@@ -1345,7 +1337,7 @@ function renderMessengerApp({ appVersion = '' } = {}) {
             const input = $(inputId);
             if (!input) return;
             input.addEventListener('input', (event) => {
-                event.target.value = formatBirthDateInput(event.target.value);
+                event.target.value = String(event.target.value || '').replace(/\D/g, '').slice(0, 8);
             });
         });
 
@@ -3077,7 +3069,7 @@ function renderMessengerApp({ appVersion = '' } = {}) {
             event.preventDefault();
             $('birthDateGateError').textContent = '';
             if (!isCompleteBirthDateInput($('requiredBirthDate').value)) {
-                $('birthDateGateError').textContent = 'Bitte gib dein Geburtsdatum im Format TT.MM.JJJJ ein.';
+                $('birthDateGateError').textContent = 'Bitte gib dein Geburtsdatum mit 8 Zahlen ein, zum Beispiel 25052010.';
                 return;
             }
             try {
@@ -3105,7 +3097,7 @@ function renderMessengerApp({ appVersion = '' } = {}) {
                 return;
             }
             if (state.registerMode && !isCompleteBirthDateInput($('birthDate').value)) {
-                $('authError').textContent = 'Bitte gib dein Geburtsdatum im Format TT.MM.JJJJ ein.';
+                $('authError').textContent = 'Bitte gib dein Geburtsdatum mit 8 Zahlen ein, zum Beispiel 25052010.';
                 return;
             }
             const body = {
