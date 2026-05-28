@@ -280,8 +280,27 @@ function renderMessengerApp({ appVersion = '' } = {}) {
         .group-picture-actions input { width: 100%; }
         .group-media-settings { display: grid; gap: 9px; padding: 13px; border: 1px solid var(--line); border-radius: 10px; background: #f7fbfa; }
         .group-members { display: grid; gap: 8px; }
-        .group-member { display: flex; justify-content: space-between; align-items: center; gap: 12px; border: 1px solid var(--line); border-radius: 9px; padding: 10px 12px; background: #fff; }
+        .group-member { display: flex; justify-content: space-between; align-items: center; gap: 12px; border: 1px solid var(--line); border-radius: 12px; padding: 11px 12px; background: #fff; box-shadow: 0 4px 14px rgba(15, 23, 42, .04); }
         .group-member strong, .group-member span { display: block; }
+        .group-member-main { min-width: 0; }
+        .group-member-side { display: grid; justify-items: end; gap: 7px; text-align: right; }
+        .group-info-card { gap: 16px; }
+        .group-info-hero { display: grid; justify-items: center; gap: 8px; padding: 16px; border: 1px solid #c7e6df; border-radius: 16px; background: linear-gradient(145deg, #f7fbfa, #eef8f6); text-align: center; }
+        .group-info-hero h3 { margin: 4px 0 0; font-size: 24px; }
+        .group-info-owner { margin: 0; color: var(--muted); }
+        .group-picture-trigger { position: relative; padding: 0; border-radius: 50%; background: transparent; }
+        .group-picture-trigger::after { content: 'Ändern'; position: absolute; inset: 0; display: grid; place-items: center; border-radius: 50%; color: #fff; background: rgba(15, 23, 42, .62); opacity: 0; transition: opacity .15s ease; font-size: 13px; font-weight: 800; }
+        .group-picture-trigger:hover::after, .group-picture-trigger:focus-visible::after { opacity: 1; }
+        .group-name-edit { width: min(360px, 100%); display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
+        .group-name-edit input { min-width: 0; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+        .group-status-pill { width: max-content; border-radius: 999px; padding: 4px 8px; color: var(--accent); background: #eef8f6; font-size: 12px; font-weight: 800; }
+        .switch { position: relative; width: 46px; height: 26px; display: inline-block; }
+        .switch input { position: absolute; opacity: 0; inset: 0; width: 100%; height: 100%; }
+        .switch span { position: absolute; inset: 0; border-radius: 999px; background: #cbd5e1; transition: background .15s ease; }
+        .switch span::before { content: ''; position: absolute; width: 20px; height: 20px; left: 3px; top: 3px; border-radius: 50%; background: #fff; box-shadow: 0 2px 6px rgba(15, 23, 42, .22); transition: transform .15s ease; }
+        .switch input:checked + span { background: var(--accent); }
+        .switch input:checked + span::before { transform: translateX(20px); }
+        .switch input:focus-visible + span { outline: 3px solid rgba(15, 118, 110, .18); outline-offset: 2px; }
         .group-role { color: var(--accent); font-size: 12px; font-weight: 700; }
         .tab-notice { width: 10px; height: 10px; border-radius: 50%; background: #22c55e; position: absolute; top: 7px; left: calc(50% + 15px); box-shadow: 0 0 0 2px #fff; }
         .bottom-tabs {
@@ -1168,7 +1187,7 @@ function renderMessengerApp({ appVersion = '' } = {}) {
                         <option value="">Jahr</option>
                     </select>
                 </div>
-            </div>
+             </div>
             <div id="birthDateGateError" class="error" role="alert"></div>
             <button class="primary" type="submit">Geburtsdatum bestätigen</button>
         </form>
@@ -1236,8 +1255,15 @@ function renderMessengerApp({ appVersion = '' } = {}) {
                 <button id="closeGroupInfo" class="ghost close-button" type="button" aria-label="Gruppeninfo schließen">&times;</button>
             </div>
             <div class="group-info-hero">
-                <div id="groupInfoImage" class="group-avatar large">G</div>
+                <button id="groupPictureTrigger" class="group-picture-trigger hidden" type="button" aria-label="Gruppenbild ändern" title="Ändern">
+                    <div id="groupInfoImage" class="group-avatar large">G</div>
+                </button>
+                <div id="groupInfoImageStatic" class="group-avatar large">G</div>
                 <h3 id="groupInfoName"></h3>
+                <form id="groupNameForm" class="group-name-edit hidden">
+                    <input id="groupNameEdit" maxlength="60" placeholder="Gruppenname">
+                    <button class="primary" type="submit">Speichern</button>
+                </form>
                 <p id="groupInfoOwner" class="group-info-owner"></p>
                 <p id="groupInfoCount" class="muted small"></p>
             </div>
@@ -1792,8 +1818,31 @@ function renderMessengerApp({ appVersion = '' } = {}) {
             ).join('') : '<p class="muted small">Füge zuerst Kontakte über Chats hinzu, um sie einzuladen.</p>';
         }
 
+        function groupInviteStatus(contact) {
+            if (contact.group_role) return contact.group_role === 'owner' ? 'Besitzer' : 'Mitglied';
+            if (contact.invitation_status === 'pending') return 'Eingeladen';
+            if (contact.invitation_status === 'declined') return 'Abgelehnt';
+            if (contact.invitation_status === 'declined_forever') return 'Nie wieder fragen';
+            if (contact.invitation_status === 'accepted') return 'Mitglied';
+            return '';
+        }
+
+        function richGroupContactOptions(inputName, options = {}) {
+            const contacts = state.groupContacts.filter((contact) => {
+                if (Number(contact.id) === Number(state.me && state.me.id)) return false;
+                return !options.onlyInvitable || !contact.group_role;
+            });
+            return contacts.length ? contacts.map((contact) => {
+                const status = groupInviteStatus(contact);
+                const disabled = Boolean(options.onlyInvitable && (contact.group_role || contact.invitation_status === 'pending' || contact.invitation_status === 'declined_forever'));
+                return '<label class="group-picker-item"><input type="checkbox" name="' + inputName + '" value="' + contact.id + '"' + (disabled ? ' disabled' : '') + '>' +
+                    '<span><strong>' + escapeText(contact.display_name) + '</strong><small class="muted">@' +
+                    escapeText(contact.username) + '</small>' + (status ? '<small class="group-status-pill">' + escapeText(status) + '</small>' : '') + '</span></label>';
+            }).join('') : '<p class="muted small">Füge zuerst Kontakte über Chats hinzu, um sie einzuladen.</p>';
+        }
+
         function renderGroupContacts() {
-            $('groupContactPicker').innerHTML = groupContactOptions('groupContact');
+            $('groupContactPicker').innerHTML = richGroupContactOptions('groupContact');
         }
 
         async function showGroupCreate() {
@@ -1808,9 +1857,9 @@ function renderMessengerApp({ appVersion = '' } = {}) {
 
         async function showGroupInvite() {
             $('groupInviteError').textContent = '';
-            const data = await api('/api/groups/contacts');
+            const data = await api('/api/groups/contacts?groupId=' + encodeURIComponent(state.activeGroup.id));
             state.groupContacts = data.contacts || [];
-            $('groupInvitePicker').innerHTML = groupContactOptions('groupInviteContact');
+            $('groupInvitePicker').innerHTML = richGroupContactOptions('groupInviteContact', { onlyInvitable: true });
             $('groupInviteForm').classList.remove('hidden');
         }
 
@@ -1876,14 +1925,20 @@ function renderMessengerApp({ appVersion = '' } = {}) {
             if (!state.activeGroup) return;
             const data = await api('/api/groups/' + state.activeGroup.id + '/info');
             state.activeGroup = Object.assign({}, state.activeGroup, data.group);
+            const isOwner = Number(data.group.owner_user_id) === Number(state.me.id);
             renderGroupHeader(state.activeGroup);
             renderGroupImage('groupInfoImage', data.group);
+            renderGroupImage('groupInfoImageStatic', data.group);
+            $('groupPictureTrigger').classList.toggle('hidden', !isOwner);
+            $('groupInfoImageStatic').classList.toggle('hidden', isOwner);
             $('groupInfoName').textContent = data.group.name;
+            $('groupNameForm').classList.toggle('hidden', !isOwner);
+            $('groupNameEdit').value = data.group.name;
             $('groupInfoOwner').textContent = 'Besitzer: ' + data.group.owner_display_name +
                 (data.group.owner_username ? ' (@' + data.group.owner_username + ')' : '');
             $('groupInfoCount').textContent = data.group.member_count + ' Mitglieder';
-            $('groupPictureActions').classList.toggle('hidden', Number(data.group.owner_user_id) !== Number(state.me.id));
-            $('groupMediaSettings').classList.toggle('hidden', Number(data.group.owner_user_id) !== Number(state.me.id));
+            $('groupPictureActions').classList.toggle('hidden', !isOwner);
+            $('groupMediaSettings').classList.toggle('hidden', !isOwner);
             document.querySelectorAll('input[name="groupMediaPolicy"]').forEach((input) => { input.checked = input.value === (data.group.media_send_policy || 'all'); });
             $('groupMediaMinDays').value = data.group.media_min_member_days || 0;
             $('groupMediaAllowedPicker').innerHTML = data.members.map((member) =>
@@ -1892,10 +1947,12 @@ function renderMessengerApp({ appVersion = '' } = {}) {
             ).join('');
             $('groupPictureError').textContent = '';
             $('groupMemberList').innerHTML = data.members.map((member) =>
-                '<div class="group-member"><div><strong>' + escapeText(member.display_name) + '</strong>' +
+                '<div class="group-member"><div class="group-member-main"><strong>' + escapeText(member.display_name) + '</strong>' +
                 (member.username ? '<span class="muted small">@' + escapeText(member.username) + '</span>' : '') +
                 (member.role === 'owner' ? '<span class="group-role">Besitzer</span>' : '') +
-                '</div><span class="muted small">Dabei seit<br>' + escapeText(membershipText(member.joined_at)) + '</span></div>'
+                '</div><div class="group-member-side"><span class="muted small">Dabei seit<br>' + escapeText(membershipText(member.joined_at)) + '</span>' +
+                (isOwner && member.role !== 'owner' ? '<label class="switch" title="Medien senden erlauben"><input type="checkbox" name="groupMediaAllowedMember" value="' + member.user_id + '"' + (member.media_allowed ? ' checked' : '') + '><span></span></label>' : '') +
+                '</div></div>'
             ).join('');
             $('groupInfoModal').classList.remove('hidden');
         }
@@ -3637,20 +3694,66 @@ function renderMessengerApp({ appVersion = '' } = {}) {
                 $('groupPictureError').textContent = error.message;
             }
         });
+        $('groupPictureTrigger').addEventListener('click', () => {
+            $('groupPictureFile').click();
+        });
+        $('groupPictureFile').addEventListener('change', () => {
+            if ($('groupPictureFile').files[0]) $('uploadGroupPicture').click();
+        });
+        $('groupNameForm').addEventListener('submit', async (event) => {
+            event.preventDefault();
+            if (!state.activeGroup) return;
+            $('groupPictureError').textContent = '';
+            try {
+                const data = await api('/api/groups/' + state.activeGroup.id + '/name', {
+                    method: 'PUT',
+                    body: JSON.stringify({ name: $('groupNameEdit').value }),
+                });
+                state.activeGroup = Object.assign({}, state.activeGroup, data.group);
+                renderGroupHeader(state.activeGroup);
+                $('groupInfoName').textContent = state.activeGroup.name;
+                await loadGroups();
+            } catch (error) {
+                $('groupPictureError').textContent = error.message;
+            }
+        });
+        async function saveGroupMediaSettings() {
+            if (!state.activeGroup) return;
+            const policy = document.querySelector('input[name="groupMediaPolicy"]:checked').value;
+            const allowedUserIds = [...new Set([
+                ...Array.from(document.querySelectorAll('input[name="groupMediaAllowed"]:checked')).map((input) => input.value),
+                ...Array.from(document.querySelectorAll('input[name="groupMediaAllowedMember"]:checked')).map((input) => input.value),
+            ])];
+            await api('/api/groups/' + state.activeGroup.id + '/media-settings', {
+                method: 'PUT',
+                body: JSON.stringify({
+                    policy,
+                    minMemberDays: $('groupMediaMinDays').value,
+                    allowedUserIds,
+                }),
+            });
+        }
+        $('groupMemberList').addEventListener('change', async (event) => {
+            const toggle = event.target.closest('input[name="groupMediaAllowedMember"]');
+            if (!toggle) return;
+            const pickerToggle = $('groupMediaAllowedPicker').querySelector('input[value="' + toggle.value + '"]');
+            if (pickerToggle) pickerToggle.checked = toggle.checked;
+            document.querySelector('input[name="groupMediaPolicy"][value="specific"]').checked = true;
+            $('groupMediaSettingsError').textContent = '';
+            try {
+                await saveGroupMediaSettings();
+                $('groupMediaSettingsError').textContent = 'Medienrecht wurde gespeichert.';
+            } catch (error) {
+                $('groupMediaSettingsError').textContent = error.message;
+                toggle.checked = !toggle.checked;
+                if (pickerToggle) pickerToggle.checked = toggle.checked;
+            }
+        });
         $('saveGroupMediaSettings').addEventListener('click', async () => {
             if (!state.activeGroup) return;
             $('groupMediaSettingsError').textContent = '';
             try {
-                const policy = document.querySelector('input[name="groupMediaPolicy"]:checked').value;
-                const allowedUserIds = Array.from(document.querySelectorAll('input[name="groupMediaAllowed"]:checked')).map((input) => input.value);
-                await api('/api/groups/' + state.activeGroup.id + '/media-settings', {
-                    method: 'PUT',
-                    body: JSON.stringify({
-                        policy,
-                        minMemberDays: $('groupMediaMinDays').value,
-                        allowedUserIds,
-                    }),
-                });
+                await saveGroupMediaSettings();
                 $('groupMediaSettingsError').textContent = 'Medienrechte wurden gespeichert.';
             } catch (error) {
                 $('groupMediaSettingsError').textContent = error.message;

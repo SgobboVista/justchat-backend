@@ -614,12 +614,19 @@ app.post('/api/contact-requests/:id/archive', requireAuth, async (req, res, next
 
 app.get('/api/groups/contacts', requireAuth, async (req, res, next) => {
     try {
+        const groupId = parseId(req.query.groupId);
         const result = await query(
             `select u.id, u.username, u.display_name, u.avatar_color,
-                case when aa.id is null then null else 'data:' || aa.mime_type || ';base64,' || encode(aa.data, 'base64') end as avatar_url
+                case when aa.id is null then null else 'data:' || aa.mime_type || ';base64,' || encode(aa.data, 'base64') end as avatar_url,
+                membership.role as group_role,
+                invitation.status as invitation_status,
+                invitation.created_at as invitation_created_at,
+                invitation.responded_at as invitation_responded_at
              from conversations c
              join users u on u.id = case when c.user_one_id = $1 then c.user_two_id else c.user_one_id end
              left join avatar_assets aa on aa.id = u.avatar_asset_id and aa.is_active = true
+             left join group_members membership on membership.group_id = $2 and membership.user_id = u.id
+             left join group_invitations invitation on invitation.group_id = $2 and invitation.invitee_user_id = u.id
              where $1 in (c.user_one_id, c.user_two_id)
                 and not exists (
                     select 1 from user_blocks b
@@ -627,7 +634,7 @@ app.get('/api/groups/contacts', requireAuth, async (req, res, next) => {
                        or (b.blocker_id = u.id and b.blocked_user_id = $1)
                 )
              order by lower(u.display_name), lower(u.username)`,
-            [req.user.id],
+            [req.user.id, groupId],
         );
         return res.json({ contacts: result.rows });
     } catch (error) {
@@ -860,6 +867,30 @@ app.get('/api/groups/:id/info', requireAuth, async (req, res, next) => {
             [groupId, req.user.id],
         );
         return res.json({ group: groupResult.rows[0], members: members.rows });
+    } catch (error) {
+        return next(error);
+    }
+});
+
+app.put('/api/groups/:id/name', requireAuth, async (req, res, next) => {
+    try {
+        const groupId = parseId(req.params.id);
+        const name = String(req.body.name || '').trim().slice(0, 60);
+        if (!groupId) return res.status(400).json({ error: 'Ungültige Gruppe' });
+        if (name.length < 2) return res.status(400).json({ error: 'Bitte gib einen Gruppennamen ein' });
+        const updated = await query(
+            `update chat_groups
+             set name = $1
+             where id = $2 and owner_user_id = $3
+             returning id, name, owner_user_id, created_at, image_updated_at,
+                case when image_data is null then null else '/api/groups/' || id || '/image' end as image_url,
+                media_send_policy, media_min_member_days`,
+            [name, groupId, req.user.id],
+        );
+        if (!updated.rows[0]) return res.status(403).json({ error: 'Nur der Besitzer kann den Gruppennamen ändern' });
+        const members = await query('select user_id from group_members where group_id = $1', [groupId]);
+        members.rows.forEach((member) => sendEvent(member.user_id, 'group:changed', { groupId }));
+        return res.json({ group: updated.rows[0] });
     } catch (error) {
         return next(error);
     }
