@@ -84,7 +84,7 @@ function renderAdminLayout(content) {
         input, select { width: 100%; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; background: #fff; color: var(--text); }
         .password-input { position: relative; }
         .password-input input { padding-right: 48px; }
-        .password-toggle { position: absolute; top: 50%; right: 5px; transform: translateY(-50%); width: 40px; height: 40px; padding: 0; border-radius: 8px; background: transparent; color: var(--muted); }
+        .password-toggle { position: absolute; top: 50%; right: 5px; transform: translateY(-50%); width: 40px; height: 40px; padding: 0; border-radius: 8px; display: grid; place-items: center; background: transparent; color: var(--muted); }
         .password-toggle:hover { background: #f4f7fb; color: var(--accent); }
         .password-toggle svg { width: 21px; height: 21px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
         .password-toggle .eye-slash { display: none; }
@@ -131,7 +131,7 @@ function renderAdminLayout(content) {
         .admin-login-card { width: min(420px, 100%); background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 28px; box-shadow: 0 18px 42px rgba(15, 23, 42, .1); }
         .admin-login-card h1 { margin-bottom: 8px; }
         .admin-login-card form { display: grid; gap: 14px; margin-top: 22px; }
-        .admin-login-card button { width: 100%; margin-top: 4px; }
+        .admin-login-card #adminLoginButton { width: 100%; margin-top: 4px; }
         .login-error { border-radius: 8px; padding: 10px 12px; background: #fef3f2; color: var(--error); font-size: 14px; }
         .hidden { display: none !important; }
         @media (max-width: 820px) {
