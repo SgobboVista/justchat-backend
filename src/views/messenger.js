@@ -301,6 +301,20 @@ function renderMessengerApp({ appVersion = '' } = {}) {
         .switch input:checked + span { background: var(--accent); }
         .switch input:checked + span::before { transform: translateX(20px); }
         .switch input:focus-visible + span { outline: 3px solid rgba(15, 118, 110, .18); outline-offset: 2px; }
+        .group-info-card .group-picture-actions { display: none !important; }
+        .group-info-card .group-info-hero { grid-template-columns: auto minmax(0, 1fr); justify-items: stretch; align-items: center; gap: 12px 16px; overflow: hidden; text-align: left; }
+        .group-info-card .group-info-hero .group-avatar.large, .group-info-card .group-picture-trigger { grid-column: 1; grid-row: 1 / span 5; align-self: start; width: 92px; height: 92px; }
+        .group-info-card .group-picture-trigger { display: grid; place-items: center; overflow: hidden; }
+        .group-info-card .group-picture-trigger .group-avatar.large { grid-column: auto; grid-row: auto; width: 92px; height: 92px; }
+        .group-info-card .group-info-hero h3, .group-info-card .group-name-edit, .group-info-card .group-info-owner, .group-info-card #groupInfoCount, .group-info-card #groupPictureError { grid-column: 2; margin-left: 0; margin-right: 0; }
+        .group-info-card .group-info-hero h3 { margin-top: 0; overflow-wrap: anywhere; text-align: left; }
+        .group-info-card .group-name-edit { width: 100%; }
+        .group-info-card .group-picture-trigger::after { content: 'Ändern'; }
+        @media (max-width: 560px) {
+            .group-info-card .group-info-hero { grid-template-columns: 1fr; justify-items: center; text-align: center; }
+            .group-info-card .group-info-hero .group-avatar.large, .group-info-card .group-picture-trigger, .group-info-card .group-info-hero h3, .group-info-card .group-name-edit, .group-info-card .group-info-owner, .group-info-card #groupInfoCount, .group-info-card #groupPictureError { grid-column: 1; grid-row: auto; text-align: center; }
+            .group-info-card .group-name-edit { grid-template-columns: 1fr; }
+        }
         .group-role { color: var(--accent); font-size: 12px; font-weight: 700; }
         .tab-notice { width: 10px; height: 10px; border-radius: 50%; background: #22c55e; position: absolute; top: 7px; left: calc(50% + 15px); box-shadow: 0 0 0 2px #fff; }
         .bottom-tabs {
@@ -1266,13 +1280,13 @@ function renderMessengerApp({ appVersion = '' } = {}) {
                 </form>
                 <p id="groupInfoOwner" class="group-info-owner"></p>
                 <p id="groupInfoCount" class="muted small"></p>
+                <p id="groupPictureError" class="error"></p>
             </div>
             <div id="groupPictureActions" class="group-picture-actions hidden">
                 <strong>Gruppenbild ändern</strong>
                 <input id="groupPictureFile" type="file" accept="image/png,image/jpeg,image/webp,image/gif">
                 <button id="uploadGroupPicture" class="primary" type="button">Bild hochladen</button>
                 <p class="muted small">JPEG, PNG, WebP oder GIF, maximal 20 MB.</p>
-                <p id="groupPictureError" class="error"></p>
             </div>
             <div id="groupMediaSettings" class="group-media-settings hidden">
                 <strong>Medien senden</strong>
@@ -1937,7 +1951,7 @@ function renderMessengerApp({ appVersion = '' } = {}) {
             $('groupInfoOwner').textContent = 'Besitzer: ' + data.group.owner_display_name +
                 (data.group.owner_username ? ' (@' + data.group.owner_username + ')' : '');
             $('groupInfoCount').textContent = data.group.member_count + ' Mitglieder';
-            $('groupPictureActions').classList.toggle('hidden', !isOwner);
+            $('groupPictureActions').classList.add('hidden');
             $('groupMediaSettings').classList.toggle('hidden', !isOwner);
             document.querySelectorAll('input[name="groupMediaPolicy"]').forEach((input) => { input.checked = input.value === (data.group.media_send_policy || 'all'); });
             $('groupMediaMinDays').value = data.group.media_min_member_days || 0;
