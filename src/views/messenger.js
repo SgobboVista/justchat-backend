@@ -480,12 +480,13 @@ function renderMessengerApp({ appVersion = '' } = {}) {
                 border-radius: 24px;
                 resize: none;
             }
-            .settings-view { width: 100%; padding: calc(14px + env(safe-area-inset-top)) 10px calc(18px + env(safe-area-inset-bottom)); }
-            .settings-card { width: 100%; padding: 14px; border-radius: 14px; }
-            .settings-header { align-items: flex-start; gap: 8px; }
+            .settings-view { width: 100%; height: 100%; overscroll-behavior: contain; padding: 0; background: #fff; }
+            .settings-card { width: 100%; min-height: 100%; display: grid; grid-template-rows: auto minmax(0, 1fr) auto auto auto; gap: 12px; padding: 0 14px calc(18px + env(safe-area-inset-bottom)); border: 0; border-radius: 0; }
+            .settings-header { position: sticky; top: 0; z-index: 4; align-items: flex-start; gap: 8px; margin: 0 -14px; padding: calc(12px + env(safe-area-inset-top)) 14px 12px; background: #fff; border-bottom: 1px solid var(--line); }
             .settings-header .close-button { flex: 0 0 38px; }
             .settings-breadcrumb { flex: 1 1 auto; flex-wrap: wrap; gap: 5px; }
             .settings-breadcrumb strong { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+            .settings-overview, .settings-section { min-height: 0; }
             .settings-category { padding: 12px; gap: 8px; }
             .settings-category-arrow { flex: 0 0 auto; }
             .settings-section { padding: 13px; }
