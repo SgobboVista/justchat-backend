@@ -57,7 +57,8 @@ function renderMessengerApp({ appVersion = '' } = {}) {
             width: 100%; border: 1px solid var(--line); border-radius: 8px; padding: 11px 12px; outline: none; background: #fff;
         }
         .field select { width: 100%; border: 1px solid var(--line); border-radius: 8px; padding: 11px 12px; outline: none; background: #fff; }
-        .field input:focus, .field textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(15, 118, 110, .12); }
+        .field input:focus, .field textarea:focus, .field select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(15, 118, 110, .12); }
+        .birth-date-selects { display: grid; grid-template-columns: 1fr 1fr 1.35fr; gap: 8px; }
         .password-input { position: relative; }
         .password-input input { padding-right: 50px; }
         .password-toggle { position: absolute; top: 50%; right: 5px; transform: translateY(-50%); width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; padding: 0; background: transparent; color: var(--muted); }
@@ -490,8 +491,18 @@ function renderMessengerApp({ appVersion = '' } = {}) {
                 <input id="email" type="email" autocomplete="email" maxlength="160">
             </div>
             <div class="field register-only hidden">
-                <label for="birthDate">Geburtsdatum (JustChat ist ab 16 Jahren)</label>
-                <input id="birthDate" type="text" inputmode="numeric" autocomplete="bday" placeholder="TTMMJJJJ, z.B. 25052010" maxlength="8">
+                <label>Geburtsdatum (JustChat ist ab 16 Jahren)</label>
+                <div class="birth-date-selects" data-birth-date-group="birth">
+                    <select id="birthDay" autocomplete="bday-day" aria-label="Geburtstag">
+                        <option value="">Tag</option>
+                    </select>
+                    <select id="birthMonth" autocomplete="bday-month" aria-label="Geburtsmonat">
+                        <option value="">Monat</option>
+                    </select>
+                    <select id="birthYear" autocomplete="bday-year" aria-label="Geburtsjahr">
+                        <option value="">Jahr</option>
+                    </select>
+                </div>
             </div>
             <div class="field register-only hidden">
                 <label>Profilbild</label>
@@ -1145,8 +1156,18 @@ function renderMessengerApp({ appVersion = '' } = {}) {
             <p>JustChat ist eine Plattform ab 16 Jahren. Bitte trage dein Geburtsdatum ein, um die App weiter nutzen zu können.</p>
             <p>Diese Angabe wird für die Altersprüfung benötigt und ist nicht für andere Nutzer sichtbar.</p>
             <div class="field">
-                <label for="requiredBirthDate">Dein Geburtsdatum</label>
-                <input id="requiredBirthDate" type="text" inputmode="numeric" autocomplete="bday" placeholder="TTMMJJJJ, z.B. 25052010" maxlength="8" required>
+                <label>Dein Geburtsdatum</label>
+                <div class="birth-date-selects" data-birth-date-group="requiredBirth">
+                    <select id="requiredBirthDay" autocomplete="bday-day" aria-label="Geburtstag" required>
+                        <option value="">Tag</option>
+                    </select>
+                    <select id="requiredBirthMonth" autocomplete="bday-month" aria-label="Geburtsmonat" required>
+                        <option value="">Monat</option>
+                    </select>
+                    <select id="requiredBirthYear" autocomplete="bday-year" aria-label="Geburtsjahr" required>
+                        <option value="">Jahr</option>
+                    </select>
+                </div>
             </div>
             <div id="birthDateGateError" class="error" role="alert"></div>
             <button class="primary" type="submit">Geburtsdatum bestätigen</button>
@@ -1310,44 +1331,68 @@ function renderMessengerApp({ appVersion = '' } = {}) {
             return cutoff.getFullYear() + '-' + month + '-' + day;
         }
 
-        function birthDateForApi(value) {
-            const s = String(value || '').trim();
-            if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
-            const digits = s.replace(/\D/g, '');
-            if (digits.length !== 8) return '';
-            const day = digits.slice(0, 2);
-            const month = digits.slice(2, 4);
-            const year = digits.slice(4, 8);
+        const maximumBirthDate = maximumBirthDateForMinimumAge();
+
+        function birthDateFromSelects(prefix) {
+            const day = $(prefix + 'Day').value;
+            const month = $(prefix + 'Month').value;
+            const year = $(prefix + 'Year').value;
+            if (!day || !month || !year) return '';
             return year + '-' + month + '-' + day;
         }
 
-        function isCompleteBirthDateInput(value) {
-            const trimmed = String(value || '').trim();
-            return /^\d{8}$/.test(trimmed)
-                || /^\d{2}\.\d{2}\.\d{4}$/.test(trimmed)
-                || /^\d{4}-\d{2}-\d{2}$/.test(trimmed);
+        function isCompleteBirthDate(prefix) {
+            const value = birthDateFromSelects(prefix);
+            if (!value) return false;
+            const [year, month, day] = value.split('-').map(Number);
+            const date = new Date(year, month - 1, day);
+            return date.getFullYear() === year
+                && date.getMonth() === month - 1
+                && date.getDate() === day
+                && value <= maximumBirthDate;
         }
 
-        const maximumBirthDate = maximumBirthDateForMinimumAge();
-        const _birthDateEl = $('birthDate');
-        if (_birthDateEl) _birthDateEl.max = maximumBirthDate;
-        const _requiredBirthDateEl = $('requiredBirthDate');
-        if (_requiredBirthDateEl) _requiredBirthDateEl.max = maximumBirthDate;
-        ['birthDate', 'requiredBirthDate'].forEach((inputId) => {
-            const input = $(inputId);
-            if (!input) return;
-            input.addEventListener('input', (event) => {
-                event.target.value = String(event.target.value || '').replace(/\D/g, '').slice(0, 8);
+        function populateBirthDateSelects(prefix) {
+            const daySelect = $(prefix + 'Day');
+            const monthSelect = $(prefix + 'Month');
+            const yearSelect = $(prefix + 'Year');
+            if (!daySelect || !monthSelect || !yearSelect) return;
+            if (daySelect.options.length === 1) {
+                for (let day = 1; day <= 31; day += 1) {
+                    const value = String(day).padStart(2, '0');
+                    daySelect.insertAdjacentHTML('beforeend', '<option value="' + value + '">' + value + '</option>');
+                }
+            }
+            if (monthSelect.options.length === 1) {
+                for (let month = 1; month <= 12; month += 1) {
+                    const value = String(month).padStart(2, '0');
+                    monthSelect.insertAdjacentHTML('beforeend', '<option value="' + value + '">' + value + '</option>');
+                }
+            }
+            if (yearSelect.options.length === 1) {
+                const latestYear = Number(maximumBirthDate.slice(0, 4));
+                for (let year = latestYear; year >= 1900; year -= 1) {
+                    yearSelect.insertAdjacentHTML('beforeend', '<option value="' + year + '">' + year + '</option>');
+                }
+            }
+        }
+
+        function clearBirthDateSelects(prefix) {
+            [prefix + 'Day', prefix + 'Month', prefix + 'Year'].forEach((id) => {
+                const select = $(id);
+                if (select) select.value = '';
             });
-        });
+        }
+
+        ['birth', 'requiredBirth'].forEach(populateBirthDateSelects);
 
         function updateBirthDateGate() {
             const required = Boolean(state.registerMode && state.me && !state.me.banned_at && !state.me.birth_date);
             $('birthDateGate').classList.toggle('hidden', !required);
             if (required) {
-                $('requiredBirthDate').focus();
+                $('requiredBirthDay').focus();
             } else {
-                $('requiredBirthDate').value = '';
+                clearBirthDateSelects('requiredBirth');
                 $('birthDateGateError').textContent = '';
             }
             return required;
@@ -2016,9 +2061,11 @@ function renderMessengerApp({ appVersion = '' } = {}) {
             state.registerMode = registerMode;
             resetAuthPanels();
             document.querySelectorAll('.register-only').forEach((el) => el.classList.toggle('hidden', !registerMode));
-            $('birthDate').required = registerMode;
-            $('birthDate').disabled = !registerMode;
-            if (!registerMode) $('birthDate').value = '';
+            ['birthDay', 'birthMonth', 'birthYear'].forEach((id) => {
+                $(id).required = registerMode;
+                $(id).disabled = !registerMode;
+            });
+            if (!registerMode) clearBirthDateSelects('birth');
             $('authSubmit').textContent = registerMode ? 'Konto erstellen' : 'Anmelden';
             $('toggleAuth').textContent = registerMode ? 'Schon ein Konto? Anmelden' : 'Neues Konto erstellen';
             $('authHint').textContent = registerMode ? 'Erstelle dein JustChat-Konto. Die Plattform ist ab 16 Jahren.' : 'Melde dich an, um deine Chats zu sehen.';
@@ -3068,14 +3115,14 @@ function renderMessengerApp({ appVersion = '' } = {}) {
         $('birthDateGateForm').addEventListener('submit', async (event) => {
             event.preventDefault();
             $('birthDateGateError').textContent = '';
-            if (!isCompleteBirthDateInput($('requiredBirthDate').value)) {
-                $('birthDateGateError').textContent = 'Bitte gib dein Geburtsdatum mit 8 Zahlen ein, zum Beispiel 25052010.';
+            if (!isCompleteBirthDate('requiredBirth')) {
+                $('birthDateGateError').textContent = 'Bitte wähle Tag, Monat und Jahr deines Geburtsdatums aus.';
                 return;
             }
             try {
                 const data = await api('/api/me/birth-date', {
                     method: 'PUT',
-                    body: JSON.stringify({ birthDate: birthDateForApi($('requiredBirthDate').value) }),
+                    body: JSON.stringify({ birthDate: birthDateFromSelects('requiredBirth') }),
                 });
                 state.me = data.user;
                 updateBirthDateGate();
@@ -3096,8 +3143,8 @@ function renderMessengerApp({ appVersion = '' } = {}) {
                 $('verifyTwoFactor').click();
                 return;
             }
-            if (state.registerMode && !isCompleteBirthDateInput($('birthDate').value)) {
-                $('authError').textContent = 'Bitte gib dein Geburtsdatum mit 8 Zahlen ein, zum Beispiel 25052010.';
+            if (state.registerMode && !isCompleteBirthDate('birth')) {
+                $('authError').textContent = 'Bitte wähle Tag, Monat und Jahr deines Geburtsdatums aus.';
                 return;
             }
             const body = {
@@ -3106,7 +3153,7 @@ function renderMessengerApp({ appVersion = '' } = {}) {
                 passwordRepeat: $('passwordRepeat').value,
                 displayName: $('displayName').value,
                 email: $('email').value,
-                birthDate: birthDateForApi($('birthDate').value),
+                birthDate: birthDateFromSelects('birth'),
                 avatarAssetId: state.selectedAvatarId,
                 twoFactorEnabled: $('register2fa').checked,
             };
