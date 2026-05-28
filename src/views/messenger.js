@@ -272,6 +272,17 @@ function renderMessengerApp({ appVersion = '' } = {}) {
         .feature-view.group-room-open .group-room-head { min-height: 73px; padding: 14px 18px; background: var(--panel); }
         .feature-view.group-room-open .group-messages { padding: 18px; }
         .feature-view.group-room-open .group-composer { padding: 12px; gap: 10px; background: var(--panel); }
+        .group-message-row { max-width: min(720px, 94%); display: flex; align-items: flex-end; gap: 8px; align-self: flex-start; }
+        .group-message-row.me { align-self: flex-end; flex-direction: row-reverse; }
+        .group-message-row .bubble { max-width: none; align-self: auto; }
+        .group-message-row .bubble.me { align-self: auto; }
+        .group-message-row .avatar { width: 34px; height: 34px; font-size: 13px; }
+        .group-message-row .avatar-frame { margin-bottom: 3px; }
+        .group-message-author { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 5px; }
+        .group-message-name { color: var(--accent); font-size: 12px; font-weight: 900; }
+        .group-message-role { border-radius: 999px; padding: 2px 7px; color: #475569; background: #eef2f7; font-size: 11px; font-weight: 800; }
+        .group-message-role.admin { color: #7c2d12; background: #ffedd5; }
+        .group-message-role.moderator { color: #075985; background: #e0f2fe; }
         .group-info-card { display: grid; gap: 15px; }
         .group-info-hero { display: grid; justify-items: center; gap: 8px; padding: 10px 0 14px; border-bottom: 1px solid var(--line); text-align: center; }
         .group-info-hero h3 { margin: 0; font-size: 22px; }
@@ -1722,6 +1733,18 @@ function renderMessengerApp({ appVersion = '' } = {}) {
             return Boolean(state.me && state.me.gif_playback === 'all');
         }
 
+        function groupRoleLabel(role) {
+            if (role === 'owner') return 'Admin';
+            if (role === 'moderator') return 'Moderator';
+            return 'Mitglied';
+        }
+
+        function groupRoleClass(role) {
+            if (role === 'owner') return ' admin';
+            if (role === 'moderator') return ' moderator';
+            return '';
+        }
+
         function applyGifPreference(root = $('messenger')) {
             if (!root) return;
             root.querySelectorAll('img').forEach((image) => {
@@ -1933,6 +1956,17 @@ function renderMessengerApp({ appVersion = '' } = {}) {
         function renderGroupMessages(messages) {
             $('groupMessages').innerHTML = messages.length ? messages.map((message) => {
                 const mine = state.me && Number(message.sender_id) === Number(state.me.id);
+                const sender = {
+                    display_name: message.username ? '@' + message.username : (message.display_name || 'Geblockt'),
+                    avatar_url: message.avatar_url,
+                    avatar_color: message.avatar_color || '#0f766e',
+                    member_since: message.member_since,
+                    created_at: message.member_since,
+                    first_account: message.first_account,
+                };
+                const senderName = message.username ? '@' + message.username : (message.display_name || 'Geblockt');
+                const senderMeta = '<div class="group-message-author"><span class="group-message-name">' + escapeText(senderName) + '</span>' +
+                    '<span class="group-message-role' + groupRoleClass(message.group_role) + '">' + escapeText(groupRoleLabel(message.group_role)) + '</span></div>';
                 const attachment = message.attachment
                     ? (String(message.attachment.mime_type || '').startsWith('image/')
                         ? '<img class="message-image" data-chat-image="true" tabindex="0" role="button" src="' + message.attachment.data_url + '" alt="' + escapeText(message.attachment.file_name) + '">'
@@ -1942,13 +1976,14 @@ function renderMessengerApp({ appVersion = '' } = {}) {
                     : '';
                 const canDelete = mine && (Date.now() - new Date(message.created_at).getTime()) <= 60000;
                 const time = new Date(message.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-                return '<div class="bubble ' + (mine ? 'me' : '') + '" data-group-message-id="' + message.id + '">' +
-                    (!mine ? '<span class="group-sender">' + escapeText(message.display_name) + '</span>' : '') +
-                    attachment + (message.body ? '<span class="message-text">' + escapeText(message.body) + '</span>' : '') +
+                return '<div class="group-message-row ' + (mine ? 'me' : '') + '" data-group-message-id="' + message.id + '">' +
+                    avatarMarkup(sender, '', 'group-message-avatar') +
+                    '<div class="bubble ' + (mine ? 'me' : '') + '">' +
+                    senderMeta + attachment + (message.body ? '<span class="message-text">' + escapeText(message.body) + '</span>' : '') +
                     '<div class="message-meta-row"><span class="message-status">' + escapeText(time) + '</span><div class="message-actions">' +
                     (canDelete ? '<button class="report-message" type="button" data-delete-group-message="' + message.id + '">Löschen</button>' : '') +
                     (!mine ? '<button class="report-message" type="button" data-report-group-message="' + message.id + '">Melden</button>' : '') +
-                    '</div></div></div>';
+                    '</div></div></div></div>';
             }).join('') : '<div class="news-empty">Schreibe die erste Nachricht in diese Gruppe.</div>';
             $('groupMessages').scrollTop = $('groupMessages').scrollHeight;
         }

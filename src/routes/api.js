@@ -837,9 +837,15 @@ app.get('/api/groups/:id/messages', requireAuth, async (req, res, next) => {
         if (!groupResult.rows[0]) return res.status(404).json({ error: 'Gruppe nicht gefunden' });
         const messages = await query(
             `select gm.id, gm.group_id, gm.sender_id, gm.body, gm.created_at,
-                u.display_name, u.username
+                u.display_name, u.username, u.avatar_color, u.created_at as member_since,
+                u.id in (select early_user.id from users early_user where not early_user.email_verification_required or early_user.email_verified_at is not null order by early_user.created_at, early_user.id limit 10) as first_account,
+                case when aa.id is null then null else 'data:' || aa.mime_type || ';base64,' || encode(aa.data, 'base64') end as avatar_url,
+                sender_member.role as group_role,
+                exists(select 1 from group_media_allowed_users allowed where allowed.group_id = gm.group_id and allowed.user_id = gm.sender_id) as media_allowed
              from group_messages gm
              join users u on u.id = gm.sender_id
+             join group_members sender_member on sender_member.group_id = gm.group_id and sender_member.user_id = gm.sender_id
+             left join avatar_assets aa on aa.id = u.avatar_asset_id and aa.is_active = true
              where gm.group_id = $1
                 and not exists (
                     select 1 from user_blocks b
@@ -1190,6 +1196,19 @@ app.post('/api/groups/:id/messages', requireAuth, async (req, res, next) => {
         );
         const message = inserted.rows[0];
         message.body = decryptText(message.body);
+        const senderProfile = await query(
+            `select u.display_name, u.username, u.avatar_color, u.created_at as member_since,
+                u.id in (select early_user.id from users early_user where not early_user.email_verification_required or early_user.email_verified_at is not null order by early_user.created_at, early_user.id limit 10) as first_account,
+                case when aa.id is null then null else 'data:' || aa.mime_type || ';base64,' || encode(aa.data, 'base64') end as avatar_url,
+                member.role as group_role,
+                exists(select 1 from group_media_allowed_users allowed where allowed.group_id = member.group_id and allowed.user_id = member.user_id) as media_allowed
+             from users u
+             join group_members member on member.group_id = $2 and member.user_id = u.id
+             left join avatar_assets aa on aa.id = u.avatar_asset_id and aa.is_active = true
+             where u.id = $1`,
+            [req.user.id, groupId],
+        );
+        Object.assign(message, senderProfile.rows[0] || {});
         if (attachment) {
             const stored = await query(
                 `insert into group_message_attachments (group_message_id, file_name, mime_type, size_bytes, data)
