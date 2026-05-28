@@ -615,6 +615,43 @@ app.post('/api/contact-requests/:id/respond', requireAuth, async (req, res, next
     }
 });
 
+app.post('/api/contact-requests/:id/resend', requireAuth, async (req, res, next) => {
+    try {
+        const requestId = parseId(req.params.id);
+        if (!requestId) return res.status(400).json({ error: 'Ungültige Anfrage' });
+        const existing = await query(
+            `select r.*, other_user.id as other_user_id
+             from contact_requests r
+             join users other_user on other_user.id = case when r.sender_id = $2 then r.recipient_id else r.sender_id end
+             where r.id = $1 and $2 in (r.sender_id, r.recipient_id) and r.status = 'declined'`,
+            [requestId, req.user.id],
+        );
+        const request = existing.rows[0];
+        if (!request) return res.status(404).json({ error: 'Abgelehnte Anfrage nicht gefunden' });
+        if (await getExistingConversation(req.user.id, request.other_user_id)) {
+            return res.status(409).json({ error: 'Dieser Kontakt ist bereits in deinen Chats' });
+        }
+        const blockStatus = await getBlockStatus(req.user.id, request.other_user_id);
+        if (blockStatus.blocked_by_me || blockStatus.blocked_me) {
+            return res.status(403).json({ error: 'Für diesen Kontakt sind Anfragen blockiert' });
+        }
+        const updated = await query(
+            `update contact_requests
+             set sender_id = $1, recipient_id = $2, status = 'pending',
+                 archived_by_sender = false, archived_by_recipient = false,
+                 created_at = now(), responded_at = null
+             where id = $3
+             returning id, status`,
+            [req.user.id, request.other_user_id, request.id],
+        );
+        sendEvent(request.other_user_id, 'contact:request', { userId: req.user.id });
+        sendEvent(req.user.id, 'contact:request', { userId: request.other_user_id });
+        return res.status(201).json({ request: updated.rows[0] });
+    } catch (error) {
+        return next(error);
+    }
+});
+
 app.post('/api/contact-requests/:id/archive', requireAuth, async (req, res, next) => {
     try {
         const requestId = parseId(req.params.id);

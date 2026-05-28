@@ -2542,7 +2542,9 @@ function renderMessengerApp({ appVersion = '' } = {}) {
                         '<button class="danger-button" type="button" data-block-request="' + request.id + '" data-user="' + request.user_id + '">Blockieren</button>';
                 } else if (request.status === 'declined') {
                     status = 'Abgelehnt';
-                    actions = '<button class="ghost" type="button" data-archive-request="' + request.id + '">Archivieren</button>';
+                    actions =
+                        '<button class="primary" type="button" data-resend-request="' + request.id + '">Erneut anfragen</button>' +
+                        '<button class="ghost" type="button" data-archive-request="' + request.id + '">Archivieren</button>';
                 } else if (request.status === 'blocked') {
                     status = 'Geblockt';
                     actions = '<button class="ghost" type="button" data-archive-request="' + request.id + '">Archivieren</button>';
@@ -4111,6 +4113,7 @@ function renderMessengerApp({ appVersion = '' } = {}) {
         $('requestList').addEventListener('click', async (event) => {
             const accept = event.target.closest('[data-accept-request]');
             const decline = event.target.closest('[data-decline-request]');
+            const resend = event.target.closest('[data-resend-request]');
             const archive = event.target.closest('[data-archive-request]');
             const block = event.target.closest('[data-block-request]');
             try {
@@ -4122,6 +4125,14 @@ function renderMessengerApp({ appVersion = '' } = {}) {
                     });
                     await loadContactRequests();
                     await loadConversations();
+                    return;
+                }
+                if (resend) {
+                    await api('/api/contact-requests/' + resend.dataset.resendRequest + '/resend', {
+                        method: 'POST',
+                        body: '{}',
+                    });
+                    await loadContactRequests();
                     return;
                 }
                 if (block) {
