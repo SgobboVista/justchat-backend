@@ -489,9 +489,9 @@ function renderMessengerApp({ appVersion = '' } = {}) {
                 <label for="email">E-Mail</label>
                 <input id="email" type="email" autocomplete="email" maxlength="160">
             </div>
-            <div class="field">
-                <label for="birthDate">GEBURTSDATUM</label>
-                <input type="date" id="birthDate" name="birthdate" required max="${new Date().toISOString().split('T')[0]}">
+            <div class="field register-only hidden">
+                <label for="birthDate">Geburtsdatum (JustChat ist ab 16 Jahren)</label>
+                <input id="birthDate" type="text" inputmode="numeric" autocomplete="bday" placeholder="TT.MM.JJJJ" maxlength="10">
             </div>
             <div class="field register-only hidden">
                 <label>Profilbild</label>
@@ -1312,15 +1312,21 @@ function renderMessengerApp({ appVersion = '' } = {}) {
 
         function birthDateForApi(value) {
             const s = String(value || '').trim();
-            // Accept ISO format directly (YYYY-MM-DD)
             if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
             const digits = s.replace(/\D/g, '');
             if (digits.length !== 8) return '';
-            // Default: assume DDMMYYYY (e.g. TT.MM.JJJJ or 01011990)
             const day = digits.slice(0, 2);
             const month = digits.slice(2, 4);
             const year = digits.slice(4, 8);
             return year + '-' + month + '-' + day;
+        }
+
+        function formatBirthDateInput(value) {
+            const digits = String(value || '').replace(/\D/g, '').slice(0, 8);
+            const day = digits.slice(0, 2);
+            const month = digits.slice(2, 4);
+            const year = digits.slice(4, 8);
+            return [day, month, year].filter(Boolean).join('.');
         }
 
         function isCompleteBirthDateInput(value) {
@@ -1335,6 +1341,13 @@ function renderMessengerApp({ appVersion = '' } = {}) {
         if (_birthDateEl) _birthDateEl.max = maximumBirthDate;
         const _requiredBirthDateEl = $('requiredBirthDate');
         if (_requiredBirthDateEl) _requiredBirthDateEl.max = maximumBirthDate;
+        ['birthDate', 'requiredBirthDate'].forEach((inputId) => {
+            const input = $(inputId);
+            if (!input) return;
+            input.addEventListener('input', (event) => {
+                event.target.value = formatBirthDateInput(event.target.value);
+            });
+        });
 
         function updateBirthDateGate() {
             const required = Boolean(state.registerMode && state.me && !state.me.banned_at && !state.me.birth_date);
@@ -2012,6 +2025,8 @@ function renderMessengerApp({ appVersion = '' } = {}) {
             resetAuthPanels();
             document.querySelectorAll('.register-only').forEach((el) => el.classList.toggle('hidden', !registerMode));
             $('birthDate').required = registerMode;
+            $('birthDate').disabled = !registerMode;
+            if (!registerMode) $('birthDate').value = '';
             $('authSubmit').textContent = registerMode ? 'Konto erstellen' : 'Anmelden';
             $('toggleAuth').textContent = registerMode ? 'Schon ein Konto? Anmelden' : 'Neues Konto erstellen';
             $('authHint').textContent = registerMode ? 'Erstelle dein JustChat-Konto. Die Plattform ist ab 16 Jahren.' : 'Melde dich an, um deine Chats zu sehen.';

@@ -130,13 +130,18 @@ function decryptBuffer(buffer) {
     const input = Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer || '');
     if (!input.length || input.length <= BINARY_ENCRYPTION_PREFIX.length) return input;
     if (!input.subarray(0, BINARY_ENCRYPTION_PREFIX.length).equals(BINARY_ENCRYPTION_PREFIX)) return input;
-    const payload = Buffer.from(input.subarray(BINARY_ENCRYPTION_PREFIX.length).toString('utf8'), 'base64');
-    const iv = payload.subarray(0, 12);
-    const tag = payload.subarray(12, 28);
-    const encrypted = payload.subarray(28);
-    const decipher = crypto.createDecipheriv('aes-256-gcm', MESSAGE_ENCRYPTION_KEY, iv);
-    decipher.setAuthTag(tag);
-    return Buffer.concat([decipher.update(encrypted), decipher.final()]);
+    try {
+        const payload = Buffer.from(input.subarray(BINARY_ENCRYPTION_PREFIX.length).toString('utf8'), 'base64');
+        const iv = payload.subarray(0, 12);
+        const tag = payload.subarray(12, 28);
+        const encrypted = payload.subarray(28);
+        const decipher = crypto.createDecipheriv('aes-256-gcm', MESSAGE_ENCRYPTION_KEY, iv);
+        decipher.setAuthTag(tag);
+        return Buffer.concat([decipher.update(encrypted), decipher.final()]);
+    } catch (error) {
+        console.error('Entschluesselung fehlgeschlagen. MESSAGE_ENCRYPTION_KEY pruefen:', error.message);
+        return Buffer.alloc(0);
+    }
 }
 
 function encryptText(value) {
@@ -148,10 +153,11 @@ function encryptText(value) {
 function decryptText(value) {
     const text = String(value || '');
     if (!text.startsWith(TEXT_ENCRYPTION_PREFIX)) return text;
-    return decryptBuffer(Buffer.concat([
+    const decrypted = decryptBuffer(Buffer.concat([
         BINARY_ENCRYPTION_PREFIX,
         Buffer.from(text.slice(TEXT_ENCRYPTION_PREFIX.length), 'utf8'),
     ])).toString('utf8');
+    return decrypted || '[verschluesselte Nachricht nicht lesbar]';
 }
 
 function decryptMessageRows(rows) {
