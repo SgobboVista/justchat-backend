@@ -319,6 +319,7 @@ app.get('/admin/api/age-verifications/:id/document', requireAdminAuth, async (re
         res.type(result.rows[0].document_mime_type);
         res.set('Content-Disposition', `inline; filename="${zipPathSegment(result.rows[0].document_file_name || 'ausweis')}"`);
         res.set('Cache-Control', 'private, no-store');
+        res.set('X-Content-Type-Options', 'nosniff');
         return res.send(result.rows[0].document_data);
     } catch (error) {
         return next(error);

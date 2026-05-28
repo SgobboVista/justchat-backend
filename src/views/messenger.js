@@ -380,6 +380,9 @@ function renderMessengerApp({ appVersion = '' } = {}) {
         .verification-badge.rejected, .verification-badge.expired { color: var(--danger); background: #fff3f2; }
         .verification-upload { min-width: 0; display: grid; gap: 8px; }
         .verification-upload input[type="file"] { width: 100%; min-width: 0; max-width: 100%; font-size: 14px; }
+        .verification-submit { width: 100%; min-height: 46px; border: 0; border-radius: 12px; color: #fff; background: linear-gradient(135deg, var(--accent), #0d9488); box-shadow: 0 10px 22px rgba(15, 118, 110, .24); font-size: 15px; font-weight: 800; }
+        .verification-submit:hover { filter: brightness(.98); box-shadow: 0 12px 26px rgba(15, 118, 110, .3); }
+        .verification-submit:disabled { opacity: .65; box-shadow: none; }
         .verification-card p { overflow-wrap: anywhere; }
         .settings-section { min-width: 0; border: 1px solid var(--line); border-radius: 10px; padding: 16px; display: grid; gap: 12px; background: #fff; }
         .settings-section h3 { margin: 0; font-size: 17px; }
@@ -1012,7 +1015,7 @@ function renderMessengerApp({ appVersion = '' } = {}) {
                             </div>
                             <div id="ageVerificationUpload" class="verification-upload">
                                 <input id="ageVerificationFile" type="file" accept="image/jpeg,image/png,image/webp">
-                                <button id="submitAgeVerification" class="ghost" type="button">Zur Prüfung senden</button>
+                                <button id="submitAgeVerification" class="verification-submit" type="button">Ausweisbild zur Pruefung senden</button>
                             </div>
                             <p class="muted small">Datenschutz: Das Ausweisbild wird nur für diese manuelle Altersprüfung verwendet. Nach Verifizieren oder Ablehnen löscht der Server die aktiven Dokumentdaten direkt; offene Anfragen werden automatisch nach 7 Tagen bereinigt.</p>
                         </div>

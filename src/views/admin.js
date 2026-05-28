@@ -119,6 +119,13 @@ function renderAdminLayout(content) {
         .report-head { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; flex-wrap: wrap; }
         .report-evidence { padding: 11px; border-radius: 8px; background: #f6f8fc; white-space: pre-wrap; overflow-wrap: anywhere; }
         .report-file img { display: block; max-width: min(420px, 100%); max-height: 300px; border-radius: 8px; object-fit: contain; background: #edf1f6; }
+        .age-document-viewer { display: grid; gap: 10px; border: 1px solid #dbe7f0; border-radius: 12px; padding: 12px; background: #f8fbfd; }
+        .age-document-controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+        .age-document-controls button { width: auto; min-height: 38px; padding: 8px 12px; }
+        .age-document-controls span { min-width: 52px; color: var(--muted); font-weight: 700; text-align: center; }
+        .age-document-stage { min-height: 280px; max-height: 68vh; overflow: auto; display: grid; place-items: center; border: 1px dashed #c9d6e2; border-radius: 10px; padding: 16px; background: #eef4f8; }
+        .age-document-image { display: block; max-width: min(780px, 100%); max-height: 60vh; border-radius: 8px; object-fit: contain; background: #dfe7ef; box-shadow: 0 14px 34px rgba(15, 23, 42, .14); transform-origin: center center; user-select: none; -webkit-user-select: none; -webkit-user-drag: none; pointer-events: none; transition: transform .12s ease, filter .12s ease; }
+        .age-document-note { margin: 0; color: var(--muted); font-size: 12px; }
         .report-actions { display: grid; grid-template-columns: minmax(170px, 220px) minmax(220px, 1fr) auto; gap: 9px; align-items: start; }
         .report-actions textarea { width: 100%; min-height: 74px; resize: vertical; border: 1px solid var(--line); border-radius: 8px; padding: 10px; font: inherit; }
         .sensitive-value { display: inline-block; filter: blur(5px); transition: filter .15s ease; cursor: default; }
@@ -414,7 +421,7 @@ function renderDashboard(data) {
         <div class="notice">Hinweis: Beidseitig entfernte private Chats werden maximal ${escapeHtml(retention.chatDays || 30)} Tage serverseitig aufbewahrt, sofern keine Meldung oder Favorisierung entgegensteht. Nicht favorisierte Chat- und Gruppeninhalte werden maximal ${escapeHtml(retention.messageDays || 365)} Tage gespeichert; offene Meldungen maximal ${escapeHtml(retention.openReportDays || 365)} Tage, geprüfte Meldungen und Admin-Auditdaten maximal ${escapeHtml(retention.reviewedReportDays || 180)} bzw. ${escapeHtml(retention.auditDays || 180)} Tage. ZIP-Archive enthalten private Chatdaten und Originaldateien; sie dürfen nur für einen berechtigten Zweck und mit passender rechtlicher Grundlage herausgegeben werden.</div>
 
         <script data-cfasync="false">
-            const state = { users: [], avatars: [], sounds: [], news: [], reports: [], ageVerifications: [], audit: [], imageUpdate: null, activeTab: 'overview', userSearch: '', exportUserId: '' };
+            const state = { users: [], avatars: [], sounds: [], news: [], reports: [], ageVerifications: [], audit: [], imageUpdate: null, activeTab: 'overview', userSearch: '', exportUserId: '', ageDocumentViews: {} };
             const el = (id) => document.getElementById(id);
             const escapeText = (value) => String(value == null ? '' : value).replace(/[&<>"']/g, (char) => ({
                 '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
@@ -437,6 +444,45 @@ function renderDashboard(data) {
                 illegal_content: 'Illegale Inhalte',
                 other: 'Sonstiges',
             };
+
+            function ageDocumentView(requestId) {
+                const key = String(requestId);
+                if (!state.ageDocumentViews[key]) state.ageDocumentViews[key] = { zoom: 1, brightness: 1 };
+                return state.ageDocumentViews[key];
+            }
+
+            function applyAgeDocumentView(requestId) {
+                const view = ageDocumentView(requestId);
+                const image = document.querySelector('[data-age-document="' + requestId + '"]');
+                const zoomLabel = document.querySelector('[data-age-zoom-label="' + requestId + '"]');
+                const brightnessLabel = document.querySelector('[data-age-brightness-label="' + requestId + '"]');
+                if (image) {
+                    image.style.transform = 'scale(' + view.zoom + ')';
+                    image.style.filter = 'brightness(' + view.brightness + ')';
+                }
+                if (zoomLabel) zoomLabel.textContent = Math.round(view.zoom * 100) + '%';
+                if (brightnessLabel) brightnessLabel.textContent = Math.round(view.brightness * 100) + '%';
+            }
+
+            function renderAgeDocumentViewer(request) {
+                if (!request.document_available) return '<p class="muted">Dokumentdaten wurden bereits geloescht.</p>';
+                const id = request.id;
+                return '<div class="age-document-viewer" data-age-document-viewer="' + id + '">' +
+                    '<div class="age-document-controls" aria-label="Dokumentansicht steuern">' +
+                    '<button class="secondary" type="button" data-age-zoom-out="' + id + '">- Zoom</button>' +
+                    '<span data-age-zoom-label="' + id + '">100%</span>' +
+                    '<button class="secondary" type="button" data-age-zoom-in="' + id + '">+ Zoom</button>' +
+                    '<button class="secondary" type="button" data-age-brightness-down="' + id + '">- Helligkeit</button>' +
+                    '<span data-age-brightness-label="' + id + '">100%</span>' +
+                    '<button class="secondary" type="button" data-age-brightness-up="' + id + '">+ Helligkeit</button>' +
+                    '<button class="secondary" type="button" data-age-reset="' + id + '">Zuruecksetzen</button>' +
+                    '</div>' +
+                    '<div class="age-document-stage">' +
+                    '<img class="age-document-image" data-age-document="' + id + '" data-protected-document="true" draggable="false" oncontextmenu="return false" src="/admin/api/age-verifications/' + id + '/document" alt="Ausweisdokument zur Alterspruefung">' +
+                    '</div>' +
+                    '<p class="age-document-note">Normales Rechtsklick-Kopieren und Ziehen ist blockiert. Bitte nur zur manuellen Alterspruefung verwenden.</p>' +
+                    '</div>';
+            }
 
             function selectAdminTab(tabName, remember = true) {
                 const tabs = ['overview', 'users', 'reports', 'age', 'news', 'media', 'audit'];
@@ -577,9 +623,7 @@ function renderDashboard(data) {
                 el('reportTabCount').classList.toggle('hidden', !openReportCount);
                 el('ageVerificationList').innerHTML = state.ageVerifications.length ? state.ageVerifications.map((request) => {
                     const birthDate = request.birth_date ? new Date(request.birth_date).toLocaleDateString('de-DE') : '-';
-                    const documentLink = request.document_available
-                        ? '<div class="report-file"><img src="/admin/api/age-verifications/' + request.id + '/document" alt="Ausweisdokument zur Altersprüfung"></div>'
-                        : '<p class="muted">Dokumentdaten wurden bereits gelöscht.</p>';
+                    const documentLink = renderAgeDocumentViewer(request);
                     return '<article class="report-card"><div class="report-head"><div><strong>Prüfanfrage #' + request.id + '</strong>' +
                         '<p class="muted">' + escapeText(request.display_name) + ' (@' + escapeText(request.username) + ') - Geburtstag laut Konto: ' + escapeText(birthDate) + ' - eingereicht ' + new Date(request.created_at).toLocaleString() + '</p>' +
                         '<p class="muted">E-Mail: <span class="sensitive-value" tabindex="0" title="Zum Anzeigen berühren oder darüberfahren">' + escapeText(request.email || '-') + '</span></p></div>' +
@@ -587,6 +631,7 @@ function renderDashboard(data) {
                         '<div class="report-actions"><select data-age-action="' + request.id + '"><option value="approve">Alter verifizieren</option><option value="reject">Ablehnen und Dokument löschen</option></select>' +
                         '<textarea data-age-note="' + request.id + '" maxlength="1000" placeholder="Optionaler interner Hinweis / Ablehnungsgrund"></textarea><button type="button" data-apply-age-verification="' + request.id + '">Entscheidung speichern</button></div></article>';
                 }).join('') : '<p class="muted">Keine offenen Altersprüfungen.</p>';
+                state.ageVerifications.forEach((request) => applyAgeDocumentView(request.id));
                 el('ageVerificationTabCount').textContent = state.ageVerifications.length;
                 el('ageVerificationTabCount').classList.toggle('hidden', !state.ageVerifications.length);
                 el('auditRows').innerHTML = state.audit.map((row) =>
@@ -716,6 +761,21 @@ function renderDashboard(data) {
                 }
             });
             el('ageVerificationList').addEventListener('click', async (event) => {
+                const control = event.target.closest('[data-age-zoom-in], [data-age-zoom-out], [data-age-brightness-up], [data-age-brightness-down], [data-age-reset]');
+                if (control) {
+                    const requestId = control.dataset.ageZoomIn || control.dataset.ageZoomOut || control.dataset.ageBrightnessUp || control.dataset.ageBrightnessDown || control.dataset.ageReset;
+                    const view = ageDocumentView(requestId);
+                    if (control.dataset.ageZoomIn) view.zoom = Math.min(2.5, Number((view.zoom + 0.1).toFixed(2)));
+                    if (control.dataset.ageZoomOut) view.zoom = Math.max(0.5, Number((view.zoom - 0.1).toFixed(2)));
+                    if (control.dataset.ageBrightnessUp) view.brightness = Math.min(1.8, Number((view.brightness + 0.1).toFixed(2)));
+                    if (control.dataset.ageBrightnessDown) view.brightness = Math.max(0.45, Number((view.brightness - 0.1).toFixed(2)));
+                    if (control.dataset.ageReset) {
+                        view.zoom = 1;
+                        view.brightness = 1;
+                    }
+                    applyAgeDocumentView(requestId);
+                    return;
+                }
                 const button = event.target.closest('[data-apply-age-verification]');
                 if (!button) return;
                 const requestId = button.dataset.applyAgeVerification;
@@ -731,6 +791,12 @@ function renderDashboard(data) {
                 } catch (error) {
                     alert(error.message);
                 }
+            });
+            el('ageVerificationList').addEventListener('contextmenu', (event) => {
+                if (event.target.closest('[data-protected-document]')) event.preventDefault();
+            });
+            el('ageVerificationList').addEventListener('dragstart', (event) => {
+                if (event.target.closest('[data-protected-document]')) event.preventDefault();
             });
             el('downloadSelected').addEventListener('click', () => {
                 const userId = el('userFilter').value;
