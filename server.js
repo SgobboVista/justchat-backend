@@ -620,15 +620,18 @@ async function optimizeImageAttachment(attachment) {
             });
         let output;
         let mimeType;
-        let fileName;
         if (isGif) {
             output = await image.gif({ effort: 8, colours: 192 }).toBuffer();
             mimeType = 'image/gif';
-            fileName = parsed.fileName.replace(/\.[^.]+$/, '') + '.gif';
+        } else if (parsed.mimeType === 'image/png') {
+            output = await image.png({ compressionLevel: 9, palette: true }).toBuffer();
+            mimeType = 'image/png';
+        } else if (parsed.mimeType === 'image/jpeg') {
+            output = await image.jpeg({ quality: 82, mozjpeg: true }).toBuffer();
+            mimeType = 'image/jpeg';
         } else {
             output = await image.webp({ quality: 80, effort: 6, smartSubsample: true }).toBuffer();
             mimeType = 'image/webp';
-            fileName = parsed.fileName.replace(/\.[^.]+$/, '') + '.webp';
         }
         if (output.length > MAX_ATTACHMENT_BYTES) {
             const error = new Error('Komprimiertes Bild ist noch größer als 5 MB');
@@ -636,7 +639,7 @@ async function optimizeImageAttachment(attachment) {
             throw error;
         }
         return {
-            fileName,
+            fileName: parsed.fileName,
             mimeType,
             sizeBytes: output.length,
             data: output,

@@ -372,13 +372,15 @@ function renderMessengerApp({ appVersion = '' } = {}) {
         .settings-category-title { display: block; color: var(--text); font-weight: 700; }
         .settings-category-description { display: block; margin-top: 4px; color: var(--muted); font-size: 13px; font-weight: 400; overflow-wrap: anywhere; }
         .settings-category-arrow { color: var(--muted); font-size: 23px; }
-        .verification-card { display: grid; gap: 10px; border: 1px solid #b8ded8; border-radius: 12px; padding: 14px; background: #f0fbf8; }
+        .verification-card { min-width: 0; max-width: 100%; overflow: hidden; display: grid; gap: 10px; border: 1px solid #b8ded8; border-radius: 12px; padding: 14px; background: #f0fbf8; }
         .verification-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
-        .verification-head strong { display: block; font-size: 17px; }
+        .verification-head strong { display: block; font-size: 17px; overflow-wrap: anywhere; }
         .verification-badge { display: inline-flex; align-items: center; width: max-content; border-radius: 999px; padding: 6px 10px; color: #0f5132; background: #d1fae5; font-size: 12px; font-weight: 800; }
         .verification-badge.pending { color: #7a4f01; background: #fffaeb; }
         .verification-badge.rejected, .verification-badge.expired { color: var(--danger); background: #fff3f2; }
-        .verification-upload { display: grid; gap: 8px; }
+        .verification-upload { min-width: 0; display: grid; gap: 8px; }
+        .verification-upload input[type="file"] { width: 100%; min-width: 0; max-width: 100%; font-size: 14px; }
+        .verification-card p { overflow-wrap: anywhere; }
         .settings-section { min-width: 0; border: 1px solid var(--line); border-radius: 10px; padding: 16px; display: grid; gap: 12px; background: #fff; }
         .settings-section h3 { margin: 0; font-size: 17px; }
         .settings-actions { display: grid; gap: 10px; }
@@ -490,6 +492,8 @@ function renderMessengerApp({ appVersion = '' } = {}) {
             .settings-category { padding: 12px; gap: 8px; }
             .settings-category-arrow { flex: 0 0 auto; }
             .settings-section { padding: 13px; }
+            .verification-card { margin-left: 0; margin-right: 0; padding: 12px; }
+            .verification-upload { grid-template-columns: 1fr; }
             .settings-section input, .settings-section textarea, .settings-section select, .profile-upload input, .profile-upload button, .settings-actions button { max-width: 100%; }
             .segmented { align-items: flex-start; }
             .contact-details { grid-template-columns: 1fr; }
