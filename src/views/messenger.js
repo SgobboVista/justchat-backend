@@ -315,7 +315,10 @@ function renderMessengerApp({ appVersion = '' } = {}) {
             .group-info-card .group-info-hero .group-avatar.large, .group-info-card .group-picture-trigger, .group-info-card .group-info-hero h3, .group-info-card .group-name-edit, .group-info-card .group-info-owner, .group-info-card #groupInfoCount, .group-info-card #groupPictureError { grid-column: 1; grid-row: auto; text-align: center; }
             .group-info-card .group-name-edit { grid-template-columns: 1fr; }
         }
-        .group-role { color: var(--accent); font-size: 12px; font-weight: 700; }
+        .group-badges { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 4px; }
+        .group-role { width: max-content; border-radius: 999px; padding: 4px 8px; color: var(--accent); background: #eef8f6; font-size: 12px; font-weight: 800; }
+        .group-role.admin { color: #7c2d12; background: #ffedd5; }
+        .group-role.media { color: #075985; background: #e0f2fe; }
         .tab-notice { width: 10px; height: 10px; border-radius: 50%; background: #22c55e; position: absolute; top: 7px; left: calc(50% + 15px); box-shadow: 0 0 0 2px #fff; }
         .bottom-tabs {
             position: fixed;
@@ -1963,7 +1966,10 @@ function renderMessengerApp({ appVersion = '' } = {}) {
             $('groupMemberList').innerHTML = data.members.map((member) =>
                 '<div class="group-member"><div class="group-member-main"><strong>' + escapeText(member.display_name) + '</strong>' +
                 (member.username ? '<span class="muted small">@' + escapeText(member.username) + '</span>' : '') +
-                (member.role === 'owner' ? '<span class="group-role">Besitzer</span>' : '') +
+                '<div class="group-badges">' +
+                (member.role === 'owner' ? '<span class="group-role admin" title="Gruppenadmin">Admin</span>' : '') +
+                (member.media_allowed ? '<span class="group-role media" title="Darf Medien senden">Medien erlaubt</span>' : '') +
+                '</div>' +
                 '</div><div class="group-member-side"><span class="muted small">Dabei seit<br>' + escapeText(membershipText(member.joined_at)) + '</span>' +
                 (isOwner && member.role !== 'owner' ? '<label class="switch" title="Medien senden erlauben"><input type="checkbox" name="groupMediaAllowedMember" value="' + member.user_id + '"' + (member.media_allowed ? ' checked' : '') + '><span></span></label>' : '') +
                 '</div></div>'
@@ -3752,6 +3758,12 @@ function renderMessengerApp({ appVersion = '' } = {}) {
             if (!toggle) return;
             const pickerToggle = $('groupMediaAllowedPicker').querySelector('input[value="' + toggle.value + '"]');
             if (pickerToggle) pickerToggle.checked = toggle.checked;
+            const badges = toggle.closest('.group-member').querySelector('.group-badges');
+            const oldBadge = badges && badges.querySelector('.group-role.media');
+            if (badges && toggle.checked && !oldBadge) {
+                badges.insertAdjacentHTML('beforeend', '<span class="group-role media" title="Darf Medien senden">Medien erlaubt</span>');
+            }
+            if (oldBadge && !toggle.checked) oldBadge.remove();
             document.querySelector('input[name="groupMediaPolicy"][value="specific"]').checked = true;
             $('groupMediaSettingsError').textContent = '';
             try {
@@ -3761,6 +3773,11 @@ function renderMessengerApp({ appVersion = '' } = {}) {
                 $('groupMediaSettingsError').textContent = error.message;
                 toggle.checked = !toggle.checked;
                 if (pickerToggle) pickerToggle.checked = toggle.checked;
+                if (badges) {
+                    const currentBadge = badges.querySelector('.group-role.media');
+                    if (toggle.checked && !currentBadge) badges.insertAdjacentHTML('beforeend', '<span class="group-role media" title="Darf Medien senden">Medien erlaubt</span>');
+                    if (!toggle.checked && currentBadge) currentBadge.remove();
+                }
             }
         });
         $('saveGroupMediaSettings').addEventListener('click', async () => {
