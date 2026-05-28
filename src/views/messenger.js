@@ -1343,6 +1343,7 @@ function renderMessengerApp({ appVersion = '' } = {}) {
             remoteTyping: false,
             remoteTypingTimer: null,
             serverOnline: true,
+            connectionIssue: '',
             connectionNoticeTimer: null,
             bootRetryTimer: null,
             twoFactorResendTimer: null,
@@ -1554,10 +1555,16 @@ function renderMessengerApp({ appVersion = '' } = {}) {
             return Promise.race([request, timeout]).then(
                 (data) => {
                     clearTimeout(requestTimeout);
+                    showConnectionStatus(true, 'api_ok');
                     return data;
                 },
                 (error) => {
                     clearTimeout(requestTimeout);
+                    if (!error.status) {
+                        showConnectionStatus(false, error.message === 'Server antwortet nicht' ? 'api_timeout' : 'api_network');
+                    } else if (error.status >= 500) {
+                        showConnectionStatus(false, 'server_error');
+                    }
                     throw error;
                 }
             );
@@ -1740,14 +1747,32 @@ function renderMessengerApp({ appVersion = '' } = {}) {
             $('messenger').classList.remove('hidden');
         }
 
-        function showConnectionStatus(online) {
-            if (online === state.serverOnline) return;
+        function connectionIssueText(reason) {
+            if (reason === 'browser_offline') return 'Dein Gerät meldet keine Internetverbindung.';
+            if (reason === 'browser_online') return 'Internetverbindung ist wieder da.';
+            if (reason === 'events_error') return 'Live-Verbindung unterbrochen. Nachrichten werden erneut verbunden.';
+            if (reason === 'api_timeout') return 'Server antwortet zu langsam oder gar nicht.';
+            if (reason === 'api_network') return 'API-Anfrage konnte nicht gesendet werden. Prüfe Internet oder Server.';
+            if (reason === 'server_error') return 'Server hat einen Fehler gemeldet.';
+            if (reason === 'boot_error') return 'Start-Abfrage fehlgeschlagen.';
+            if (reason === 'api_ok') return 'API antwortet wieder.';
+            if (reason === 'events_open') return 'Live-Verbindung wiederhergestellt.';
+            return reason || '';
+        }
+
+        function showConnectionStatus(online, reason = '') {
+            const issue = connectionIssueText(reason);
+            if (online && state.serverOnline && !state.connectionIssue) return;
+            if (online === state.serverOnline && issue === state.connectionIssue) return;
             state.serverOnline = online;
+            state.connectionIssue = issue;
             const banner = $('connectionBanner');
-            banner.textContent = online ? 'Wieder online' : 'Offline';
+            banner.textContent = online
+                ? 'Wieder online' + (issue ? ': ' + issue : '')
+                : 'Verbindungsproblem: ' + (issue || 'Ursache unbekannt.');
             banner.className = 'connection-banner ' + (online ? 'online' : 'offline');
             if (state.connectionNoticeTimer) clearTimeout(state.connectionNoticeTimer);
-            state.connectionNoticeTimer = setTimeout(() => banner.classList.add('hidden'), 5000);
+            state.connectionNoticeTimer = setTimeout(() => banner.classList.add('hidden'), online ? 5000 : 9000);
         }
 
         function selectMainTab(tab) {
@@ -3044,8 +3069,13 @@ function renderMessengerApp({ appVersion = '' } = {}) {
         function connectEvents() {
             if (state.eventSource) state.eventSource.close();
             state.eventSource = new EventSource('/api/events?token=' + encodeURIComponent(state.token));
-            state.eventSource.addEventListener('open', () => showConnectionStatus(true));
-            state.eventSource.addEventListener('error', () => showConnectionStatus(false));
+            state.eventSource.addEventListener('open', () => showConnectionStatus(true, 'events_open'));
+            state.eventSource.addEventListener('error', () => {
+                const stateText = state.eventSource && state.eventSource.readyState === EventSource.CONNECTING
+                    ? 'events_error'
+                    : 'api_network';
+                showConnectionStatus(false, stateText);
+            });
             state.eventSource.addEventListener('message:new', async (event) => {
                 const payload = JSON.parse(event.data);
                 const isActive = state.activeConversation && Number(state.activeConversation.id) === Number(payload.conversationId);
@@ -3143,7 +3173,8 @@ function renderMessengerApp({ appVersion = '' } = {}) {
             });
         }
 
-        window.addEventListener('offline', () => showConnectionStatus(false));
+        window.addEventListener('offline', () => showConnectionStatus(false, 'browser_offline'));
+        window.addEventListener('online', () => showConnectionStatus(true, 'browser_online'));
 
         async function boot() {
             if (!state.token) return showAuth();
@@ -3160,10 +3191,10 @@ function renderMessengerApp({ appVersion = '' } = {}) {
                 if (state.me.banned_at) return;
                 if (!state.me.birth_date) return;
                 connectEvents();
-                showConnectionStatus(true);
+                showConnectionStatus(true, 'api_ok');
             } catch (error) {
                 if (!error.status || error.status >= 500) {
-                    showConnectionStatus(false);
+                    showConnectionStatus(false, !error.status ? 'boot_error' : 'server_error');
                     if (!$('loading').classList.contains('hidden')) {
                         $('loadingStatus').textContent = 'Verbindung zum Server fehlgeschlagen.';
                         $('loadingError').textContent = error.message + '. Die App versucht es erneut.';
@@ -3186,7 +3217,7 @@ function renderMessengerApp({ appVersion = '' } = {}) {
                 loadGroups(),
             ]).then(() => {
                 if (new URLSearchParams(window.location.search).get('tab') === 'news') openFeatureView('news');
-            }).catch(() => showConnectionStatus(false));
+            }).catch((error) => showConnectionStatus(false, error && error.status >= 500 ? 'server_error' : 'api_network'));
         }
 
         $('birthDateGateForm').addEventListener('submit', async (event) => {
