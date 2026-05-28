@@ -1639,6 +1639,12 @@ function renderMessengerApp({ appVersion = '' } = {}) {
                 : 'Diese Nachricht enthaelt eine nicht erlaubte Domain und kann nicht gesendet werden.';
         }
 
+        function attachmentDownloadHref(attachment) {
+            if (!attachment) return '#';
+            if (!attachment.download_url) return attachment.data_url || '#';
+            return attachment.download_url + (attachment.download_url.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(state.token);
+        }
+
         function hideBlockedDomainWarning() {
             state.blockedDomainDraft = false;
             $('blockedDomainWarning').classList.add('hidden');
@@ -1925,7 +1931,7 @@ function renderMessengerApp({ appVersion = '' } = {}) {
                         ? '<img class="message-image" data-chat-image="true" tabindex="0" role="button" src="' + message.attachment.data_url + '" alt="' + escapeText(message.attachment.file_name) + '">'
                         : String(message.attachment.mime_type || '').startsWith('video/')
                             ? '<video controls preload="metadata" src="' + message.attachment.data_url + '"></video>'
-                            : '<a class="attachment-link" href="' + message.attachment.data_url + '" download="' + escapeText(message.attachment.file_name) + '">Datei: ' + escapeText(message.attachment.file_name) + '</a>')
+                            : '<a class="attachment-link" href="' + escapeText(attachmentDownloadHref(message.attachment)) + '" download="' + escapeText(message.attachment.file_name) + '">Datei: ' + escapeText(message.attachment.file_name) + '</a>')
                     : '';
                 const canDelete = mine && (Date.now() - new Date(message.created_at).getTime()) <= 60000;
                 const time = new Date(message.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -2457,7 +2463,7 @@ function renderMessengerApp({ appVersion = '' } = {}) {
                                 ? '<audio controls preload="metadata" src="' + attachment.data_url + '"></audio>'
                                 : '<strong>' + escapeText(group.label.slice(0, -1) || 'Datei') + '</strong>';
                     return '<div class="media-item">' + preview + '<span>' + escapeText(attachment.file_name) + '</span><span class="muted">' +
-                        escapeText(date) + '</span><a class="media-download" href="' + attachment.data_url + '" download="' +
+                        escapeText(date) + '</span><a class="media-download" href="' + escapeText(attachmentDownloadHref(attachment)) + '" download="' +
                         escapeText(attachment.file_name) + '">Herunterladen</a></div>';
                 }).join('') + '</div></section>'
             ).join('') || '<span class="muted small">Keine Medien in diesem Chat.</span>';
@@ -2644,7 +2650,7 @@ function renderMessengerApp({ appVersion = '' } = {}) {
                 const attachment = message.attachment
                     ? (String(message.attachment.mime_type || '').startsWith('image/')
                         ? '<img class="message-image"' + (message.attachment.mime_type === 'image/gif' ? ' data-is-gif="true"' : '') + ' data-chat-image="true" tabindex="0" role="button" src="' + message.attachment.data_url + '" alt="' + escapeText(message.attachment.file_name) + '" title="Bild vergrößern">'
-                        : '<a class="attachment-link" href="' + message.attachment.data_url + '" download="' + escapeText(message.attachment.file_name) + '">Datei: ' + escapeText(message.attachment.file_name) + '</a>')
+                        : '<a class="attachment-link" href="' + escapeText(attachmentDownloadHref(message.attachment)) + '" download="' + escapeText(message.attachment.file_name) + '">Datei: ' + escapeText(message.attachment.file_name) + '</a>')
                     : '';
                 const text = message.body ? '<span class="message-text">' + escapeText(message.body) + '</span>' : '';
                 const reportNotice = message.report_notice

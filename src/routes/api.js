@@ -10,6 +10,20 @@ const REPORT_CATEGORIES = new Set([
     'sexual_content', 'grooming', 'child_safety', 'harassment', 'threats',
     'violence', 'hate_speech', 'fraud', 'spam', 'illegal_content', 'other',
 ]);
+
+function downloadDisposition(fileName) {
+    const cleanName = String(fileName || 'datei').replace(/[\r\n"]/g, '').slice(0, 180) || 'datei';
+    return `attachment; filename="${cleanName}"; filename*=UTF-8''${encodeURIComponent(cleanName)}`;
+}
+
+function privateAttachmentDownloadUrl(conversationId, attachmentId) {
+    return `/api/conversations/${conversationId}/attachments/${attachmentId}/download`;
+}
+
+function groupAttachmentDownloadUrl(groupId, attachmentId) {
+    return `/api/groups/${groupId}/attachments/${attachmentId}/download`;
+}
+
 app.get('/api/avatars', async (req, res, next) => {
     try {
         const result = await query(
@@ -850,6 +864,7 @@ app.get('/api/groups/:id/messages', requireAuth, async (req, res, next) => {
                 mime_type: attachment.mime_type,
                 size_bytes: attachment.size_bytes,
                 data_url: `data:${attachment.mime_type};base64,${attachment.data_base64}`,
+                download_url: groupAttachmentDownloadUrl(groupId, attachment.id),
             }]));
             messageRows.forEach((message) => { message.attachment = byMessage.get(String(message.id)) || null; });
         }
@@ -873,6 +888,31 @@ app.get('/api/groups/:id/image', requireAuth, async (req, res, next) => {
         res.type(result.rows[0].image_mime_type);
         res.set('Cache-Control', 'private, max-age=3600');
         return res.send(result.rows[0].image_data);
+    } catch (error) {
+        return next(error);
+    }
+});
+
+app.get('/api/groups/:id/attachments/:attachmentId/download', requireAuth, async (req, res, next) => {
+    try {
+        const groupId = parseId(req.params.id);
+        const attachmentId = parseId(req.params.attachmentId);
+        if (!groupId || !attachmentId) return res.status(400).send('Ungültige Datei');
+        const result = await query(
+            `select attachment.id, attachment.file_name, attachment.mime_type, attachment.size_bytes, attachment.data
+             from group_message_attachments attachment
+             join group_messages message on message.id = attachment.group_message_id
+             join group_members member on member.group_id = message.group_id and member.user_id = $3
+             where message.group_id = $1 and attachment.id = $2`,
+            [groupId, attachmentId, req.user.id],
+        );
+        const attachment = decryptAttachmentRows(result.rows)[0];
+        if (!attachment) return res.status(404).send('Datei nicht gefunden');
+        res.type(attachment.mime_type || 'application/octet-stream');
+        res.set('Content-Disposition', downloadDisposition(attachment.file_name));
+        res.set('Content-Length', String(attachment.data.length));
+        res.set('Cache-Control', 'private, no-store');
+        return res.send(attachment.data);
     } catch (error) {
         return next(error);
     }
@@ -1163,6 +1203,7 @@ app.post('/api/groups/:id/messages', requireAuth, async (req, res, next) => {
                 mime_type: stored.rows[0].mime_type,
                 size_bytes: stored.rows[0].size_bytes,
                 data_url: `data:${stored.rows[0].mime_type};base64,${attachment.data.toString('base64')}`,
+                download_url: groupAttachmentDownloadUrl(groupId, stored.rows[0].id),
             };
         } else {
             message.attachment = null;
@@ -1387,6 +1428,7 @@ app.get('/api/conversations/:id/messages', requireAuth, async (req, res, next) =
                     mime_type: attachment.mime_type,
                     size_bytes: attachment.size_bytes,
                     data_url: `data:${attachment.mime_type};base64,${attachment.data_base64}`,
+                    download_url: privateAttachmentDownloadUrl(conversation.id, attachment.id),
                 },
             ]));
 
@@ -1432,6 +1474,30 @@ app.get('/api/conversations/:id/messages', requireAuth, async (req, res, next) =
             },
             messages: messageRows,
         });
+    } catch (error) {
+        return next(error);
+    }
+});
+
+app.get('/api/conversations/:id/attachments/:attachmentId/download', requireAuth, async (req, res, next) => {
+    try {
+        const conversation = await getConversationForUser(req.params.id, req.user.id);
+        const attachmentId = parseId(req.params.attachmentId);
+        if (!conversation || !attachmentId) return res.status(404).send('Datei nicht gefunden');
+        const result = await query(
+            `select attachment.id, attachment.file_name, attachment.mime_type, attachment.size_bytes, attachment.data
+             from message_attachments attachment
+             join messages message on message.id = attachment.message_id
+             where message.conversation_id = $1 and attachment.id = $2`,
+            [conversation.id, attachmentId],
+        );
+        const attachment = decryptAttachmentRows(result.rows)[0];
+        if (!attachment) return res.status(404).send('Datei nicht gefunden');
+        res.type(attachment.mime_type || 'application/octet-stream');
+        res.set('Content-Disposition', downloadDisposition(attachment.file_name));
+        res.set('Content-Length', String(attachment.data.length));
+        res.set('Cache-Control', 'private, no-store');
+        return res.send(attachment.data);
     } catch (error) {
         return next(error);
     }
@@ -1500,6 +1566,7 @@ app.post('/api/conversations/:id/messages', requireAuth, async (req, res, next) 
                 mime_type: storedAttachment.mime_type,
                 size_bytes: storedAttachment.size_bytes,
                 data_url: `data:${storedAttachment.mime_type};base64,${attachment.data.toString('base64')}`,
+                download_url: privateAttachmentDownloadUrl(conversation.id, storedAttachment.id),
             };
         } else {
             message.attachment = null;
@@ -1626,6 +1693,7 @@ app.get('/api/conversations/:id/library', requireAuth, async (req, res, next) =>
             media: decryptAttachmentRows(media.rows).map((attachment) => ({
                 ...attachment,
                 data_url: `data:${attachment.mime_type};base64,${attachment.data_base64}`,
+                download_url: privateAttachmentDownloadUrl(conversation.id, attachment.id),
             })),
         });
     } catch (error) {
