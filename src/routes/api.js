@@ -534,14 +534,36 @@ app.post('/api/contact-requests/by-username', requireAuth, async (req, res, next
             return res.status(403).json({ error: 'Für diesen Kontakt sind Anfragen blockiert' });
         }
         const existing = await query(
-            `select id, status from contact_requests
+            `select id, status, sender_id, recipient_id from contact_requests
              where (sender_id = $1 and recipient_id = $2) or (sender_id = $2 and recipient_id = $1)
              limit 1`,
             [req.user.id, user.id],
         );
         if (existing.rows[0]) {
-            const statusText = existing.rows[0].status === 'pending' ? 'Es besteht bereits eine offene Anfrage' : 'Diese Anfrage ist bereits erledigt';
-            return res.status(409).json({ error: statusText });
+            const request = existing.rows[0];
+            if (request.status === 'pending') {
+                return res.status(409).json({ error: 'Es besteht bereits eine offene Anfrage' });
+            }
+            if (request.status === 'blocked') {
+                return res.status(403).json({ error: 'Für diesen Kontakt sind Anfragen blockiert' });
+            }
+            if (request.status === 'accepted') {
+                return res.status(409).json({ error: 'Dieser Kontakt ist bereits in deinen Chats' });
+            }
+            if (request.status === 'declined') {
+                const updated = await query(
+                    `update contact_requests
+                     set sender_id = $1, recipient_id = $2, status = 'pending',
+                         archived_by_sender = false, archived_by_recipient = false,
+                         created_at = now(), responded_at = null
+                     where id = $3
+                     returning id, status`,
+                    [req.user.id, user.id, request.id],
+                );
+                sendEvent(user.id, 'contact:request', { userId: req.user.id });
+                sendEvent(req.user.id, 'contact:request', { userId: user.id });
+                return res.status(201).json({ request: updated.rows[0] });
+            }
         }
         const created = await query(
             `insert into contact_requests (sender_id, recipient_id)
