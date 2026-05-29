@@ -989,6 +989,20 @@ function renderMessengerApp({ appVersion = '' } = {}) {
                         </nav>
                         <button id="closeAccount" class="ghost close-button" type="button" aria-label="Einstellungen schließen" title="Schließen">&times;</button>
                     </div>
+                    <div class="verification-card" style="margin-bottom:12px;">
+                        <div class="verification-head">
+                            <div>
+                                <strong>Verifizieren für Vorteile</strong>
+                                <p id="ageVerificationText" class="muted small">Bestätige dein Alter manuell, wenn dein Geburtsdatum zum Ausweis passt.</p>
+                            </div>
+                            <span id="ageVerificationBadge" class="verification-badge pending">Nicht verifiziert</span>
+                        </div>
+                        <div id="ageVerificationUpload" class="verification-upload">
+                            <input id="ageVerificationFile" type="file" accept="image/jpeg,image/png,image/webp">
+                            <button id="submitAgeVerification" class="verification-submit" type="button">Ausweisbild zur Pruefung senden</button>
+                        </div>
+                        <p class="muted small">Datenschutz: Das Ausweisbild wird nur für diese manuelle Altersprüfung verwendet. Nach Verifizieren oder Ablehnen löscht der Server die aktiven Dokumentdaten direkt; offene Anfragen werden automatisch nach 7 Tagen bereinigt.</p>
+                    </div>
                     <div id="settingsOverview" class="settings-overview">
                         <button class="settings-category" type="button" data-settings-category="profile">
                             <span>
@@ -1021,20 +1035,6 @@ function renderMessengerApp({ appVersion = '' } = {}) {
                     </div>
                     <section class="settings-section hidden" data-settings-panel="profile">
                         <h3>Profil</h3>
-                        <div class="verification-card">
-                            <div class="verification-head">
-                                <div>
-                                    <strong>Verifizieren für Vorteile</strong>
-                                    <p id="ageVerificationText" class="muted small">Bestätige dein Alter manuell, wenn dein Geburtsdatum zum Ausweis passt.</p>
-                                </div>
-                                <span id="ageVerificationBadge" class="verification-badge pending">Nicht verifiziert</span>
-                            </div>
-                            <div id="ageVerificationUpload" class="verification-upload">
-                                <input id="ageVerificationFile" type="file" accept="image/jpeg,image/png,image/webp">
-                                <button id="submitAgeVerification" class="verification-submit" type="button">Ausweisbild zur Pruefung senden</button>
-                            </div>
-                            <p class="muted small">Datenschutz: Das Ausweisbild wird nur für diese manuelle Altersprüfung verwendet. Nach Verifizieren oder Ablehnen löscht der Server die aktiven Dokumentdaten direkt; offene Anfragen werden automatisch nach 7 Tagen bereinigt.</p>
-                        </div>
                         <div class="field">
                             <label for="profileUsername">Benutzername</label>
                             <input id="profileUsername" maxlength="32">
