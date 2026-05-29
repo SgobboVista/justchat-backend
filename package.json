@@ -1,6 +1,6 @@
 {
   "name": "justchat-backend",
-  "version": "1.45.1",
+  "version": "1.45.4",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
