@@ -118,6 +118,7 @@ function renderMessengerApp({ appVersion = '' } = {}) {
         .row:hover, .row.active { background: #eef8f6; }
         .avatar { width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; color: #fff; font-weight: 800; object-fit: cover; }
         .avatar-frame { display: inline-grid; place-items: center; border-radius: 50%; padding: 3px; width: max-content; height: max-content; flex: none; }
+        .avatar-frame { position: relative; }
         .avatar-frame.bronze { background: linear-gradient(135deg, #cd7f32, #8c4d18); }
         .avatar-frame.silver { background: linear-gradient(135deg, #f1f5f9, #94a3b8); }
         .avatar-frame.gold { background: linear-gradient(135deg, #fde68a, #d97706); }
@@ -125,6 +126,7 @@ function renderMessengerApp({ appVersion = '' } = {}) {
         .avatar-frame.none { padding: 0; }
         .avatar-frame.founder { position: relative; }
         .founder-badge { position: absolute; right: -8px; bottom: -5px; z-index: 1; border: 1px solid #fff; border-radius: 999px; padding: 2px 5px; color: #704300; background: linear-gradient(135deg, #fff2ab, #f3bc37 58%, #cf8512); box-shadow: 0 2px 6px rgba(151, 98, 15, .28); font-size: 9px; line-height: 1.1; font-weight: 900; letter-spacing: .02em; }
+        .verified-badge { position: absolute; right: -6px; top: -6px; z-index: 2; width: 20px; height: 20px; border-radius: 999px; display: grid; place-items: center; background: #10b981; color: #fff; font-size: 12px; font-weight: 800; box-shadow: 0 2px 6px rgba(16,185,129,.18); border: 2px solid #fff; }
         .contact-frame { margin: 0 auto; }
         .contact-frame .founder-badge { right: -10px; bottom: 1px; padding: 4px 8px; font-size: 12px; }
         @keyframes diamondSparkle { 0%, 100% { background-position: 0% 50%; } 50% { background-position: 100% 50%; box-shadow: 0 0 17px rgba(196, 181, 253, .95); } }
@@ -983,6 +985,7 @@ function renderMessengerApp({ appVersion = '' } = {}) {
                     <div class="settings-header">
                         <nav id="settingsBreadcrumb" class="settings-breadcrumb" aria-label="Einstellungspfad">
                             <strong>Einstellungen</strong>
+                            <span id="settingsVerifiedBadge" class="muted small" style="margin-left:8px;"> </span>
                         </nav>
                         <button id="closeAccount" class="ghost close-button" type="button" aria-label="Einstellungen schließen" title="Schließen">&times;</button>
                     </div>
@@ -1734,7 +1737,9 @@ function renderMessengerApp({ appVersion = '' } = {}) {
             const frameClass = extraClass.includes('contact-avatar') ? ' contact-frame' : '';
             const founderClass = entity.first_account ? ' founder' : '';
             const founderBadge = entity.first_account ? '<span class="founder-badge" title="Einer der ersten 10 Accounts">1st</span>' : '';
-            return '<span class="avatar-frame ' + loyaltyTier(entity) + frameClass + founderClass + '">' + inner + founderBadge + '</span>';
+            const verified = Boolean(entity && (entity.age_verified_at || entity.age_verified_by));
+            const verifiedBadge = verified ? '<span class="verified-badge" title="Verifiziert">✓</span>' : '';
+            return '<span class="avatar-frame ' + loyaltyTier(entity) + frameClass + founderClass + '">' + inner + founderBadge + verifiedBadge + '</span>';
         }
 
         function membershipText(value) {
@@ -2987,6 +2992,12 @@ function renderMessengerApp({ appVersion = '' } = {}) {
             $('ageVerificationBadge').textContent = badge;
             $('ageVerificationText').textContent = text;
             $('ageVerificationUpload').classList.toggle('hidden', uploadHidden);
+            // Also show a small verification indicator in the top settings header
+            const settingsBadge = $('settingsVerifiedBadge');
+            if (settingsBadge) {
+                settingsBadge.className = 'muted small' + (verified ? ' verified' : '');
+                settingsBadge.textContent = verified ? 'Verifiziert' : 'Nicht verifiziert';
+            }
         }
 
         async function loadAgeVerification() {
@@ -3473,6 +3484,8 @@ function renderMessengerApp({ appVersion = '' } = {}) {
         });
         $('toggleAuth').addEventListener('click', () => setAuthMode(!state.registerMode));
         $('settingsButton').addEventListener('click', openAccount);
+        if ($('meAvatarSlot')) $('meAvatarSlot').addEventListener('click', openAccount);
+        if ($('meName')) $('meName').addEventListener('click', openAccount);
         $('closeAccount').addEventListener('click', closeAccount);
         $('settingsOverview').addEventListener('click', (event) => {
             const button = event.target.closest('[data-settings-category]');
