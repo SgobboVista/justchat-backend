@@ -127,6 +127,8 @@ function renderMessengerApp({ appVersion = '' } = {}) {
         .avatar-frame.founder { position: relative; }
         .founder-badge { position: absolute; right: -8px; bottom: -5px; z-index: 1; border: 1px solid #fff; border-radius: 999px; padding: 2px 5px; color: #704300; background: linear-gradient(135deg, #fff2ab, #f3bc37 58%, #cf8512); box-shadow: 0 2px 6px rgba(151, 98, 15, .28); font-size: 9px; line-height: 1.1; font-weight: 900; letter-spacing: .02em; }
         .verified-badge { position: absolute; right: -6px; top: -6px; z-index: 2; width: 20px; height: 20px; border-radius: 999px; display: grid; place-items: center; background: #10b981; color: #fff; font-size: 12px; font-weight: 800; box-shadow: 0 2px 6px rgba(16,185,129,.18); border: 2px solid #fff; }
+        .avatar-frame.contact-frame .verified-badge { right: -8px; top: -8px; width: 26px; height: 26px; border-width: 3px; }
+        .avatar-frame.founder .verified-badge { right: -6px; top: -18px; }
         .contact-frame { margin: 0 auto; }
         .contact-frame .founder-badge { right: -10px; bottom: 1px; padding: 4px 8px; font-size: 12px; }
         @keyframes diamondSparkle { 0%, 100% { background-position: 0% 50%; } 50% { background-position: 100% 50%; box-shadow: 0 0 17px rgba(196, 181, 253, .95); } }
@@ -1737,8 +1739,18 @@ function renderMessengerApp({ appVersion = '' } = {}) {
             const frameClass = extraClass.includes('contact-avatar') ? ' contact-frame' : '';
             const founderClass = entity.first_account ? ' founder' : '';
             const founderBadge = entity.first_account ? '<span class="founder-badge" title="Einer der ersten 10 Accounts">1st</span>' : '';
-            const verified = Boolean(entity && (entity.age_verified_at || entity.age_verified_by));
-            const verifiedBadge = verified ? '<span class="verified-badge" title="Verifiziert">✓</span>' : '';
+            // Accept multiple shapes: direct flags, timestamps or nested user objects
+            let verified = false;
+            if (entity) {
+                verified = Boolean(
+                    entity.age_verified_at || entity.age_verified_by || entity.age_verified || entity.verified ||
+                    (entity.user && (entity.user.age_verified_at || entity.user.age_verified)) ||
+                    (entity.owner && (entity.owner.age_verified_at || entity.owner.age_verified))
+                );
+            }
+            const verifiedBadge = verified ? '<span class="verified-badge" title="Verifiziert" aria-hidden="true">' +
+                '<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path d="M9 16.2 4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4z" fill="#fff"/></svg>' +
+                '</span>' : '';
             return '<span class="avatar-frame ' + loyaltyTier(entity) + frameClass + founderClass + '">' + inner + founderBadge + verifiedBadge + '</span>';
         }
 
