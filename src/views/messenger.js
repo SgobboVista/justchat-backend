@@ -312,7 +312,7 @@ function renderMessengerApp({ appVersion = '' } = {}) {
         .switch input:checked + span { background: var(--accent); }
         .switch input:checked + span::before { transform: translateX(20px); }
         .switch input:focus-visible + span { outline: 3px solid rgba(15, 118, 110, .18); outline-offset: 2px; }
-        .group-info-card .group-picture-actions { display: none !important; }
+        .group-info-card .group-picture-actions { grid-column: 1 / -1; }
         .group-info-card .group-info-hero { grid-template-columns: auto minmax(0, 1fr); justify-items: stretch; align-items: center; gap: 12px 16px; overflow: hidden; text-align: left; }
         .group-info-card .group-info-hero .group-avatar.large, .group-info-card .group-picture-trigger { grid-column: 1; grid-row: 1 / span 5; align-self: start; width: 92px; height: 92px; }
         .group-info-card .group-picture-trigger { display: grid; place-items: center; overflow: hidden; }
@@ -1316,10 +1316,23 @@ function renderMessengerApp({ appVersion = '' } = {}) {
                 <p id="groupPictureError" class="error"></p>
             </div>
             <div id="groupPictureActions" class="group-picture-actions hidden">
-                <strong>Gruppenbild ändern</strong>
+                <strong>Gruppenbild aendern</strong>
                 <input id="groupPictureFile" type="file" accept="image/png,image/jpeg,image/webp,image/gif">
-                <button id="uploadGroupPicture" class="primary" type="button">Bild hochladen</button>
-                <p class="muted small">JPEG, PNG, WebP oder GIF, maximal 20 MB.</p>
+                <div id="groupPictureCropEditor" class="crop-editor hidden">
+                    <canvas id="groupPictureCropCanvas" width="320" height="320"></canvas>
+                    <label class="small" for="groupPictureZoom">Ausschnitt / Zoom</label>
+                    <input id="groupPictureZoom" type="range" min="100" max="300" value="100">
+                    <label class="small" for="groupPicturePositionX">Horizontal verschieben</label>
+                    <input id="groupPicturePositionX" type="range" min="-100" max="100" value="0">
+                    <label class="small" for="groupPicturePositionY">Vertikal verschieben</label>
+                    <input id="groupPicturePositionY" type="range" min="-100" max="100" value="0">
+                    <label id="groupGifStillOption" class="segmented hidden">
+                        <input id="groupGifAsStill" type="checkbox" checked style="width:auto;">
+                        <span>GIF als Standbild setzen</span>
+                    </label>
+                </div>
+                <button id="uploadGroupPicture" class="primary" type="button">Gruppenbild hochladen</button>
+                <p class="muted small">JPEG, PNG, WebP oder GIF, maximal 20 MB. Du kannst den Ausschnitt vor dem Hochladen anpassen.</p>
             </div>
             <div id="groupMediaSettings" class="group-media-settings hidden">
                 <strong>Medien senden</strong>
@@ -1382,6 +1395,8 @@ function renderMessengerApp({ appVersion = '' } = {}) {
             emailVerificationResendUntil: 0,
             profileAvatarImage: null,
             profileAvatarFile: null,
+            groupPictureImage: null,
+            groupPictureFile: null,
             ageVerification: null,
             installPrompt: null,
             mainTab: 'chats',
@@ -2005,21 +2020,80 @@ function renderMessengerApp({ appVersion = '' } = {}) {
             renderGroupImage('groupRoomImage', group);
         }
 
-        function readGroupPicture(file) {
-            if (!file) return Promise.reject(new Error('Bitte wähle ein Gruppenbild aus.'));
-            if (!['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(file.type)) {
-                return Promise.reject(new Error('Nur JPEG, PNG, WebP und GIF sind erlaubt.'));
+        function drawGroupPictureCrop() {
+            if (!state.groupPictureImage) return;
+            const canvas = $('groupPictureCropCanvas');
+            const context = canvas.getContext('2d');
+            const image = state.groupPictureImage;
+            const zoom = Number($('groupPictureZoom').value || 100) / 100;
+            const side = Math.min(image.naturalWidth, image.naturalHeight) / zoom;
+            const maxX = Math.max(0, (image.naturalWidth - side) / 2);
+            const maxY = Math.max(0, (image.naturalHeight - side) / 2);
+            const x = (image.naturalWidth - side) / 2 + (Number($('groupPicturePositionX').value) / 100) * maxX;
+            const y = (image.naturalHeight - side) / 2 + (Number($('groupPicturePositionY').value) / 100) * maxY;
+            context.clearRect(0, 0, canvas.width, canvas.height);
+            context.drawImage(image, x, y, side, side, 0, 0, canvas.width, canvas.height);
+        }
+
+        async function prepareGroupPicture(file) {
+            state.groupPictureFile = file;
+            if (!file) {
+                $('groupPictureCropEditor').classList.add('hidden');
+                return;
             }
-            if (file.size > 20 * 1024 * 1024) return Promise.reject(new Error('Bild muss kleiner als 20 MB sein.'));
-            return new Promise((resolve, reject) => {
+            if (!['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(file.type)) {
+                throw new Error('Nur JPEG, PNG, WebP und GIF sind erlaubt.');
+            }
+            if (file.size > 20 * 1024 * 1024) throw new Error('Bild muss kleiner als 20 MB sein.');
+            const dataUrl = await new Promise((resolve, reject) => {
                 const reader = new FileReader();
-                reader.onload = () => resolve({
-                    fileName: file.name,
-                    mimeType: file.type,
-                    dataBase64: String(reader.result).slice(String(reader.result).indexOf(',') + 1),
-                });
+                reader.onload = () => resolve(String(reader.result));
                 reader.onerror = () => reject(new Error('Bild konnte nicht gelesen werden.'));
                 reader.readAsDataURL(file);
+            });
+            state.groupPictureImage = await new Promise((resolve, reject) => {
+                const image = new Image();
+                image.onload = () => resolve(image);
+                image.onerror = () => reject(new Error('Bild konnte nicht angezeigt werden.'));
+                image.src = dataUrl;
+            });
+            $('groupPictureZoom').value = '100';
+            $('groupPicturePositionX').value = '0';
+            $('groupPicturePositionY').value = '0';
+            $('groupGifStillOption').classList.toggle('hidden', file.type !== 'image/gif');
+            $('groupGifAsStill').checked = true;
+            $('groupPictureActions').classList.remove('hidden');
+            $('groupPictureCropEditor').classList.remove('hidden');
+            drawGroupPictureCrop();
+        }
+
+        function readGroupPicture() {
+            const file = state.groupPictureFile || $('groupPictureFile').files[0];
+            if (!file) return Promise.reject(new Error('Bitte waehle ein Gruppenbild aus.'));
+            if (file.type === 'image/gif' && !$('groupGifAsStill').checked) {
+                return new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onload = () => resolve({
+                        fileName: file.name,
+                        mimeType: file.type,
+                        dataBase64: String(reader.result).slice(String(reader.result).indexOf(',') + 1),
+                    });
+                    reader.onerror = () => reject(new Error('Bild konnte nicht gelesen werden.'));
+                    reader.readAsDataURL(file);
+                });
+            }
+            return new Promise((resolve, reject) => {
+                $('groupPictureCropCanvas').toBlob((blob) => {
+                    if (!blob) return reject(new Error('Gruppenbild konnte nicht zugeschnitten werden.'));
+                    const reader = new FileReader();
+                    reader.onload = () => resolve({
+                        fileName: file.name.replace(/\.[^.]+$/, '') + '.png',
+                        mimeType: 'image/png',
+                        dataBase64: String(reader.result).slice(String(reader.result).indexOf(',') + 1),
+                    });
+                    reader.onerror = () => reject(new Error('Bild konnte nicht gelesen werden.'));
+                    reader.readAsDataURL(blob);
+                }, 'image/png');
             });
         }
 
@@ -2040,6 +2114,10 @@ function renderMessengerApp({ appVersion = '' } = {}) {
                 (data.group.owner_username ? ' (@' + data.group.owner_username + ')' : '');
             $('groupInfoCount').textContent = data.group.member_count + ' Mitglieder';
             $('groupPictureActions').classList.add('hidden');
+            $('groupPictureCropEditor').classList.add('hidden');
+            $('groupPictureFile').value = '';
+            state.groupPictureFile = null;
+            state.groupPictureImage = null;
             $('groupMediaSettings').classList.toggle('hidden', !isOwner);
             document.querySelectorAll('input[name="groupMediaPolicy"]').forEach((input) => { input.checked = input.value === (data.group.media_send_policy || 'all'); });
             $('groupMediaMinDays').value = data.group.media_min_member_days || 0;
@@ -3794,12 +3872,15 @@ function renderMessengerApp({ appVersion = '' } = {}) {
             if (!state.activeGroup) return;
             $('groupPictureError').textContent = '';
             try {
-                const attachment = await readGroupPicture($('groupPictureFile').files[0]);
+                const attachment = await readGroupPicture();
                 await api('/api/groups/' + state.activeGroup.id + '/image', {
                     method: 'PUT',
                     body: JSON.stringify({ attachment }),
                 });
                 $('groupPictureFile').value = '';
+                state.groupPictureFile = null;
+                state.groupPictureImage = null;
+                $('groupPictureCropEditor').classList.add('hidden');
                 await refreshOpenGroup(state.activeGroup.id);
                 await openGroupInfo();
                 await loadGroups();
@@ -3810,9 +3891,19 @@ function renderMessengerApp({ appVersion = '' } = {}) {
         $('groupPictureTrigger').addEventListener('click', () => {
             $('groupPictureFile').click();
         });
-        $('groupPictureFile').addEventListener('change', () => {
-            if ($('groupPictureFile').files[0]) $('uploadGroupPicture').click();
+        $('groupPictureFile').addEventListener('change', async (event) => {
+            $('groupPictureError').textContent = '';
+            try {
+                await prepareGroupPicture(event.target.files[0]);
+            } catch (error) {
+                $('groupPictureFile').value = '';
+                $('groupPictureCropEditor').classList.add('hidden');
+                $('groupPictureError').textContent = error.message;
+            }
         });
+        $('groupPictureZoom').addEventListener('input', drawGroupPictureCrop);
+        $('groupPicturePositionX').addEventListener('input', drawGroupPictureCrop);
+        $('groupPicturePositionY').addEventListener('input', drawGroupPictureCrop);
         $('groupNameForm').addEventListener('submit', async (event) => {
             event.preventDefault();
             if (!state.activeGroup) return;
