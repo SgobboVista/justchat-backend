@@ -126,9 +126,9 @@ function renderMessengerApp({ appVersion = '' } = {}) {
         .avatar-frame.none { padding: 0; }
         .avatar-frame.founder { position: relative; }
         .founder-badge { position: absolute; right: -8px; bottom: -5px; z-index: 1; border: 1px solid #fff; border-radius: 999px; padding: 2px 5px; color: #704300; background: linear-gradient(135deg, #fff2ab, #f3bc37 58%, #cf8512); box-shadow: 0 2px 6px rgba(151, 98, 15, .28); font-size: 9px; line-height: 1.1; font-weight: 900; letter-spacing: .02em; }
-        .verified-badge { position: absolute; right: -6px; top: -6px; z-index: 2; width: 20px; height: 20px; border-radius: 999px; display: grid; place-items: center; background: #10b981; color: #fff; font-size: 12px; font-weight: 800; box-shadow: 0 2px 6px rgba(16,185,129,.18); border: 2px solid #fff; }
-        .avatar-frame.contact-frame .verified-badge { right: -8px; top: -8px; width: 26px; height: 26px; border-width: 3px; }
-        .avatar-frame.founder .verified-badge { right: -6px; top: -18px; }
+        .verified-badge { position: absolute; right: -6px; top: -4px; z-index: 2; width: 20px; height: 20px; border-radius: 999px; display: grid; place-items: center; background: #10b981; color: #fff; font-size: 12px; font-weight: 800; box-shadow: 0 2px 6px rgba(16,185,129,.18); border: 2px solid #fff; }
+        .avatar-frame.contact-frame .verified-badge { right: -8px; top: -6px; width: 26px; height: 26px; border-width: 3px; }
+        .avatar-frame.founder .verified-badge { right: -6px; top: -16px; }
         .contact-frame { margin: 0 auto; }
         .contact-frame .founder-badge { right: -10px; bottom: 1px; padding: 4px 8px; font-size: 12px; }
         @keyframes diamondSparkle { 0%, 100% { background-position: 0% 50%; } 50% { background-position: 100% 50%; box-shadow: 0 0 17px rgba(196, 181, 253, .95); } }

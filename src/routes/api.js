@@ -838,6 +838,7 @@ app.get('/api/groups/:id/messages', requireAuth, async (req, res, next) => {
         const messages = await query(
             `select gm.id, gm.group_id, gm.sender_id, gm.body, gm.created_at,
                 u.display_name, u.username, u.avatar_color, u.created_at as member_since,
+                u.age_verified_at, u.age_verified_by,
                 u.id in (select early_user.id from users early_user where not early_user.email_verification_required or early_user.email_verified_at is not null order by early_user.created_at, early_user.id limit 10) as first_account,
                 case when aa.id is null then null else 'data:' || aa.mime_type || ';base64,' || encode(aa.data, 'base64') end as avatar_url,
                 sender_member.role as group_role,
