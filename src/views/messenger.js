@@ -155,6 +155,8 @@ function renderMessengerApp({ appVersion = '' } = {}) {
         .message-status { color: var(--muted); font-size: 11px; white-space: nowrap; }
         .bubble img { display: block; max-width: min(420px, 100%); border-radius: 14px; margin-bottom: 8px; box-shadow: inset 0 0 0 1px rgba(15,23,42,.06); }
         .bubble video { display: block; width: min(420px, 100%); max-height: 300px; border-radius: 14px; margin-bottom: 8px; background: #000; }
+        .reported-content { filter: blur(7px); opacity: .52; pointer-events: none; user-select: none; }
+        .reported-message-notice { margin-bottom: 8px; padding: 8px 9px; border-radius: 8px; border: 1px solid #f6cd8b; background: #fff8eb; color: #7a4c04; font-size: 12px; line-height: 1.4; font-weight: 700; }
         .message-image { cursor: zoom-in; }
         .message-actions { display: inline-flex; align-items: center; justify-content: flex-end; gap: 3px; }
         .report-message { padding: 4px 7px; border-radius: 999px; color: #52627a; background: rgba(255, 255, 255, .45); font-size: 11px; font-weight: 700; }
@@ -1991,13 +1993,19 @@ function renderMessengerApp({ appVersion = '' } = {}) {
                     : '';
                 const canDelete = mine && (Date.now() - new Date(message.created_at).getTime()) <= 60000;
                 const time = new Date(message.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                const reported = Boolean(message.reported_by_me);
+                const reportedNotice = reported ? '<div class="reported-message-notice">Du hast diesen Inhalt gemeldet. Er bleibt bis zur Pruefung ausgeblendet.</div>' : '';
+                const reportNotice = message.report_notice
+                    ? '<div class="report-notice"><strong>' + (message.report_notice.status === 'dismissed' ? 'Meldung geprueft' : 'Meldung eingereicht') + '</strong>' + (message.report_notice.status === 'dismissed' ? 'Diese Meldung wurde abgewiesen.' : 'Dieser Inhalt wurde von dir gemeldet und ist bis zur Pruefung ausgeblendet.') + (message.report_notice.admin_note ? '<br>' + escapeText(message.report_notice.admin_note) : '') + '</div>'
+                    : '';
+                const content = '<div class="' + (reported ? 'reported-content' : '') + '">' + attachment + (message.body ? '<span class="message-text">' + escapeText(message.body) + '</span>' : '') + '</div>';
                 return '<div class="group-message-row ' + (mine ? 'me' : '') + '" data-group-message-id="' + message.id + '">' +
                     avatarMarkup(sender, '', 'group-message-avatar') +
                     '<div class="bubble ' + (mine ? 'me' : '') + '">' +
-                    senderMeta + attachment + (message.body ? '<span class="message-text">' + escapeText(message.body) + '</span>' : '') +
+                    senderMeta + reportedNotice + content + reportNotice +
                     '<div class="message-meta-row"><span class="message-status">' + escapeText(time) + '</span><div class="message-actions">' +
                     (canDelete ? '<button class="report-message" type="button" data-delete-group-message="' + message.id + '">Löschen</button>' : '') +
-                    (!mine ? '<button class="report-message" type="button" data-report-group-message="' + message.id + '">Melden</button>' : '') +
+                    (!mine && !message.report_notice ? '<button class="report-message" type="button" data-report-group-message="' + message.id + '">Melden</button>' : '') +
                     '</div></div></div></div>';
             }).join('') : '<div class="news-empty">Schreibe die erste Nachricht in diese Gruppe.</div>';
             $('groupMessages').scrollTop = $('groupMessages').scrollHeight;
@@ -2774,15 +2782,18 @@ function renderMessengerApp({ appVersion = '' } = {}) {
                     : '';
                 const text = message.body ? '<span class="message-text">' + escapeText(message.body) + '</span>' : '';
                 const reportNotice = message.report_notice
-                    ? '<div class="report-notice"><strong>Meldung geprüft</strong>Diese Meldung wurde abgewiesen.' + (message.report_notice.admin_note ? '<br>' + escapeText(message.report_notice.admin_note) : '') + '</div>'
+                    ? '<div class="report-notice"><strong>' + (message.report_notice.status === 'dismissed' ? 'Meldung geprueft' : 'Meldung eingereicht') + '</strong>' + (message.report_notice.status === 'dismissed' ? 'Diese Meldung wurde abgewiesen.' : 'Dieser Inhalt wurde von dir gemeldet und ist bis zur Pruefung ausgeblendet.') + (message.report_notice.admin_note ? '<br>' + escapeText(message.report_notice.admin_note) : '') + '</div>'
                     : '';
                 const canDelete = mine && (Date.now() - new Date(message.created_at).getTime()) <= 60000;
+                const reported = Boolean(message.reported_by_me);
+                const reportedNotice = reported ? '<div class="reported-message-notice">Du hast diesen Inhalt gemeldet. Er bleibt bis zur Pruefung ausgeblendet.</div>' : '';
+                const content = '<div class="' + (reported ? 'reported-content' : '') + '">' + attachment + text + '</div>';
                 return divider + '<div class="bubble ' + (mine ? 'me' : '') + '" data-message-id="' + message.id + '">' +
-                    attachment + text + reportNotice +
+                    reportedNotice + content + reportNotice +
                     '<div class="message-meta-row"><span class="message-status">' + escapeText(time + read) + '</span><div class="message-actions">' +
                     (canDelete ? '<button class="report-message" type="button" data-delete-message="' + message.id + '">Löschen</button>' : '') +
                     '<button class="favorite-message' + (message.favorited_by_me ? ' active' : '') + '" type="button" data-favorite-message="' + message.id + '" data-favorite="' + Boolean(message.favorited_by_me) + '" aria-label="' + (message.favorited_by_me ? 'Aus Favoriten entfernen' : 'Zu Favoriten hinzufügen') + '">&#10084;</button>' +
-                    (!mine ? '<button class="report-message" type="button" data-report-message="' + message.id + '">Melden</button>' : '') +
+                    (!mine && !message.report_notice ? '<button class="report-message" type="button" data-report-message="' + message.id + '">Melden</button>' : '') +
                     '</div></div>' +
                     '</div>';
             }).join('');
@@ -4178,8 +4189,13 @@ function renderMessengerApp({ appVersion = '' } = {}) {
                 state.reportMessageId = null;
                 state.reportKind = 'private';
                 $('reportModal').classList.add('hidden');
-                if (wasGroupReport) $('groupComposerError').textContent = 'Die Nachricht wurde zur Prüfung gemeldet.';
-                else $('composerError').textContent = 'Die Nachricht wurde zur Prüfung gemeldet.';
+                if (wasGroupReport) {
+                    $('groupComposerError').textContent = 'Die Nachricht wurde zur Pruefung gemeldet.';
+                    await refreshOpenGroup(state.activeGroup.id);
+                } else {
+                    $('composerError').textContent = 'Die Nachricht wurde zur Pruefung gemeldet.';
+                    await refreshOpenMessages(state.activeConversation.id);
+                }
             } catch (error) {
                 $('reportError').textContent = error.message;
             }

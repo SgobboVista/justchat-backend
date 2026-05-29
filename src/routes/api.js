@@ -873,6 +873,23 @@ app.get('/api/groups/:id/messages', requireAuth, async (req, res, next) => {
                 download_url: groupAttachmentDownloadUrl(groupId, attachment.id),
             }]));
             messageRows.forEach((message) => { message.attachment = byMessage.get(String(message.id)) || null; });
+            const reportNotices = await query(
+                `select group_message_id, status, admin_note, reviewed_at
+                 from group_content_reports
+                 where reporter_user_id = $1
+                    and group_message_id = any($2::bigint[])`,
+                [req.user.id, messageRows.map((message) => message.id)],
+            );
+            const noticesByMessage = new Map(reportNotices.rows.map((notice) => [String(notice.group_message_id), notice]));
+            messageRows.forEach((message) => {
+                const notice = noticesByMessage.get(String(message.id));
+                message.report_notice = notice ? {
+                    status: notice.status,
+                    admin_note: notice.admin_note,
+                    reviewed_at: notice.reviewed_at,
+                } : null;
+                message.reported_by_me = Boolean(notice && notice.status !== 'dismissed');
+            });
         }
         return res.json({ group: groupResult.rows[0], messages: messageRows });
     } catch (error) {
@@ -1458,8 +1475,7 @@ app.get('/api/conversations/:id/messages', requireAuth, async (req, res, next) =
                 `select message_id, status, admin_note, reviewed_at
                  from content_reports
                  where reporter_user_id = $1
-                    and message_id = any($2::bigint[])
-                    and status = 'dismissed'`,
+                    and message_id = any($2::bigint[])`,
                 [req.user.id, messageIds],
             );
             const noticesByMessage = new Map(reportNotices.rows.map((notice) => [String(notice.message_id), notice]));
@@ -1470,6 +1486,7 @@ app.get('/api/conversations/:id/messages', requireAuth, async (req, res, next) =
                     admin_note: notice.admin_note,
                     reviewed_at: notice.reviewed_at,
                 } : null;
+                message.reported_by_me = Boolean(notice && notice.status !== 'dismissed');
             }
         }
 
