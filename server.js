@@ -1229,6 +1229,21 @@ async function initDatabase() {
         alter table conversations add column if not exists moderation_locked boolean not null default false;
         alter table conversations add column if not exists moderation_notice text not null default '';
         alter table conversations add column if not exists moderation_action_at timestamptz;
+        alter table conversations add column if not exists frozen_at timestamptz;
+
+        create table if not exists account_deletions (
+            id bigserial primary key,
+            user_id bigint not null unique references users(id) on delete cascade,
+            cancel_token text not null unique,
+            created_at timestamptz not null default now(),
+            scheduled_deletion_at timestamptz not null default (now() + interval '7 days'),
+            cancelled_at timestamptz,
+            deleted_at timestamptz,
+            check(cancelled_at is null or deleted_at is null)
+        );
+
+        create index if not exists idx_account_deletions_scheduled on account_deletions(scheduled_deletion_at) where deleted_at is null and cancelled_at is null;
+        create index if not exists idx_account_deletions_user_status on account_deletions(user_id, deleted_at, cancelled_at);
         alter table chat_groups add column if not exists image_file_name text;
         alter table chat_groups add column if not exists media_send_policy text not null default 'all';
         alter table chat_groups add column if not exists media_min_member_days integer not null default 0;
@@ -1463,6 +1478,33 @@ async function migratePlaintextAttachmentsToEncrypted(tableName) {
     }
 }
 
+async function purgeExpiredAccountDeletions() {
+    const now = new Date();
+    const deletionRequests = await query(
+        `select id, user_id from account_deletions
+         where deleted_at is null and cancelled_at is null and scheduled_deletion_at <= now()
+         limit 100`
+    );
+
+    for (const deletion of deletionRequests.rows) {
+        try {
+            // Lösche alle Daten des Benutzers
+            await query('delete from users where id = $1', [deletion.user_id]);
+            await query(
+                `update account_deletions set deleted_at = now() where id = $1`,
+                [deletion.id]
+            );
+            await query(
+                `insert into admin_audit_logs (admin_user, action, ip_address)
+                 values ($1, $2, $3)`,
+                ['system', `account_deletion_executed_user_${deletion.user_id}`, null]
+            );
+        } catch (error) {
+            console.error(`Fehler beim Löschen von Konto ${deletion.user_id}:`, error.message);
+        }
+    }
+}
+
 async function runRetentionCleanup() {
     await purgeExpiredReports();
     await purgeExpiredArchivedConversations();
@@ -1470,6 +1512,7 @@ async function runRetentionCleanup() {
     await purgeExpiredGroupMessages();
     await purgeExpiredAgeVerificationDocuments();
     await purgeExpiredAdminAuditLogs();
+    await purgeExpiredAccountDeletions();
 }
 
 async function waitForDatabase() {
@@ -1724,12 +1767,14 @@ const routeDependencies = {
     personalAvatarLimit, conversationPair, getImageUpdateState, escapeHtml, sendMail, renderEmailTemplate,
     parseNewsVideoAttachment, broadcastEvent, sendNewsPushNotification, getMailer,
     encryptText, decryptText, encryptBuffer, decryptBuffer, decryptMessageRows, decryptAttachmentRows,
-};
 
 registerPageRoutes(app, routeDependencies);
 registerAdminRoutes(app, routeDependencies);
 registerAuthRoutes(app, routeDependencies);
 registerApiRoutes(app, routeDependencies);
+
+const { registerAccountDeletionRoutes } = require('./src/routes/account-deletion');
+registerAccountDeletionRoutes(app, routeDependencies);
 app.use((error, req, res, next) => {
     console.error(error);
     const statusCode = error.statusCode || 500;
