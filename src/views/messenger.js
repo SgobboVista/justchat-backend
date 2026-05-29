@@ -180,7 +180,7 @@ function renderMessengerApp({ appVersion = '' } = {}) {
         .attachment-image-preview { width: 56px; height: 56px; object-fit: cover; border-radius: 8px; flex: none; }
         .attachment-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .attachment-preview button { background: transparent; color: var(--danger); font-weight: 700; padding: 3px 6px; }
-        .send-button { width: 48px; height: 48px; border-radius: 50%; display: grid; place-items: center; padding: 0; overflow: hidden; }
+        .send-button { width: 48px; height: 48px; border-radius: 25%; display: grid; place-items: center; padding: 0; overflow: hidden; }
         .send-button svg { display: block; width: 23px; height: 23px; fill: none; stroke: currentColor; stroke-width: 2.3; stroke-linecap: round; stroke-linejoin: round; transform: none; }
         .composer-error { grid-column: 1 / -1; margin: 0; min-height: 0; }
         .sensitive-warning { grid-column: 1 / -1; display: grid; gap: 10px; border: 1px solid #f6cd8b; border-radius: 12px; padding: 12px; background: #fff8eb; color: #7a4c04; }
